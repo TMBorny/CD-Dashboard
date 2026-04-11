@@ -15,6 +15,7 @@ const emit = defineEmits<{
 
 const sortBy = ref<'displayName' | 'sisPlatform' | 'nightlySuccess' | 'realtimeSuccess' | 'mergeErrors' | 'activeUsers' | 'health'>('health');
 const sortOrder = ref<'asc' | 'desc'>('desc');
+const searchQuery = ref('');
 
 const sortLabels: Record<typeof sortBy.value, string> = {
   displayName: 'School',
@@ -81,8 +82,18 @@ const getHealthScoreValue = (school: ClientHealthSnapshot) => {
   return Math.max(0, Math.min(100, score));
 };
 
+const filteredSchools = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase();
+  if (!q) return props.schools;
+  return props.schools.filter((school) => {
+    const displayName = formatSchoolLabel(school.school).toLowerCase();
+    const rawId = school.school.toLowerCase();
+    return displayName.includes(q) || rawId.includes(q);
+  });
+});
+
 const sortedSchools = computed(() => {
-  return [...props.schools].sort((a, b) => {
+  return [...filteredSchools.value].sort((a, b) => {
     const nightlyA = nightlyRate(a) ?? 0;
     const nightlyB = nightlyRate(b) ?? 0;
     const realtimeA = realtimeRate(a) ?? 0;
@@ -161,7 +172,30 @@ const getHealthScore = (school: ClientHealthSnapshot) => {
         <p class="text-xs font-semibold uppercase tracking-[0.32em] text-slate-500">Client list</p>
         <h2 class="mt-2 text-xl font-semibold tracking-tight text-slate-950">Client health by school</h2>
       </div>
-      <div class="flex flex-wrap items-center gap-2">
+      <div class="flex flex-wrap items-center gap-3">
+        <!-- Search input -->
+        <div class="relative">
+          <svg class="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM2 9a7 7 0 1 1 12.452 4.391l3.328 3.329a.75.75 0 1 1-1.06 1.06l-3.329-3.328A7 7 0 0 1 2 9Z" clip-rule="evenodd" />
+          </svg>
+          <input
+            v-model="searchQuery"
+            type="text"
+            placeholder="Filter by school or ID…"
+            class="h-9 w-56 rounded-full border border-slate-200 bg-slate-50 pl-8 pr-8 text-xs font-medium text-slate-700 placeholder-slate-400 outline-none ring-0 transition focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200"
+          />
+          <button
+            v-if="searchQuery"
+            @click="searchQuery = ''"
+            class="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 transition"
+            aria-label="Clear search"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-3.5 w-3.5">
+              <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+            </svg>
+          </button>
+        </div>
+        <!-- Sort indicator -->
         <span class="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.24em] text-slate-600">Sorted by</span>
         <span class="rounded-full bg-slate-950 px-3 py-2 text-xs font-semibold uppercase tracking-[0.24em] text-white">{{ sortLabels[sortBy] }} {{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
       </div>
@@ -212,6 +246,11 @@ const getHealthScore = (school: ClientHealthSnapshot) => {
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-100 bg-white">
+          <tr v-if="sortedSchools.length === 0">
+            <td colspan="8" class="px-6 py-10 text-center text-sm text-slate-400">
+              No schools match <span class="font-semibold text-slate-600">"{{ searchQuery }}"</span>.
+            </td>
+          </tr>
           <tr 
             v-for="school in sortedSchools" 
             :key="school.school"
