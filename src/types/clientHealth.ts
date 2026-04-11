@@ -31,7 +31,7 @@ export interface ClientHealthSnapshot {
   sisPlatform?: string | null;
   products: string[];
   merges: {
-    nightly: { total: number; succeeded: number; failed: number; finishedWithIssues: number; noData: number; };
+    nightly: { total: number; succeeded: number; failed: number; finishedWithIssues: number; noData: number; mergeTimeMs?: number; };
     realtime: { total: number; succeeded: number; failed: number; finishedWithIssues: number; noData: number; };
     manual: { total: number; succeeded: number; failed: number; finishedWithIssues: number; noData: number; };
   };

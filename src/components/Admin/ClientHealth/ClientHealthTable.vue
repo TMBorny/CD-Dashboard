@@ -13,7 +13,7 @@ const emit = defineEmits<{
   rowClick: [school: ClientHealthSnapshot];
 }>();
 
-const sortBy = ref<'displayName' | 'sisPlatform' | 'nightlySuccess' | 'realtimeSuccess' | 'mergeErrors' | 'activeUsers' | 'health'>('health');
+const sortBy = ref<'displayName' | 'sisPlatform' | 'nightlySuccess' | 'nightlyDuration' | 'realtimeSuccess' | 'mergeErrors' | 'activeUsers' | 'health'>('health');
 const sortOrder = ref<'asc' | 'desc'>('desc');
 const searchQuery = ref('');
 
@@ -21,10 +21,19 @@ const sortLabels: Record<typeof sortBy.value, string> = {
   displayName: 'School',
   sisPlatform: 'SIS',
   nightlySuccess: 'Nightly (48h)',
+  nightlyDuration: 'Nightly Duration',
   realtimeSuccess: 'Realtime (24h)',
   mergeErrors: 'Open Errors',
   activeUsers: 'Active Users (24h)',
   health: 'Health',
+};
+
+const formatDuration = (ms?: number) => {
+  if (!ms) return 'N/A';
+  const mins = Math.floor(ms / 60000);
+  const secs = Math.floor((ms % 60000) / 1000);
+  if (mins === 0) return `${secs}s`;
+  return `${mins}m ${secs}s`;
 };
 
 const nightlyRate = (school: ClientHealthSnapshot) => {
@@ -100,6 +109,8 @@ const sortedSchools = computed(() => {
     const realtimeB = realtimeRate(b) ?? 0;
     const healthA = getHealthScoreValue(a);
     const healthB = getHealthScoreValue(b);
+    const durationA = a.merges.nightly.mergeTimeMs ?? 0;
+    const durationB = b.merges.nightly.mergeTimeMs ?? 0;
 
     let aVal: number | string = '';
     let bVal: number | string = '';
@@ -112,6 +123,10 @@ const sortedSchools = computed(() => {
       case 'nightlySuccess':
         aVal = nightlyA;
         bVal = nightlyB;
+        break;
+      case 'nightlyDuration':
+        aVal = durationA;
+        bVal = durationB;
         break;
       case 'sisPlatform':
         aVal = a.sisPlatform || 'Unknown';
@@ -226,6 +241,11 @@ const getHealthScore = (school: ClientHealthSnapshot) => {
               </button>
             </th>
             <th scope="col" class="px-6 py-4 py-5 font-semibold">
+              <button @click="handleSort('nightlyDuration')" class="flex items-center gap-2 hover:text-slate-950 transition">
+                Nightly Duration <span v-if="sortBy === 'nightlyDuration'" class="text-slate-900">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
+              </button>
+            </th>
+            <th scope="col" class="px-6 py-4 py-5 font-semibold">
               <button @click="handleSort('realtimeSuccess')" class="flex items-center gap-2 hover:text-slate-950 transition">
                 Realtime (24h) <span v-if="sortBy === 'realtimeSuccess'" class="text-slate-900">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
               </button>
@@ -276,6 +296,10 @@ const getHealthScore = (school: ClientHealthSnapshot) => {
                 <div v-if="school.merges.nightly.noData > 0" class="text-xs font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-md" title="No Data">{{ school.merges.nightly.noData }} No Data</div>
               </div>
               <div class="mt-1 text-xs text-slate-500">{{ (nightlyRate(school) ?? 0).toFixed(0) }}% score in upstream 48h window</div>
+            </td>
+            <td class="whitespace-nowrap px-6 py-5">
+              <div class="text-sm font-semibold text-slate-900">{{ formatDuration(school.merges.nightly.mergeTimeMs) }}</div>
+              <div class="mt-1 text-xs text-slate-500">Total min/max timespan</div>
             </td>
             <td class="whitespace-nowrap px-6 py-5">
               <div class="flex items-center gap-2">

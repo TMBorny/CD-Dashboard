@@ -95,6 +95,17 @@ const nightlySuccessChartOptions = computed(() => useStackedBarChartOptions({
   categories: history.value?.snapshots.map((s: any) => s.snapshotDate),
 }));
 
+const nightlyDurationChartSeries = computed(() => {
+  if (!history.value) return [];
+  const data = history.value.snapshots.map((s: any) => parseFloat(((s.merges.nightly.mergeTimeMs || 0) / 3600000).toFixed(2)));
+  return [{ name: 'Nightly Duration (hours)', data }];
+});
+
+const nightlyDurationChartOptions = computed(() => useChartOptions({
+  colors: ['#8b5cf6'],
+  categories: history.value?.snapshots.map((s: any) => s.snapshotDate),
+}));
+
 const realtimeSuccessChartSeries = computed(() => {
   if (!history.value) return [];
   const succeeded = history.value.snapshots.map((s: any) => s.merges.realtime.succeeded);
@@ -297,6 +308,11 @@ async function handleHistoryBackfill() {
             <VueApexCharts type="bar" :options="nightlySuccessChartOptions" :series="nightlySuccessChartSeries" />
           </div>
         </Card>
+        <Card subtitle="Duration" title="Nightly Merge Duration Trend">
+          <div class="mt-6 min-h-[260px]">
+            <VueApexCharts type="line" :options="nightlyDurationChartOptions" :series="nightlyDurationChartSeries" />
+          </div>
+        </Card>
         <Card subtitle="Performance" title="Realtime Merge Activity (Last 24h)">
           <div class="mt-6 min-h-[260px]">
             <VueApexCharts type="bar" :options="realtimeSuccessChartOptions" :series="realtimeSuccessChartSeries" />
@@ -307,7 +323,7 @@ async function handleHistoryBackfill() {
             <VueApexCharts type="line" :options="mergeErrorsChartOptions" :series="mergeErrorsChartSeries" />
           </div>
         </Card>
-        <Card subtitle="Activity" title="Distinct Active Users (Last 24h)">
+        <Card subtitle="Activity" title="Distinct Active Users (per day)">
           <div class="mt-6 min-h-[260px]">
             <VueApexCharts type="line" :options="activeUsersChartOptions" :series="activeUsersChartSeries" />
           </div>
