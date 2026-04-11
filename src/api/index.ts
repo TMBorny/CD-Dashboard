@@ -82,4 +82,14 @@ export async function getClientHealthActiveUsers(params: { school?: string }) {
   return { data: res.data };
 }
 
+export async function getSyncRuns(params?: { limit?: number; offset?: number }) {
+  const res = await backend.get('/client-health/sync-runs', {
+    params: {
+      limit: params?.limit ?? 50,
+      offset: params?.offset ?? 0,
+    },
+  });
+  return { data: res.data };
+}
+
 export { backend };

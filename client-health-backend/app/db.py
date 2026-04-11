@@ -121,6 +121,13 @@ def ensure_schema_updates(engine) -> None:
     with engine.begin() as connection:
         if "sis_platform" not in columns:
             connection.execute(text("ALTER TABLE school_snapshots ADD COLUMN sis_platform VARCHAR(255)"))
+        if "nightly_issues" not in columns:
+            connection.execute(text("ALTER TABLE school_snapshots ADD COLUMN nightly_issues INTEGER DEFAULT 0"))
+            connection.execute(text("ALTER TABLE school_snapshots ADD COLUMN nightly_no_data INTEGER DEFAULT 0"))
+            connection.execute(text("ALTER TABLE school_snapshots ADD COLUMN realtime_issues INTEGER DEFAULT 0"))
+            connection.execute(text("ALTER TABLE school_snapshots ADD COLUMN realtime_no_data INTEGER DEFAULT 0"))
+            connection.execute(text("ALTER TABLE school_snapshots ADD COLUMN manual_issues INTEGER DEFAULT 0"))
+            connection.execute(text("ALTER TABLE school_snapshots ADD COLUMN manual_no_data INTEGER DEFAULT 0"))
 
 
 def get_db() -> Session:

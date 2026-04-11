@@ -75,3 +75,60 @@ export function useChartOptions(opts: { categories?: string[]; colors?: string[]
     },
   };
 }
+
+export function useStackedBarChartOptions(opts: { categories?: string[]; colors?: string[] } = {}): ApexOptions {
+  return {
+    chart: {
+      type: 'bar',
+      stacked: true,
+      toolbar: { show: true },
+      fontFamily: 'Inter, ui-sans-serif, system-ui',
+    },
+    colors: opts.colors || ['#10b981', '#f59e0b', '#64748b', '#ef4444'], // Success, Issues, No Data, Failed by default
+    plotOptions: {
+      bar: {
+        horizontal: false,
+        columnWidth: '50%',
+      },
+    },
+    xaxis: {
+      categories: opts.categories || [],
+      axisBorder: { show: false },
+      axisTicks: { show: false },
+      labels: { style: { colors: '#64748b', fontSize: '12px' } },
+    },
+    yaxis: {
+      labels: {
+        style: { colors: '#64748b', fontSize: '12px' },
+        formatter: (value: number) => formatChartValue(value),
+      },
+    },
+    grid: {
+      borderColor: '#e2e8f0',
+      strokeDashArray: 4,
+    },
+    tooltip: {
+      theme: 'light',
+      y: {
+        formatter: (value: number | undefined) =>
+          typeof value === 'number' ? formatChartValue(value) : '',
+      },
+    },
+    legend: {
+      position: 'top',
+      labels: { colors: '#334155' },
+    },
+    dataLabels: {
+      enabled: false,
+    },
+    noData: {
+      text: 'No history available yet',
+      align: 'center',
+      verticalAlign: 'middle',
+      style: {
+        color: '#64748b',
+        fontSize: '14px',
+      },
+    },
+  };
+}

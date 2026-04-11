@@ -6,7 +6,7 @@ import { getClientHealthHistory, getClientHealthActiveUsers, getClientHealthSync
 import type { FailedMerge } from '@/types/clientHealth';
 import VueApexCharts from 'vue3-apexcharts';
 import Card from '@/components/ui/Card.vue';
-import { useChartOptions } from '@/composables/useChartOptions';
+import { useChartOptions, useStackedBarChartOptions } from '@/composables/useChartOptions';
 import { formatSchoolLabel } from '@/utils/schoolNames';
 
 const route = useRoute();
@@ -78,29 +78,39 @@ const lastAttemptStatusLabel = computed(() => {
 
 const nightlySuccessChartSeries = computed(() => {
   if (!history.value) return [];
-  const data = history.value.snapshots.map((s: any) => {
-    const { total, succeeded } = s.merges.nightly;
-    return total > 0 ? (succeeded / total) * 100 : 0;
-  });
-  return [{ name: 'Nightly Success Rate (% of upstream 48h window)', data }];
+  const succeeded = history.value.snapshots.map((s: any) => s.merges.nightly.succeeded);
+  const issues = history.value.snapshots.map((s: any) => s.merges.nightly.finishedWithIssues);
+  const noData = history.value.snapshots.map((s: any) => s.merges.nightly.noData);
+  const failed = history.value.snapshots.map((s: any) => s.merges.nightly.failed);
+  
+  return [
+    { name: 'Succeeded', data: succeeded },
+    { name: 'Finished With Issues', data: issues },
+    { name: 'No Data', data: noData },
+    { name: 'Failed', data: failed }
+  ];
 });
 
-const nightlySuccessChartOptions = computed(() => useChartOptions({
-  colors: ['#4b8bbf'],
+const nightlySuccessChartOptions = computed(() => useStackedBarChartOptions({
   categories: history.value?.snapshots.map((s: any) => s.snapshotDate),
 }));
 
 const realtimeSuccessChartSeries = computed(() => {
   if (!history.value) return [];
-  const data = history.value.snapshots.map((s: any) => {
-    const { total, succeeded } = s.merges.realtime;
-    return total > 0 ? (succeeded / total) * 100 : 0;
-  });
-  return [{ name: 'Realtime Success Rate (% in last 24h)', data }];
+  const succeeded = history.value.snapshots.map((s: any) => s.merges.realtime.succeeded);
+  const issues = history.value.snapshots.map((s: any) => s.merges.realtime.finishedWithIssues);
+  const noData = history.value.snapshots.map((s: any) => s.merges.realtime.noData);
+  const failed = history.value.snapshots.map((s: any) => s.merges.realtime.failed);
+
+  return [
+    { name: 'Succeeded', data: succeeded },
+    { name: 'Finished With Issues', data: issues },
+    { name: 'No Data', data: noData },
+    { name: 'Failed', data: failed }
+  ];
 });
 
-const realtimeSuccessChartOptions = computed(() => useChartOptions({
-  colors: ['#f14a4c'],
+const realtimeSuccessChartOptions = computed(() => useStackedBarChartOptions({
   categories: history.value?.snapshots.map((s: any) => s.snapshotDate),
 }));
 
@@ -282,14 +292,14 @@ async function handleHistoryBackfill() {
       <div v-else-if="error" class="rounded-[28px] border border-rose-200 bg-rose-50 p-8 text-rose-700 shadow-sm">{{ error }}</div>
       <div v-else class="space-y-8">
         <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
-        <Card subtitle="Performance" title="Nightly Merge Success Rate (48h Upstream Window)">
+        <Card subtitle="Performance" title="Nightly Merge Activity (48h Upstream Window)">
           <div class="mt-6 min-h-[260px]">
-            <VueApexCharts type="line" :options="nightlySuccessChartOptions" :series="nightlySuccessChartSeries" />
+            <VueApexCharts type="bar" :options="nightlySuccessChartOptions" :series="nightlySuccessChartSeries" />
           </div>
         </Card>
-        <Card subtitle="Performance" title="Realtime Merge Success Rate (Last 24h)">
+        <Card subtitle="Performance" title="Realtime Merge Activity (Last 24h)">
           <div class="mt-6 min-h-[260px]">
-            <VueApexCharts type="line" :options="realtimeSuccessChartOptions" :series="realtimeSuccessChartSeries" />
+            <VueApexCharts type="bar" :options="realtimeSuccessChartOptions" :series="realtimeSuccessChartSeries" />
           </div>
         </Card>
         <Card subtitle="Issues" title="Open Merge Errors Across Local Snapshots">

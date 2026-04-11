@@ -188,6 +188,25 @@ async def get_client_health_sync_metadata(school: Optional[str] = Query(default=
     finally:
         db.close()
 
+@router.get("/client-health/sync-runs")
+async def get_client_health_sync_runs(
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    """Return historical sync run events for background job monitoring."""
+    db = get_db()
+    try:
+        runs = (
+            db.query(SyncRun)
+            .order_by(SyncRun.attempted_at.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+        return {"syncRuns": [r.to_dict() for r in runs]}
+    finally:
+        db.close()
+
 
 # ---------------------------------------------------------------------------
 # Sync endpoint — fetch live data from Coursedog and persist to SQLite
@@ -589,29 +608,43 @@ def build_snapshot_from_merge_history(
     active_users_24h: int,
 ) -> dict:
     """Build a historical snapshot from merge history plus user activity."""
-    nightly_total = nightly_success = 0
-    realtime_total = realtime_success = 0
-    manual_total = manual_success = 0
+    nightly_total = nightly_success = nightly_issues = nightly_nodata = 0
+    realtime_total = realtime_success = realtime_issues = realtime_nodata = 0
+    manual_total = manual_success = manual_issues = manual_nodata = 0
     failed_entries: list[dict] = []
 
     for report in merge_entries:
         schedule = str(report.get("scheduleType", "")).lower()
         status = str(report.get("status", "")).lower()
         succeeded = status == "success"
-        failed = status in {"error", "failed"}
+        has_issues = status == "finishedwithissues"
+        no_data = status == "nodata"
+        failed = not (succeeded or has_issues or no_data)
 
         if schedule == "nightly":
             nightly_total += 1
             if succeeded:
                 nightly_success += 1
+            elif has_issues:
+                nightly_issues += 1
+            elif no_data:
+                nightly_nodata += 1
         elif schedule == "realtime":
             realtime_total += 1
             if succeeded:
                 realtime_success += 1
+            elif has_issues:
+                realtime_issues += 1
+            elif no_data:
+                realtime_nodata += 1
         elif schedule == "manual":
             manual_total += 1
             if succeeded:
                 manual_success += 1
+            elif has_issues:
+                manual_issues += 1
+            elif no_data:
+                manual_nodata += 1
 
         if failed:
             failed_entries.append(
@@ -634,17 +667,23 @@ def build_snapshot_from_merge_history(
             "nightly": {
                 "total": nightly_total,
                 "succeeded": nightly_success,
-                "failed": nightly_total - nightly_success,
+                "failed": nightly_total - nightly_success - nightly_issues - nightly_nodata,
+                "finishedWithIssues": nightly_issues,
+                "noData": nightly_nodata,
             },
             "realtime": {
                 "total": realtime_total,
                 "succeeded": realtime_success,
-                "failed": realtime_total - realtime_success,
+                "failed": realtime_total - realtime_success - realtime_issues - realtime_nodata,
+                "finishedWithIssues": realtime_issues,
+                "noData": realtime_nodata,
             },
             "manual": {
                 "total": manual_total,
                 "succeeded": manual_success,
-                "failed": manual_total - manual_success,
+                "failed": manual_total - manual_success - manual_issues - manual_nodata,
+                "finishedWithIssues": manual_issues,
+                "noData": manual_nodata,
             },
         },
         # Historical approximation: the current-state merge-errors overview endpoint
@@ -661,12 +700,10 @@ def build_snapshot_from_merge_history(
 # ---------------------------------------------------------------------------
 
 
-def summarize_recent_merge_activity(merge_entries: list[dict], last_24h: int) -> tuple[int, int, int, int]:
+def summarize_recent_merge_activity(merge_entries: list[dict], last_24h: int) -> tuple[int, int, int, int, int, int, int, int]:
     """Summarize realtime/manual merge activity in the last 24 hours."""
-    realtime_total = 0
-    realtime_success = 0
-    manual_total = 0
-    manual_success = 0
+    realtime_total = realtime_success = realtime_issues = realtime_nodata = 0
+    manual_total = manual_success = manual_issues = manual_nodata = 0
 
     for report in merge_entries:
         ts = report.get("timestampEnd", 0)
@@ -680,12 +717,23 @@ def summarize_recent_merge_activity(merge_entries: list[dict], last_24h: int) ->
             realtime_total += 1
             if status == "success":
                 realtime_success += 1
+            elif status == "finishedwithissues":
+                realtime_issues += 1
+            elif status == "nodata":
+                realtime_nodata += 1
         elif schedule == "manual":
             manual_total += 1
             if status == "success":
                 manual_success += 1
+            elif status == "finishedwithissues":
+                manual_issues += 1
+            elif status == "nodata":
+                manual_nodata += 1
 
-    return realtime_total, realtime_success, manual_total, manual_success
+    return (
+        realtime_total, realtime_success, realtime_issues, realtime_nodata,
+        manual_total, manual_success, manual_issues, manual_nodata
+    )
 
 
 async def fetch_school_health(
@@ -738,9 +786,10 @@ async def fetch_school_health(
         recent_failed = health_data.get("recentFailedMerges", [])
 
         # Compute realtime/manual from merge reports
-        realtime_total, realtime_success, manual_total, manual_success = summarize_recent_merge_activity(
-            merge_reports, last_24h
-        )
+        (
+            realtime_total, realtime_success, realtime_issues, realtime_nodata,
+            manual_total, manual_success, manual_issues, manual_nodata
+        ) = summarize_recent_merge_activity(merge_reports, last_24h)
 
         # Parse merge errors count
         merge_errors_count = extract_merge_error_count(merge_errors_data)
@@ -776,16 +825,22 @@ async def fetch_school_health(
                     "total": nightly_total,
                     "succeeded": nightly_success,
                     "failed": nightly_total - nightly_success,
+                    "finishedWithIssues": 0,
+                    "noData": 0,
                 },
                 "realtime": {
                     "total": realtime_total,
                     "succeeded": realtime_success,
-                    "failed": realtime_total - realtime_success,
+                    "failed": realtime_total - realtime_success - realtime_issues - realtime_nodata,
+                    "finishedWithIssues": realtime_issues,
+                    "noData": realtime_nodata,
                 },
                 "manual": {
                     "total": manual_total,
                     "succeeded": manual_success,
-                    "failed": manual_total - manual_success,
+                    "failed": manual_total - manual_success - manual_issues - manual_nodata,
+                    "finishedWithIssues": manual_issues,
+                    "noData": manual_nodata,
                 },
             },
             "recentFailedMerges": recent_failed,
