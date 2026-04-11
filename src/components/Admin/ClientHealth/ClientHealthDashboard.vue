@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
 import { getClientHealth, getClientHealthHistory, getSyncStatus, triggerSync } from '@/api';
 import type { ClientHealthSnapshot } from '@/types/clientHealth';
-import { useChartOptions } from '@/composables/useChartOptions';
+import { useChartOptions, useStackedBarChartOptions } from '@/composables/useChartOptions';
 import { formatSchoolLabel } from '@/utils/schoolNames';
 import ClientHealthSummaryCards from './ClientHealthSummaryCards.vue';
 import ClientHealthTable from './ClientHealthTable.vue';
@@ -13,6 +13,10 @@ import VueApexCharts from 'vue3-apexcharts';
 const router = useRouter();
 const queryClient = useQueryClient();
 const selectedSchool = ref<string>('all');
+const selectedSis = ref<string>('all');
+
+// Reset school filter when SIS changes (to avoid stale cross-filter state)
+watch(selectedSis, () => { selectedSchool.value = 'all'; });
 
 // Sync state
 const isSyncing = ref(false);
@@ -45,34 +49,127 @@ const data = computed(() => healthResponse.value);
 const history = computed(() => historyResponse.value ?? []);
 
 const schoolOptions = computed(() => {
-  return data.value ? [{ value: 'all', label: 'All schools' }, ...data.value.schools.map((school: ClientHealthSnapshot) => ({ value: school.school, label: formatSchoolLabel(school.school) }))] : [{ value: 'all', label: 'All schools' }];
-});
-
-const filteredHistory = computed(() => {
-  if (selectedSchool.value === 'all') {
-    return history.value;
-  }
-  return history.value.filter((snapshot: ClientHealthSnapshot) => snapshot.school === selectedSchool.value);
-});
-
-const mergeErrorsChartSeries = computed(() => {
-  const grouped = new Map<string, number>();
-  filteredHistory.value.forEach((snapshot: ClientHealthSnapshot) => {
-    const count = grouped.get(snapshot.snapshotDate) ?? 0;
-    grouped.set(snapshot.snapshotDate, count + snapshot.mergeErrorsCount);
-  });
-  const sortedDates = Array.from(grouped.keys()).sort();
+  const base = data.value?.schools ?? [];
+  const sisFiltered = selectedSis.value === 'all'
+    ? base
+    : base.filter((s: ClientHealthSnapshot) => s.sisPlatform === selectedSis.value);
   return [
-    {
-      name: selectedSchool.value === 'all' ? 'Total Merge Errors' : `Errors for ${filteredHistory.value[0] ? formatSchoolLabel(filteredHistory.value[0].school) : 'Selected School'}`,
-      data: sortedDates.map((date) => grouped.get(date) ?? 0),
-    },
+    { value: 'all', label: 'All schools' },
+    ...sisFiltered.map((school: ClientHealthSnapshot) => ({ value: school.school, label: formatSchoolLabel(school.school) })),
   ];
 });
 
-const mergeErrorsChartOptions = computed(() => useChartOptions({
-  colors: ['#f14a4c'],
-  categories: filteredHistory.value.filter((_: ClientHealthSnapshot, i: number) => i % Math.ceil(filteredHistory.value.length / 10) === 0).map((s: ClientHealthSnapshot) => s.snapshotDate),
+// Schools filtered by SIS (and optionally school) for the table + summary cards
+const filteredSchools = computed(() => {
+  const base = data.value?.schools ?? [];
+  return base.filter((s: ClientHealthSnapshot) => {
+    const sisMatch = selectedSis.value === 'all' || s.sisPlatform === selectedSis.value;
+    const schoolMatch = selectedSchool.value === 'all' || s.school === selectedSchool.value;
+    return sisMatch && schoolMatch;
+  });
+});
+
+// Unique SIS platforms from history for the filter dropdown
+const sisOptions = computed(() => {
+  const platforms = new Set<string>();
+  history.value.forEach((s: ClientHealthSnapshot) => {
+    if (s.sisPlatform) platforms.add(s.sisPlatform);
+  });
+  return [
+    { value: 'all', label: 'All SIS Platforms' },
+    ...Array.from(platforms).sort().map((p) => ({ value: p, label: p })),
+  ];
+});
+
+const filteredHistory = computed(() => {
+  return history.value.filter((snapshot: ClientHealthSnapshot) => {
+    const schoolMatch = selectedSchool.value === 'all' || snapshot.school === selectedSchool.value;
+    const sisMatch = selectedSis.value === 'all' || snapshot.sisPlatform === selectedSis.value;
+    return schoolMatch && sisMatch;
+  });
+});
+
+// Stacked area chart: nightly success breakdown over time
+const nightlyBreakdownSeries = computed(() => {
+  // Aggregate counts by date across all filtered schools
+  const byDate = new Map<string, { succeeded: number; issues: number; noData: number; failed: number }>();
+  filteredHistory.value.forEach((s: ClientHealthSnapshot) => {
+    const d = s.snapshotDate;
+    const existing = byDate.get(d) ?? { succeeded: 0, issues: 0, noData: 0, failed: 0 };
+    const n = s.merges.nightly;
+    byDate.set(d, {
+      succeeded: existing.succeeded + n.succeeded,
+      issues: existing.issues + (n.finishedWithIssues || 0),
+      noData: existing.noData + (n.noData || 0),
+      failed: existing.failed + n.failed,
+    });
+  });
+  const sortedDates = Array.from(byDate.keys()).sort();
+  return [
+    { name: 'Success',            data: sortedDates.map((d) => byDate.get(d)!.succeeded) },
+    { name: 'Finished w/ Issues', data: sortedDates.map((d) => byDate.get(d)!.issues) },
+    { name: 'No Data',            data: sortedDates.map((d) => byDate.get(d)!.noData) },
+    { name: 'Failed',             data: sortedDates.map((d) => byDate.get(d)!.failed) },
+  ];
+});
+
+const nightlyBreakdownDates = computed(() => {
+  const dates = new Set<string>();
+  filteredHistory.value.forEach((s: ClientHealthSnapshot) => dates.add(s.snapshotDate));
+  return Array.from(dates).sort();
+});
+
+const nightlyBreakdownOptions = computed(() => useStackedBarChartOptions({
+  categories: nightlyBreakdownDates.value,
+  colors: ['#10b981', '#f59e0b', '#94a3b8', '#ef4444'],
+}));
+
+// Helper: aggregate a single numeric field per date across filtered history
+const aggregateByDate = (field: (s: ClientHealthSnapshot) => number) => {
+  const byDate = new Map<string, number>();
+  filteredHistory.value.forEach((s: ClientHealthSnapshot) => {
+    byDate.set(s.snapshotDate, (byDate.get(s.snapshotDate) ?? 0) + field(s));
+  });
+  return Array.from(byDate.entries()).sort(([a], [b]) => a.localeCompare(b));
+};
+
+const chartDates = computed(() => nightlyBreakdownDates.value);
+
+// Open merge errors over time
+const mergeErrorsSeries = computed(() => {
+  const entries = aggregateByDate((s) => s.mergeErrorsCount);
+  return [{ name: 'Open Merge Errors', data: entries.map(([, v]) => v) }];
+});
+const mergeErrorsOptions = computed(() => useChartOptions({
+  colors: ['#ef4444'],
+  categories: chartDates.value,
+}));
+
+// Active users over time
+const activeUsersSeries = computed(() => {
+  const entries = aggregateByDate((s) => s.activeUsers24h);
+  return [{ name: 'Active Users (24h)', data: entries.map(([, v]) => v) }];
+});
+const activeUsersOptions = computed(() => useChartOptions({
+  colors: ['#36a2eb'],
+  categories: chartDates.value,
+}));
+
+// Schools at risk per day (health score < 65)
+const atRiskSeries = computed(() => {
+  const byDate = new Map<string, number>();
+  filteredHistory.value.forEach((s: ClientHealthSnapshot) => {
+    const n = s.merges.nightly;
+    const validTotal = n.total - (n.noData || 0);
+    const rate = validTotal > 0 ? ((n.succeeded + (n.finishedWithIssues || 0) * 0.5) / validTotal) * 100 : 0;
+    const score = Math.max(0, Math.min(100, rate - Math.min(20, Math.log2(s.mergeErrorsCount + 1) * 4)));
+    if (score < 65) byDate.set(s.snapshotDate, (byDate.get(s.snapshotDate) ?? 0) + 1);
+  });
+  return [{ name: 'Schools at Risk', data: chartDates.value.map((d) => byDate.get(d) ?? 0) }];
+});
+const atRiskOptions = computed(() => useChartOptions({
+  colors: ['#f59e0b'],
+  categories: chartDates.value,
 }));
 
 const handleRowClick = (school: ClientHealthSnapshot) => {
@@ -182,26 +279,63 @@ async function handleSync() {
         </div>
       </div>
       <div v-else class="space-y-6">
-        <ClientHealthSummaryCards :schools="data!.schools" />
+        <ClientHealthSummaryCards :schools="filteredSchools" />
         <div class="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
           <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
-              <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Merge Analysis</p>
-              <h2 class="mt-2 text-xl font-semibold text-slate-950">Open merge errors across local snapshots</h2>
-              <p class="mt-2 max-w-xl text-sm leading-6 text-slate-600">The latest sync stores the current open-error count from Integrations Hub. Historical backfills approximate older points from failed merges on that day.</p>
+              <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Fleet Health</p>
+              <h2 class="mt-2 text-xl font-semibold text-slate-950">Nightly merge outcomes — 30-day trend</h2>
+              <p class="mt-2 max-w-xl text-sm leading-6 text-slate-600">Aggregate nightly merge results across all schools in the selected filter, broken down by outcome. Backfilled from merge history; current-day data uses the integrations health endpoint.</p>
             </div>
-            <div class="flex items-center gap-3">
-              <label class="text-sm font-medium text-slate-700">School</label>
-              <select v-model="selectedSchool" class="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-900 focus:border-slate-400 focus:outline-none">
-                <option v-for="option in schoolOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-              </select>
+            <div class="flex flex-wrap items-center gap-3">
+              <div class="flex items-center gap-2">
+                <label class="text-sm font-medium text-slate-700">SIS</label>
+                <select v-model="selectedSis" class="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-900 focus:border-slate-400 focus:outline-none">
+                  <option v-for="option in sisOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+                </select>
+              </div>
+              <div class="flex items-center gap-2">
+                <label class="text-sm font-medium text-slate-700">School</label>
+                <select v-model="selectedSchool" class="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-900 focus:border-slate-400 focus:outline-none">
+                  <option v-for="option in schoolOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+                </select>
+              </div>
             </div>
           </div>
           <div class="mt-6 min-h-[320px] rounded-[24px] border border-slate-200 bg-slate-50 p-6">
-            <VueApexCharts type="line" :options="mergeErrorsChartOptions" :series="mergeErrorsChartSeries" />
+            <VueApexCharts type="bar" :options="nightlyBreakdownOptions" :series="nightlyBreakdownSeries" />
           </div>
         </div>
-        <ClientHealthTable :schools="data!.schools" @row-click="handleRowClick" />
+
+        <!-- Secondary trend charts -->
+        <div class="grid grid-cols-1 gap-6 md:grid-cols-3">
+          <div class="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+            <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Errors</p>
+            <h3 class="mt-2 text-base font-semibold text-slate-950">Open Merge Errors</h3>
+            <p class="mt-1 text-xs text-slate-500">Total open errors captured at each sync, aggregated across filtered schools.</p>
+            <div class="mt-4 min-h-[200px]">
+              <VueApexCharts type="line" :options="mergeErrorsOptions" :series="mergeErrorsSeries" />
+            </div>
+          </div>
+          <div class="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+            <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Engagement</p>
+            <h3 class="mt-2 text-base font-semibold text-slate-950">Active Users (24h)</h3>
+            <p class="mt-1 text-xs text-slate-500">Distinct active users per snapshot day — drops here correlate with integration impact.</p>
+            <div class="mt-4 min-h-[200px]">
+              <VueApexCharts type="line" :options="activeUsersOptions" :series="activeUsersSeries" />
+            </div>
+          </div>
+          <div class="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+            <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Fleet Risk</p>
+            <h3 class="mt-2 text-base font-semibold text-slate-950">Schools at Risk</h3>
+            <p class="mt-1 text-xs text-slate-500">Count of schools with a computed health score below 65 (Warning or At Risk threshold).</p>
+            <div class="mt-4 min-h-[200px]">
+              <VueApexCharts type="line" :options="atRiskOptions" :series="atRiskSeries" />
+            </div>
+          </div>
+        </div>
+
+        <ClientHealthTable :schools="filteredSchools" @row-click="handleRowClick" />
       </div>
     </div>
   </div>
