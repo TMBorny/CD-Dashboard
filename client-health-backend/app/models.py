@@ -29,16 +29,22 @@ class SchoolSnapshot(Base):
     nightly_total = Column(Integer, default=0)
     nightly_succeeded = Column(Integer, default=0)
     nightly_failed = Column(Integer, default=0)
+    nightly_issues = Column(Integer, default=0)
+    nightly_no_data = Column(Integer, default=0)
 
     # Realtime merge stats
     realtime_total = Column(Integer, default=0)
     realtime_succeeded = Column(Integer, default=0)
     realtime_failed = Column(Integer, default=0)
+    realtime_issues = Column(Integer, default=0)
+    realtime_no_data = Column(Integer, default=0)
 
     # Manual merge stats
     manual_total = Column(Integer, default=0)
     manual_succeeded = Column(Integer, default=0)
     manual_failed = Column(Integer, default=0)
+    manual_issues = Column(Integer, default=0)
+    manual_no_data = Column(Integer, default=0)
 
     # Error and activity counts
     recent_failed_merges_json = Column(Text, default="[]")
@@ -60,16 +66,22 @@ class SchoolSnapshot(Base):
                     "total": self.nightly_total,
                     "succeeded": self.nightly_succeeded,
                     "failed": self.nightly_failed,
+                    "finishedWithIssues": self.nightly_issues,
+                    "noData": self.nightly_no_data,
                 },
                 "realtime": {
                     "total": self.realtime_total,
                     "succeeded": self.realtime_succeeded,
                     "failed": self.realtime_failed,
+                    "finishedWithIssues": self.realtime_issues,
+                    "noData": self.realtime_no_data,
                 },
                 "manual": {
                     "total": self.manual_total,
                     "succeeded": self.manual_succeeded,
                     "failed": self.manual_failed,
+                    "finishedWithIssues": self.manual_issues,
+                    "noData": self.manual_no_data,
                 },
             },
             "recentFailedMerges": json.loads(self.recent_failed_merges_json)
@@ -97,12 +109,18 @@ class SchoolSnapshot(Base):
             nightly_total=nightly.get("total", 0),
             nightly_succeeded=nightly.get("succeeded", 0),
             nightly_failed=nightly.get("failed", 0),
+            nightly_issues=nightly.get("finishedWithIssues", 0),
+            nightly_no_data=nightly.get("noData", 0),
             realtime_total=realtime.get("total", 0),
             realtime_succeeded=realtime.get("succeeded", 0),
             realtime_failed=realtime.get("failed", 0),
+            realtime_issues=realtime.get("finishedWithIssues", 0),
+            realtime_no_data=realtime.get("noData", 0),
             manual_total=manual.get("total", 0),
             manual_succeeded=manual.get("succeeded", 0),
             manual_failed=manual.get("failed", 0),
+            manual_issues=manual.get("finishedWithIssues", 0),
+            manual_no_data=manual.get("noData", 0),
             recent_failed_merges_json=json.dumps(
                 data.get("recentFailedMerges", [])
             ),

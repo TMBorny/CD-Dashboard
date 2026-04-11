@@ -110,8 +110,14 @@ class MergeErrorCountTests(unittest.TestCase):
         self.assertEqual(snapshot["merges"]["nightly"]["total"], 2)
         self.assertEqual(snapshot["merges"]["nightly"]["succeeded"], 1)
         self.assertEqual(snapshot["merges"]["nightly"]["failed"], 1)
+        self.assertEqual(snapshot["merges"]["nightly"]["finishedWithIssues"], 0)
+        self.assertEqual(snapshot["merges"]["nightly"]["noData"], 0)
+        
         self.assertEqual(snapshot["merges"]["realtime"]["total"], 1)
+        self.assertEqual(snapshot["merges"]["realtime"]["succeeded"], 1)
+        
         self.assertEqual(snapshot["merges"]["manual"]["failed"], 1)
+        self.assertEqual(snapshot["merges"]["manual"]["finishedWithIssues"], 0)
         self.assertEqual(snapshot["mergeErrorsCount"], 2)
         self.assertEqual(snapshot["activeUsers24h"], 7)
         self.assertEqual(snapshot["sisPlatform"], "PeopleSoftDirect")
@@ -137,7 +143,19 @@ class MergeErrorCountTests(unittest.TestCase):
         ]
         self.assertEqual(
             summarize_recent_merge_activity(merge_entries, last_24h),
-            (2, 1, 1, 1),
+            (2, 1, 0, 0, 1, 0, 0, 0),
+        )
+
+    def test_summarize_recent_merge_activity_detects_granular_statuses(self):
+        last_24h = 1000
+        merge_entries = [
+            {"timestampEnd": 2000, "scheduleType": "realtime", "status": "finishedWithIssues"},
+            {"timestampEnd": 2001, "scheduleType": "realtime", "status": "noData"},
+            {"timestampEnd": 2002, "scheduleType": "manual", "status": "finishedWithIssues"},
+        ]
+        self.assertEqual(
+            summarize_recent_merge_activity(merge_entries, last_24h),
+            (2, 0, 1, 1, 1, 0, 1, 0),
         )
 
     def test_extract_sis_platform_prefers_platform_name(self):

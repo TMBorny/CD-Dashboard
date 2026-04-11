@@ -12,6 +12,12 @@ const navItems = [
     icon: '📊',
     name: 'AdminClientHealth',
   },
+  {
+    label: 'Job Monitoring',
+    path: '/admin/jobs',
+    icon: '⚙️',
+    name: 'AdminJobsMonitoring',
+  },
 ];
 
 const toggleSidebar = () => {

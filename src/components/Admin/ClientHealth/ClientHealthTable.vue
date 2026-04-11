@@ -27,13 +27,15 @@ const sortLabels: Record<typeof sortBy.value, string> = {
 };
 
 const nightlyRate = (school: ClientHealthSnapshot) => {
-  const { total, succeeded } = school.merges.nightly;
-  return total > 0 ? (succeeded / total) * 100 : null;
+  const { total, succeeded, noData, finishedWithIssues } = school.merges.nightly;
+  const validTotal = total - noData;
+  return validTotal > 0 ? ((succeeded + (finishedWithIssues * 0.5)) / validTotal) * 100 : null;
 };
 
 const realtimeRate = (school: ClientHealthSnapshot) => {
-  const { total, succeeded } = school.merges.realtime;
-  return total > 0 ? (succeeded / total) * 100 : null;
+  const { total, succeeded, noData, finishedWithIssues } = school.merges.realtime;
+  const validTotal = total - noData;
+  return validTotal > 0 ? ((succeeded + (finishedWithIssues * 0.5)) / validTotal) * 100 : null;
 };
 
 const getBaseSuccessScore = (school: ClientHealthSnapshot) => {
@@ -229,12 +231,20 @@ const getHealthScore = (school: ClientHealthSnapshot) => {
               <div class="mt-2 text-xs font-semibold text-slate-400">Score: <span class="text-slate-600">{{ getHealthScore(school) }}</span></div>
             </td>
             <td class="whitespace-nowrap px-6 py-5">
-              <div class="text-sm font-semibold text-slate-900">{{ school.merges.nightly.succeeded }} / {{ school.merges.nightly.total }}</div>
-              <div class="mt-1 text-xs text-slate-500">{{ (nightlyRate(school) ?? 0).toFixed(0) }}% clear in upstream 48h window</div>
+              <div class="flex items-center gap-2">
+                <div class="text-sm font-semibold text-slate-900">{{ school.merges.nightly.succeeded }} / {{ school.merges.nightly.total }}</div>
+                <div v-if="school.merges.nightly.finishedWithIssues > 0" class="text-xs font-semibold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-md" title="Finished With Issues">{{ school.merges.nightly.finishedWithIssues }} Issues</div>
+                <div v-if="school.merges.nightly.noData > 0" class="text-xs font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-md" title="No Data">{{ school.merges.nightly.noData }} No Data</div>
+              </div>
+              <div class="mt-1 text-xs text-slate-500">{{ (nightlyRate(school) ?? 0).toFixed(0) }}% score in upstream 48h window</div>
             </td>
             <td class="whitespace-nowrap px-6 py-5">
-              <div class="text-sm font-semibold text-slate-900">{{ school.merges.realtime.succeeded }} / {{ school.merges.realtime.total }}</div>
-              <div class="mt-1 text-xs text-slate-500">{{ (realtimeRate(school) ?? 0).toFixed(0) }}% clear in last 24h</div>
+              <div class="flex items-center gap-2">
+                <div class="text-sm font-semibold text-slate-900">{{ school.merges.realtime.succeeded }} / {{ school.merges.realtime.total }}</div>
+                <div v-if="school.merges.realtime.finishedWithIssues > 0" class="text-xs font-semibold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-md" title="Finished With Issues">{{ school.merges.realtime.finishedWithIssues }} Issues</div>
+                <div v-if="school.merges.realtime.noData > 0" class="text-xs font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-md" title="No Data">{{ school.merges.realtime.noData }} No Data</div>
+              </div>
+              <div class="mt-1 text-xs text-slate-500">{{ (realtimeRate(school) ?? 0).toFixed(0) }}% score in last 24h</div>
             </td>
             <td class="whitespace-nowrap px-6 py-5">
               <div class="text-sm font-semibold text-slate-900">{{ school.mergeErrorsCount }}</div>
