@@ -686,20 +686,35 @@ async def fetch_school_sis_platform(school: str) -> Optional[str]:
 
 
 def calculate_nightly_merge_time(merge_entries: list[dict]) -> int:
-    """Calculate the total duration spanning all nightly merges in the provided entries."""
-    starts = []
-    ends = []
+    """Calculate the contiguous duration spanning all nightly merges in the provided entries.
+    
+    This merges overlapping execution intervals to prevent gaps between disconnected
+    nightly runs (e.g. yesterday's run and today's run) from artificially inflating
+    the total duration.
+    """
+    intervals = []
     for report in merge_entries:
         if str(report.get("scheduleType", "")).lower() == "nightly":
             start_val = report.get("timestampStart") or report.get("startedAt") or report.get("timestampEnd")
             end_val = report.get("timestampEnd") or report.get("completedAt")
-            if end_val and isinstance(end_val, (int, float)):
-                ends.append(end_val)
-            if start_val and isinstance(start_val, (int, float)):
-                starts.append(start_val)
-    if starts and ends:
-        return max(0, int(max(ends) - min(starts)))
-    return 0
+            if start_val and end_val and isinstance(start_val, (int, float)) and isinstance(end_val, (int, float)):
+                if start_val <= end_val:
+                    intervals.append([start_val, end_val])
+    
+    if not intervals:
+        return 0
+        
+    intervals.sort(key=lambda x: x[0])
+    merged = [intervals[0]]
+    for current in intervals[1:]:
+        prev = merged[-1]
+        # if current overlaps or touches previous
+        if current[0] <= prev[1]:
+            prev[1] = max(prev[1], current[1])
+        else:
+            merged.append(current)
+            
+    return max(0, int(sum(end - start for start, end in merged)))
 
 
 def build_snapshot_from_merge_history(
