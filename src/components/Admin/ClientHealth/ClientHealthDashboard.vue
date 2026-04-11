@@ -89,27 +89,30 @@ const filteredHistory = computed(() => {
   });
 });
 
-// Stacked area chart: nightly success breakdown over time
+// Stacked bar chart: nightly success breakdown as % rates over time
+// Using percentages so days with different numbers of schools contributing
+// are directly comparable (4/10 had 508 schools, other days have ~7-11).
 const nightlyBreakdownSeries = computed(() => {
-  // Aggregate counts by date across all filtered schools
-  const byDate = new Map<string, { succeeded: number; issues: number; noData: number; failed: number }>();
+  const byDate = new Map<string, { succeeded: number; issues: number; noData: number; failed: number; total: number }>();
   filteredHistory.value.forEach((s: ClientHealthSnapshot) => {
     const d = s.snapshotDate;
-    const existing = byDate.get(d) ?? { succeeded: 0, issues: 0, noData: 0, failed: 0 };
+    const existing = byDate.get(d) ?? { succeeded: 0, issues: 0, noData: 0, failed: 0, total: 0 };
     const n = s.merges.nightly;
     byDate.set(d, {
       succeeded: existing.succeeded + n.succeeded,
-      issues: existing.issues + (n.finishedWithIssues || 0),
-      noData: existing.noData + (n.noData || 0),
-      failed: existing.failed + n.failed,
+      issues:    existing.issues    + (n.finishedWithIssues || 0),
+      noData:    existing.noData    + (n.noData || 0),
+      failed:    existing.failed    + n.failed,
+      total:     existing.total     + n.total,
     });
   });
   const sortedDates = Array.from(byDate.keys()).sort();
+  const pct = (val: number, total: number) => total > 0 ? parseFloat(((val / total) * 100).toFixed(1)) : 0;
   return [
-    { name: 'Success',            data: sortedDates.map((d) => byDate.get(d)!.succeeded) },
-    { name: 'Finished w/ Issues', data: sortedDates.map((d) => byDate.get(d)!.issues) },
-    { name: 'No Data',            data: sortedDates.map((d) => byDate.get(d)!.noData) },
-    { name: 'Failed',             data: sortedDates.map((d) => byDate.get(d)!.failed) },
+    { name: 'Success',            data: sortedDates.map((d) => pct(byDate.get(d)!.succeeded, byDate.get(d)!.total)) },
+    { name: 'Finished w/ Issues', data: sortedDates.map((d) => pct(byDate.get(d)!.issues,    byDate.get(d)!.total)) },
+    { name: 'No Data',            data: sortedDates.map((d) => pct(byDate.get(d)!.noData,    byDate.get(d)!.total)) },
+    { name: 'Failed',             data: sortedDates.map((d) => pct(byDate.get(d)!.failed,    byDate.get(d)!.total)) },
   ];
 });
 
@@ -119,9 +122,23 @@ const nightlyBreakdownDates = computed(() => {
   return Array.from(dates).sort();
 });
 
-const nightlyBreakdownOptions = computed(() => useStackedBarChartOptions({
-  categories: nightlyBreakdownDates.value,
-  colors: ['#10b981', '#f59e0b', '#94a3b8', '#ef4444'],
+const nightlyBreakdownOptions = computed(() => ({
+  ...useStackedBarChartOptions({
+    categories: nightlyBreakdownDates.value,
+    colors: ['#10b981', '#f59e0b', '#94a3b8', '#ef4444'],
+  }),
+  yaxis: {
+    min: 0,
+    max: 100,
+    labels: {
+      style: { colors: '#64748b', fontSize: '12px' },
+      formatter: (v: number) => `${v}%`,
+    },
+  },
+  tooltip: {
+    theme: 'light',
+    y: { formatter: (v: number) => `${v}%` },
+  },
 }));
 
 // Helper: aggregate a single numeric field per date across filtered history
@@ -280,57 +297,64 @@ async function handleSync() {
       </div>
       <div v-else class="space-y-6">
         <ClientHealthSummaryCards :schools="filteredSchools" />
-        <div class="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-          <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div>
-              <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Fleet Health</p>
-              <h2 class="mt-2 text-xl font-semibold text-slate-950">Nightly merge outcomes — 30-day trend</h2>
-              <p class="mt-2 max-w-xl text-sm leading-6 text-slate-600">Aggregate nightly merge results across all schools in the selected filter, broken down by outcome. Backfilled from merge history; current-day data uses the integrations health endpoint.</p>
-            </div>
-            <div class="flex flex-wrap items-center gap-3">
-              <div class="flex items-center gap-2">
-                <label class="text-sm font-medium text-slate-700">SIS</label>
-                <select v-model="selectedSis" class="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-900 focus:border-slate-400 focus:outline-none">
-                  <option v-for="option in sisOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-                </select>
-              </div>
-              <div class="flex items-center gap-2">
-                <label class="text-sm font-medium text-slate-700">School</label>
-                <select v-model="selectedSchool" class="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-900 focus:border-slate-400 focus:outline-none">
-                  <option v-for="option in schoolOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-                </select>
-              </div>
-            </div>
+        <!-- Filters Section -->
+        <div class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between py-2">
+          <div>
+            <h2 class="text-lg font-semibold text-slate-950">Trend Analytics</h2>
+            <p class="mt-1 text-sm text-slate-500">30-day historical trends for the selected cohort.</p>
           </div>
-          <div class="mt-6 min-h-[320px] rounded-[24px] border border-slate-200 bg-slate-50 p-6">
-            <VueApexCharts type="bar" :options="nightlyBreakdownOptions" :series="nightlyBreakdownSeries" />
+          <div class="flex flex-wrap items-center gap-3">
+            <div class="flex items-center gap-2">
+              <label class="text-sm font-medium text-slate-700">SIS</label>
+              <select v-model="selectedSis" class="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-900 shadow-sm focus:border-slate-400 focus:outline-none">
+                <option v-for="option in sisOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+              </select>
+            </div>
+            <div class="flex items-center gap-2">
+              <label class="text-sm font-medium text-slate-700">School</label>
+              <select v-model="selectedSchool" class="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-900 shadow-sm focus:border-slate-400 focus:outline-none">
+                <option v-for="option in schoolOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+              </select>
+            </div>
           </div>
         </div>
 
-        <!-- Secondary trend charts -->
-        <div class="grid grid-cols-1 gap-6 md:grid-cols-3">
-          <div class="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+        <!-- 4-Up Chart Grid -->
+        <div class="grid grid-cols-1 gap-6 xl:grid-cols-2">
+          <!-- Chart 1: Merge Outcomes -->
+          <div class="flex flex-col rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+            <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Fleet Health</p>
+            <h3 class="mt-2 text-base font-semibold text-slate-950">Nightly merge outcomes</h3>
+            <p class="mt-1 text-xs text-slate-500">Percentage breakdown normalized across valid schools.</p>
+            <div class="mt-4 flex-1 min-h-[250px]">
+              <VueApexCharts type="bar" :options="nightlyBreakdownOptions" :series="nightlyBreakdownSeries" height="100%" />
+            </div>
+          </div>
+          <!-- Chart 2: Open Errors -->
+          <div class="flex flex-col rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
             <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Errors</p>
             <h3 class="mt-2 text-base font-semibold text-slate-950">Open Merge Errors</h3>
-            <p class="mt-1 text-xs text-slate-500">Total open errors captured at each sync, aggregated across filtered schools.</p>
-            <div class="mt-4 min-h-[200px]">
-              <VueApexCharts type="line" :options="mergeErrorsOptions" :series="mergeErrorsSeries" />
+            <p class="mt-1 text-xs text-slate-500">Total open errors captured at each sync, across filtered scope.</p>
+            <div class="mt-4 flex-1 min-h-[250px]">
+              <VueApexCharts type="line" :options="mergeErrorsOptions" :series="mergeErrorsSeries" height="100%" />
             </div>
           </div>
-          <div class="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+          <!-- Chart 3: Active Users -->
+          <div class="flex flex-col rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
             <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Engagement</p>
             <h3 class="mt-2 text-base font-semibold text-slate-950">Active Users (24h)</h3>
-            <p class="mt-1 text-xs text-slate-500">Distinct active users per snapshot day — drops here correlate with integration impact.</p>
-            <div class="mt-4 min-h-[200px]">
-              <VueApexCharts type="line" :options="activeUsersOptions" :series="activeUsersSeries" />
+            <p class="mt-1 text-xs text-slate-500">Distinct active users per snapshot day.</p>
+            <div class="mt-4 flex-1 min-h-[250px]">
+              <VueApexCharts type="line" :options="activeUsersOptions" :series="activeUsersSeries" height="100%" />
             </div>
           </div>
-          <div class="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+          <!-- Chart 4: Schools at Risk -->
+          <div class="flex flex-col rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
             <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Fleet Risk</p>
             <h3 class="mt-2 text-base font-semibold text-slate-950">Schools at Risk</h3>
-            <p class="mt-1 text-xs text-slate-500">Count of schools with a computed health score below 65 (Warning or At Risk threshold).</p>
-            <div class="mt-4 min-h-[200px]">
-              <VueApexCharts type="line" :options="atRiskOptions" :series="atRiskSeries" />
+            <p class="mt-1 text-xs text-slate-500">Count of schools with a computed health score below 65.</p>
+            <div class="mt-4 flex-1 min-h-[250px]">
+              <VueApexCharts type="line" :options="atRiskOptions" :series="atRiskSeries" height="100%" />
             </div>
           </div>
         </div>

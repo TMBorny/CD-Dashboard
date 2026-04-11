@@ -6,8 +6,11 @@ and stores it in the database.
 """
 
 import asyncio
+import json
+import random
 import time
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from uuid import uuid4
 from typing import Optional
 
@@ -21,6 +24,26 @@ _sync_jobs: dict[str, dict] = {}
 _active_sync_job_id: Optional[str] = None
 TEMP_FULL_SYNC_LIMIT = 10
 EXCLUDED_SCHOOL_TERMS = ("demo", "test", "sandbox", "baseline")
+
+# Path to the persisted dev sample file — sits alongside the SQLite DB.
+# Delete this file to re-roll a new random set of schools on the next sync.
+DEV_SAMPLE_PATH = Path(__file__).parent.parent / "dev_school_sample.json"
+
+
+def _load_dev_sample() -> Optional[list]:
+    """Return the persisted school IDs if the dev sample file exists."""
+    if DEV_SAMPLE_PATH.exists():
+        try:
+            return json.loads(DEV_SAMPLE_PATH.read_text())["schools"]
+        except Exception:
+            pass
+    return None
+
+
+def _save_dev_sample(school_ids: list[str]) -> None:
+    """Persist the chosen school IDs so they survive server restarts."""
+    DEV_SAMPLE_PATH.write_text(json.dumps({"schools": school_ids}, indent=2))
+    print(f"[dev] Saved random school sample ({len(school_ids)} schools) → {DEV_SAMPLE_PATH}")
 
 
 def school_matches_excluded_terms(value: Optional[str]) -> bool:
@@ -289,13 +312,34 @@ async def get_sync_status(job_id: str):
 
 
 def select_schools_for_sync(schools: list[dict], school: Optional[str]) -> list[dict]:
-    """Select which schools should be synced for the requested scope."""
+    """Select which schools should be synced for the requested scope.
+
+    Single-school requests are always honoured. For bulk syncs in dev mode
+    (TEMP_FULL_SYNC_LIMIT is set), a random sample of that many schools is
+    chosen once and then persisted to DEV_SAMPLE_PATH so the same cohort is
+    used on every subsequent sync. Delete that file to re-roll.
+    """
     if school:
         selected = [item for item in schools if item["school"] == school]
         if not selected:
             raise HTTPException(status_code=404, detail=f"School not found: {school}")
         return selected
-    return schools[:TEMP_FULL_SYNC_LIMIT]
+
+    # Build an index of available schools for fast lookup
+    school_index = {s["school"]: s for s in schools}
+
+    # Try to reuse a previously saved sample
+    saved_ids = _load_dev_sample()
+    if saved_ids:
+        # Re-resolve against the current school list (handles removed schools)
+        resolved = [school_index[sid] for sid in saved_ids if sid in school_index]
+        if resolved:
+            return resolved
+
+    # No saved sample — pick a fresh random set
+    chosen = random.sample(schools, min(TEMP_FULL_SYNC_LIMIT, len(schools)))
+    _save_dev_sample([s["school"] for s in chosen])
+    return chosen
 
 
 async def run_sync_job(job_id: str, school: Optional[str] = None):
@@ -641,6 +685,23 @@ async def fetch_school_sis_platform(school: str) -> Optional[str]:
     return platform
 
 
+def calculate_nightly_merge_time(merge_entries: list[dict]) -> int:
+    """Calculate the total duration spanning all nightly merges in the provided entries."""
+    starts = []
+    ends = []
+    for report in merge_entries:
+        if str(report.get("scheduleType", "")).lower() == "nightly":
+            start_val = report.get("timestampStart") or report.get("startedAt") or report.get("timestampEnd")
+            end_val = report.get("timestampEnd") or report.get("completedAt")
+            if end_val and isinstance(end_val, (int, float)):
+                ends.append(end_val)
+            if start_val and isinstance(start_val, (int, float)):
+                starts.append(start_val)
+    if starts and ends:
+        return max(0, int(max(ends) - min(starts)))
+    return 0
+
+
 def build_snapshot_from_merge_history(
     school: str,
     display_name: str,
@@ -655,6 +716,7 @@ def build_snapshot_from_merge_history(
     realtime_total = realtime_success = realtime_issues = realtime_nodata = 0
     manual_total = manual_success = manual_issues = manual_nodata = 0
     failed_entries: list[dict] = []
+    nightly_merge_time_ms = calculate_nightly_merge_time(merge_entries)
 
     for report in merge_entries:
         schedule = str(report.get("scheduleType", "")).lower()
@@ -713,6 +775,7 @@ def build_snapshot_from_merge_history(
                 "failed": nightly_total - nightly_success - nightly_issues - nightly_nodata,
                 "finishedWithIssues": nightly_issues,
                 "noData": nightly_nodata,
+                "mergeTimeMs": nightly_merge_time_ms,
             },
             "realtime": {
                 "total": realtime_total,
@@ -837,6 +900,9 @@ async def fetch_school_health(
         # Parse merge errors count
         merge_errors_count = extract_merge_error_count(merge_errors_data)
 
+        # Compute nightly merge time from merge reports history
+        nightly_merge_time = calculate_nightly_merge_time(merge_reports)
+
         # Active users — try to get from user activity endpoint
         active_users_24h = 0
         try:
@@ -870,6 +936,7 @@ async def fetch_school_health(
                     "failed": nightly_total - nightly_success,
                     "finishedWithIssues": 0,
                     "noData": 0,
+                    "mergeTimeMs": nightly_merge_time,
                 },
                 "realtime": {
                     "total": realtime_total,
