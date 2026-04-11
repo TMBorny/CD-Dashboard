@@ -579,23 +579,66 @@ def extract_unique_activity_users(payload) -> list[str]:
     return []
 
 
+# Suffixes in the school slug that map to a canonical SIS label.
+# These are used as a fallback when the config API has no sisPlatform field
+# and the integrationBroker value is the middleware name (e.g. "N2N") rather
+# than the actual SIS.
+_SLUG_SIS_MAP: dict[str, str] = {
+    "workday": "Workday",
+    "banner_ethos": "BannerEthos",
+    "banner_sql": "BannerSQL",
+    "banner_direct": "Banner",
+    "banner": "Banner",
+    "colleague_ethos": "ColleagueEthos",
+    "colleague_direct": "Colleague",
+    "colleague": "Colleague",
+    "peoplesoft_direct": "PeopleSoftDirect",
+    "peoplesoft": "PeopleSoft",
+    "jenzabar": "Jenzabar",
+    "powercampus": "PowerCampus",
+    "campusnexus": "CampusNexusAnthology",
+    "anthology": "CampusNexusAnthology",
+    "homegrown": "Homegrown",
+    "csv": "CSV",
+}
+
+
+def sis_from_slug(school: str) -> Optional[str]:
+    """Derive a SIS label from the school slug by matching known suffix patterns."""
+    slug = school.lower()
+    # Try longest suffix match first so "banner_ethos" beats "banner"
+    for suffix in sorted(_SLUG_SIS_MAP, key=len, reverse=True):
+        if slug.endswith(suffix) or f"_{suffix}" in slug:
+            return _SLUG_SIS_MAP[suffix]
+    return None
+
+
 def extract_sis_platform(payload) -> Optional[str]:
     """Extract the best SIS label from an integration configuration payload."""
     if not isinstance(payload, dict):
         return None
 
-    for key in ("sisPlatform", "integrationBroker"):
-        value = payload.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
+    # sisPlatform is the authoritative field — always prefer it.
+    sis = payload.get("sisPlatform")
+    if isinstance(sis, str) and sis.strip():
+        return sis.strip()
+
+    # integrationBroker is the middleware/transport, not the SIS.
+    # "N2N" is a broker name and should never be surfaced as the SIS label.
+    broker = payload.get("integrationBroker")
+    if isinstance(broker, str) and broker.strip() and broker.strip().upper() != "N2N":
+        return broker.strip()
 
     return None
 
 
 async def fetch_school_sis_platform(school: str) -> Optional[str]:
-    """Fetch the configured SIS platform for a school."""
+    """Fetch the SIS platform for a school, falling back to slug-based inference."""
     config = await api_get(f"/api/v1/{school}/integration/configuration")
-    return extract_sis_platform(config)
+    platform = extract_sis_platform(config)
+    if platform is None:
+        platform = sis_from_slug(school)
+    return platform
 
 
 def build_snapshot_from_merge_history(
