@@ -29,10 +29,13 @@ This backend powers the Client Health Dashboard frontend. It authenticates to Co
 
 ## Environment
 
-The backend reads environment variables from `.env`.
+Copy `.env.example` to `.env` before running the backend. The local `.env` file is gitignored and should stay out of version control.
 
 Supported variables:
 
+- `INTERNAL_API_KEY`
+- `ALLOWED_ORIGINS`
+- `CORS_ALLOW_CREDENTIALS`
 - `COURSEDOG_BASE_URL`
 - `COURSEDOG_EMAIL`
 - `COURSEDOG_PASSWORD`
@@ -41,6 +44,7 @@ Supported variables:
 - `VITE_COURSEDOG_PASSWORD`
 
 The `COURSEDOG_*` names are preferred. The `VITE_*` names are still supported as fallbacks.
+`INTERNAL_API_KEY` is required for all `/api/*` requests and should match the frontend `VITE_INTERNAL_API_KEY` value.
 
 ## Install
 
@@ -57,6 +61,12 @@ poetry run fastapi dev app/main.py
 Default local URL:
 
 - `http://localhost:8000`
+
+Security defaults:
+
+- `/api/*` routes require the `X-Internal-API-Key` header
+- allowed CORS origins come from `ALLOWED_ORIGINS`
+- credentials are disabled by default unless `CORS_ALLOW_CREDENTIALS=true`
 
 ## Test
 
@@ -106,3 +116,4 @@ Mutation endpoints:
 - `ensure_schema_updates()` applies lightweight SQLite schema upgrades for older local DBs.
 - Dashboard reads are intentionally served from SQLite rather than hitting Coursedog live on every page load.
 - Demo/test tenants are filtered by name heuristics in `app/routes.py`.
+- Sync/backfill triggers are throttled to reduce accidental repeated runs.

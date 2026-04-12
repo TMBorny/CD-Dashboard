@@ -3,10 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const post = vi.fn();
 const get = vi.fn();
 const del = vi.fn();
+const create = vi.fn(() => ({ post, get, delete: del }));
 
 vi.mock('axios', () => ({
   default: {
-    create: vi.fn(() => ({ post, get, delete: del })),
+    create,
   },
 }));
 
@@ -15,6 +16,9 @@ describe('client health api helpers', () => {
     post.mockReset();
     get.mockReset();
     del.mockReset();
+    create.mockClear();
+    vi.resetModules();
+    vi.unstubAllEnvs();
   });
 
   it('fetches the available schools list', async () => {
@@ -24,6 +28,19 @@ describe('client health api helpers', () => {
     await getSchools();
 
     expect(get).toHaveBeenCalledWith('/schools');
+  });
+
+  it('configures the backend client with the internal api key header when present', async () => {
+    vi.stubEnv('VITE_INTERNAL_API_KEY', 'test-key');
+
+    await import('./index');
+
+    expect(create).toHaveBeenCalledWith({
+      baseURL: '/backend/api',
+      headers: {
+        'X-Internal-API-Key': 'test-key',
+      },
+    });
   });
 
   it('adds an explicit school exclusion', async () => {

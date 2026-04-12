@@ -7,6 +7,7 @@ and stores it in the database.
 
 import asyncio
 import json
+import logging
 import time
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
@@ -20,18 +21,44 @@ from app.db import api_get, get_db
 from app.models import ExcludedSchool, SchoolSnapshot, SyncRun
 
 router = APIRouter(prefix="/api")
+logger = logging.getLogger(__name__)
 _sync_jobs: dict[str, dict] = {}
 _active_sync_job_id: Optional[str] = None
 _scheduled_sync_task: Optional[asyncio.Task] = None
 _scheduled_sync_stop_event: Optional[asyncio.Event] = None
+_last_job_trigger_monotonic: float = 0.0
 EXCLUDED_SCHOOL_TERMS = ("demo", "test", "sandbox", "baseline")
+JOB_TRIGGER_COOLDOWN_SECONDS = 15
 
 
 class SchoolExclusionPayload(BaseModel):
     school: str
+
+
 SCHEDULE_TIMEZONE = ZoneInfo("America/New_York")
 SCHEDULED_SYNC_HOUR = 7
 SCHEDULED_SYNC_MINUTE = 30
+
+
+def enforce_job_trigger_cooldown(action: str) -> None:
+    """Prevent repeated sync/backfill triggers from overwhelming the service."""
+    global _last_job_trigger_monotonic
+
+    now_monotonic = time.monotonic()
+    elapsed = now_monotonic - _last_job_trigger_monotonic
+    if _last_job_trigger_monotonic and elapsed < JOB_TRIGGER_COOLDOWN_SECONDS:
+        retry_after = max(1, int(JOB_TRIGGER_COOLDOWN_SECONDS - elapsed))
+        logger.warning("Rejected %s trigger during cooldown; retry after %ss", action, retry_after)
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "code": "job_trigger_rate_limited",
+                "message": "A sync or backfill was triggered recently. Please wait before trying again.",
+                "retryAfterSeconds": retry_after,
+            },
+        )
+
+    _last_job_trigger_monotonic = now_monotonic
 
 
 def school_matches_excluded_terms(value: Optional[str]) -> bool:
@@ -257,7 +284,15 @@ async def get_client_health_active_users(
         users = extract_unique_activity_users(data)
         return {"count": len(users), "users": users}
     except Exception as e:
-        return {"count": 0, "users": [], "error": str(e)}
+        logger.warning("Active users lookup failed for %s: %s", school, e)
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "active_users_lookup_failed",
+                "message": "Could not fetch active users from the upstream service",
+                "school": school,
+            },
+        ) from e
 
 
 @router.get("/client-health/sync-metadata")
@@ -316,7 +351,12 @@ async def get_client_health_sync_runs(
 @router.post("/client-health/sync")
 async def trigger_sync(school: Optional[str] = Query(default=None)):
     """Start a background sync job for all schools or a single school."""
+    enforce_job_trigger_cooldown("sync")
     job, already_running = enqueue_sync_job(school=school)
+    if already_running:
+        logger.info("Sync trigger reused active job %s for school=%s", job["jobId"], school)
+    else:
+        logger.info("Accepted sync trigger job_id=%s school=%s", job["jobId"], school)
     return serialize_sync_job(job, already_running=already_running)
 
 
@@ -332,8 +372,14 @@ async def trigger_history_backfill(
     if _active_sync_job_id:
         active_job = _sync_jobs.get(_active_sync_job_id)
         if active_job and active_job["status"] in {"queued", "running"}:
+            logger.info(
+                "Backfill trigger reused active job %s for school=%s",
+                active_job["jobId"],
+                school,
+            )
             return serialize_sync_job(active_job, already_running=True)
 
+    enforce_job_trigger_cooldown("history-backfill")
     normalized_start, normalized_end = resolve_backfill_date_range(startDate, endDate)
     snapshot_dates = build_snapshot_dates(normalized_start, normalized_end)
 
@@ -364,6 +410,13 @@ async def trigger_history_backfill(
             start_date=normalized_start,
             end_date=normalized_end,
         )
+    )
+    logger.info(
+        "Accepted backfill trigger job_id=%s school=%s start=%s end=%s",
+        job_id,
+        school,
+        normalized_start,
+        normalized_end,
     )
     return serialize_sync_job(job)
 
