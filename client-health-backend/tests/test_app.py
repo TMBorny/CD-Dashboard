@@ -13,14 +13,17 @@ from app.routes import (
     extract_merge_history_entries,
     extract_merge_error_count,
     extract_sis_platform,
+    get_school_exclusion_reason,
     get_new_york_snapshot_date,
     get_next_scheduled_sync_time,
     is_demo_school,
     maybe_enqueue_catchup_sync,
     maybe_enqueue_scheduled_sync,
+    normalize_school_catalog,
     resolve_backfill_date_range,
     select_schools_for_sync,
     serialize_sync_job,
+    split_school_catalog,
     summarize_recent_merge_activity,
 )
 
@@ -380,6 +383,43 @@ class BackfillEndpointTests(unittest.TestCase):
         self.assertEqual(payload["scope"], "history-backfill-single")
         self.assertEqual(payload["school"], "bar01")
         self.assertEqual(payload["dateCount"], 7)
+
+
+class SchoolExclusionTests(unittest.TestCase):
+    def test_normalize_school_catalog_keeps_raw_schools(self):
+        payload = [
+            {"_id": "bar01", "displayName": "Baruch College", "products": ["integrations"]},
+            {"_id": "demo01", "displayName": "Demo School", "products": []},
+        ]
+
+        schools = normalize_school_catalog(payload)
+
+        self.assertEqual([school["school"] for school in schools], ["bar01", "demo01"])
+
+    def test_split_school_catalog_separates_default_and_manual_exclusions(self):
+        included, excluded = split_school_catalog(
+            [
+                {"school": "bar01", "displayName": "Baruch College", "products": []},
+                {"school": "demo01", "displayName": "Demo School", "products": []},
+                {"school": "bcc01", "displayName": "Bronx Community College", "products": []},
+            ],
+            {"bcc01"},
+        )
+
+        self.assertEqual([school["school"] for school in included], ["bar01"])
+        self.assertEqual(
+            {school["school"]: school["reason"] for school in excluded},
+            {
+                "demo01": "Matches excluded term: demo",
+                "bcc01": "Manually excluded in Operations",
+            },
+        )
+
+    def test_get_school_exclusion_reason_prefers_manual_override(self):
+        self.assertEqual(
+            get_school_exclusion_reason("demo01", "Demo School", {"demo01"}),
+            "Manually excluded in Operations",
+        )
 
 
 class DemoSchoolTests(unittest.TestCase):

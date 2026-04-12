@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import { getSchools, getSyncStatus, triggerHistoryBackfill, triggerSync } from '@/api';
-import type { SchoolOption } from '@/types/clientHealth';
+import { addSchoolExclusion, getSchools, getSyncStatus, removeSchoolExclusion, triggerHistoryBackfill, triggerSync } from '@/api';
+import type { ExcludedSchoolOption, SchoolOption } from '@/types/clientHealth';
 import { formatSchoolLabel } from '@/utils/schoolNames';
 
 type OperationMode = 'sync' | 'backfill';
@@ -30,6 +30,8 @@ const operationError = ref<string | null>(null);
 const completedJobs = ref<OperationJobStatus[]>([]);
 const currentJob = ref<OperationJobStatus | null>(null);
 const queueProgress = ref<{ completed: number; total: number } | null>(null);
+const exclusionError = ref<string | null>(null);
+const exclusionMutationSchool = ref<string | null>(null);
 
 const { data, isLoading, error } = useQuery({
   queryKey: ['schools'],
@@ -37,6 +39,8 @@ const { data, isLoading, error } = useQuery({
 });
 
 const schools = computed<SchoolOption[]>(() => data.value?.schools ?? []);
+const excludedSchools = computed<ExcludedSchoolOption[]>(() => data.value?.excludedSchools ?? []);
+const excludedTerms = computed<string[]>(() => data.value?.excludedTerms ?? []);
 const sortedSchools = computed(() =>
   [...schools.value].sort((a, b) =>
     formatSchoolLabel(a.school, a.displayName).localeCompare(formatSchoolLabel(b.school, b.displayName))
@@ -73,6 +77,12 @@ const canRunBackfill = computed(() =>
   !isRunning.value &&
   !invalidDateRange.value &&
   (allSchoolsSelected.value || selectedSchools.value.length > 0)
+);
+const manualExcludedSchools = computed(() =>
+  excludedSchools.value.filter((school) => school.reason === 'Manually excluded in Operations')
+);
+const termExcludedSchools = computed(() =>
+  excludedSchools.value.filter((school) => school.reason !== 'Manually excluded in Operations')
 );
 
 function formatTimestamp(value?: string | null) {
@@ -227,6 +237,40 @@ async function handleBackfill() {
 
   await runOperation('backfill');
 }
+
+async function refreshSchoolCatalog() {
+  await queryClient.invalidateQueries({ queryKey: ['schools'] });
+}
+
+async function excludeSchool(school: string) {
+  exclusionError.value = null;
+  exclusionMutationSchool.value = school;
+  try {
+    await addSchoolExclusion({ school });
+    selectedSchools.value = selectedSchools.value.filter((value) => value !== school);
+    if (selectedSchools.value.length === 0) {
+      allSchoolsSelected.value = true;
+    }
+    await refreshSchoolCatalog();
+  } catch (e: any) {
+    exclusionError.value = e?.response?.data?.detail || e?.message || 'Failed to exclude school';
+  } finally {
+    exclusionMutationSchool.value = null;
+  }
+}
+
+async function unexcludeSchool(school: string) {
+  exclusionError.value = null;
+  exclusionMutationSchool.value = school;
+  try {
+    await removeSchoolExclusion(school);
+    await refreshSchoolCatalog();
+  } catch (e: any) {
+    exclusionError.value = e?.response?.data?.detail || e?.message || 'Failed to remove school exclusion';
+  } finally {
+    exclusionMutationSchool.value = null;
+  }
+}
 </script>
 
 <template>
@@ -239,7 +283,7 @@ async function handleBackfill() {
             <h1 class="mt-3 text-4xl font-semibold tracking-tight text-slate-950 sm:text-5xl">Manual Sync & Backfill</h1>
             <p class="mt-4 max-w-3xl text-base leading-7 text-slate-600">
               Run manual syncs or historical backfills without cluttering the analytics views. Bulk runs target all schools;
-              custom runs process selected schools one at a time.
+              custom runs process selected schools one at a time. Excluded schools are skipped from the selectable list and bulk runs.
             </p>
           </div>
           <div class="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-sm text-slate-600">
@@ -289,24 +333,97 @@ async function handleBackfill() {
                 <label
                   v-for="school in filteredSchools"
                   :key="school.school"
-                  class="flex items-start gap-3 rounded-xl border border-slate-100 px-3 py-3 transition hover:border-slate-200 hover:bg-slate-50"
+                  class="flex items-start justify-between gap-3 rounded-xl border border-slate-100 px-3 py-3 transition hover:border-slate-200 hover:bg-slate-50"
                 >
-                  <input
-                    :checked="selectedSchools.includes(school.school)"
-                    type="checkbox"
-                    class="mt-1 h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500"
-                    :disabled="allSchoolsSelected || isRunning"
-                    @change="toggleSchool(school.school, ($event.target as HTMLInputElement).checked)"
-                  />
-                  <div class="min-w-0">
-                    <p class="font-medium text-slate-900">{{ formatSchoolLabel(school.school, school.displayName) }}</p>
-                    <p class="mt-1 text-xs text-slate-500">{{ school.school }}</p>
+                  <div class="flex min-w-0 items-start gap-3">
+                    <input
+                      :checked="selectedSchools.includes(school.school)"
+                      type="checkbox"
+                      class="mt-1 h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500"
+                      :disabled="allSchoolsSelected || isRunning"
+                      @change="toggleSchool(school.school, ($event.target as HTMLInputElement).checked)"
+                    />
+                    <div class="min-w-0">
+                      <p class="font-medium text-slate-900">{{ formatSchoolLabel(school.school, school.displayName) }}</p>
+                      <p class="mt-1 text-xs text-slate-500">{{ school.school }}</p>
+                    </div>
                   </div>
+                  <button
+                    type="button"
+                    class="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                    :disabled="isRunning || exclusionMutationSchool === school.school"
+                    @click.prevent="excludeSchool(school.school)"
+                  >
+                    <span v-if="exclusionMutationSchool === school.school">Excluding…</span>
+                    <span v-else>Exclude</span>
+                  </button>
                 </label>
                 <p v-if="filteredSchools.length === 0" class="rounded-xl border border-dashed border-slate-200 px-4 py-6 text-sm text-slate-500">
                   No schools match that search.
                 </p>
               </div>
+            </div>
+
+            <div class="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+              <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h3 class="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Excluded schools</h3>
+                  <p class="mt-2 text-sm text-slate-600">
+                    Default term filters: {{ excludedTerms.join(', ') }}.
+                    Additional exclusions are stored locally and skipped by bulk operations.
+                  </p>
+                </div>
+                <p class="text-sm font-medium text-slate-900">{{ excludedSchools.length }} excluded</p>
+              </div>
+
+              <div class="mt-4 grid gap-4 lg:grid-cols-2">
+                <div>
+                  <p class="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">Manual exclusions</p>
+                  <div class="mt-3 space-y-2">
+                    <div
+                      v-for="school in manualExcludedSchools"
+                      :key="`manual-${school.school}`"
+                      class="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3"
+                    >
+                      <div class="min-w-0">
+                        <p class="font-medium text-slate-900">{{ formatSchoolLabel(school.school, school.displayName) }}</p>
+                        <p class="mt-1 text-xs text-slate-500">{{ school.school }} · {{ school.reason }}</p>
+                      </div>
+                      <button
+                        type="button"
+                        class="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        :disabled="isRunning || exclusionMutationSchool === school.school"
+                        @click="unexcludeSchool(school.school)"
+                      >
+                        <span v-if="exclusionMutationSchool === school.school">Updating…</span>
+                        <span v-else>Unexclude</span>
+                      </button>
+                    </div>
+                    <p v-if="manualExcludedSchools.length === 0" class="rounded-xl border border-dashed border-slate-200 px-4 py-5 text-sm text-slate-500">
+                      No manual exclusions yet. Use the Exclude button next to a school to add one.
+                    </p>
+                  </div>
+                </div>
+
+                <div>
+                  <p class="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">Excluded by default rules</p>
+                  <div class="mt-3 max-h-56 space-y-2 overflow-y-auto">
+                    <div
+                      v-for="school in termExcludedSchools"
+                      :key="`rule-${school.school}`"
+                      class="rounded-xl border border-slate-200 bg-white px-4 py-3"
+                    >
+                      <p class="font-medium text-slate-900">{{ formatSchoolLabel(school.school, school.displayName) }}</p>
+                      <p class="mt-1 text-xs text-slate-500">{{ school.school }} · {{ school.reason }}</p>
+                    </div>
+                    <p v-if="termExcludedSchools.length === 0" class="rounded-xl border border-dashed border-slate-200 px-4 py-5 text-sm text-slate-500">
+                      No schools currently match the default exclusion rules.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <p v-if="exclusionError" class="mt-4 text-sm text-rose-500">{{ exclusionError }}</p>
             </div>
           </div>
         </section>

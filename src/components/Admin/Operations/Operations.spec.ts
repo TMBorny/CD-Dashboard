@@ -5,6 +5,8 @@ import { ref } from 'vue';
 const invalidateQueries = vi.fn().mockResolvedValue(undefined);
 const getSyncStatus = vi.fn();
 const getSchools = vi.fn();
+const addSchoolExclusion = vi.fn();
+const removeSchoolExclusion = vi.fn();
 const triggerHistoryBackfill = vi.fn();
 const triggerSync = vi.fn();
 
@@ -18,6 +20,10 @@ vi.mock('@tanstack/vue-query', () => ({
             { school: 'bar01', displayName: 'Baruch College', products: [] },
             { school: 'bcc01', displayName: 'Bronx Community College', products: [] },
           ],
+          excludedSchools: [
+            { school: 'demo01', displayName: 'Demo School', products: [], reason: 'Matches excluded term: demo' },
+          ],
+          excludedTerms: ['demo', 'test', 'sandbox', 'baseline'],
         }),
         isLoading: ref(false),
         error: ref(null),
@@ -29,8 +35,10 @@ vi.mock('@tanstack/vue-query', () => ({
 }));
 
 vi.mock('@/api', () => ({
+  addSchoolExclusion,
   getSchools,
   getSyncStatus,
+  removeSchoolExclusion,
   triggerHistoryBackfill,
   triggerSync,
 }));
@@ -40,6 +48,8 @@ describe('Operations', () => {
     invalidateQueries.mockClear();
     getSchools.mockReset();
     getSyncStatus.mockReset();
+    addSchoolExclusion.mockReset();
+    removeSchoolExclusion.mockReset();
     triggerHistoryBackfill.mockReset();
     triggerSync.mockReset();
   });
@@ -78,6 +88,27 @@ describe('Operations', () => {
     expect(wrapper.text()).toContain('No schools match that search.');
   });
 
+  it('shows excluded schools and allows adding a manual exclusion', async () => {
+    addSchoolExclusion.mockResolvedValue({ data: { school: 'bar01' } });
+
+    const { default: Operations } = await import('./Operations.vue');
+    const wrapper = mount(Operations);
+
+    expect(wrapper.text()).toContain('Demo School');
+    expect(wrapper.text()).toContain('Matches excluded term: demo');
+
+    const excludeButton = wrapper
+      .findAll('button')
+      .find((candidate) => candidate.text().includes('Exclude'));
+
+    expect(excludeButton).toBeTruthy();
+    await excludeButton!.trigger('click');
+    await flushPromises();
+
+    expect(addSchoolExclusion).toHaveBeenCalledWith({ school: 'bar01' });
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ['schools'] });
+  });
+
   it('runs multi-school sync sequentially and invalidates dependent queries', async () => {
     triggerSync
       .mockResolvedValueOnce({ jobId: 'job-1' })
@@ -111,8 +142,12 @@ describe('Operations', () => {
     await schoolBoxes[1].setValue(true);
     await schoolBoxes[2].setValue(true);
 
-    const buttons = wrapper.findAll('button');
-    await buttons[0].trigger('click');
+    const syncButton = wrapper
+      .findAll('button')
+      .find((candidate) => candidate.text().includes('Run Sync'));
+
+    expect(syncButton).toBeTruthy();
+    await syncButton!.trigger('click');
     await flushPromises();
 
     expect(triggerSync).toHaveBeenNthCalledWith(1, { school: 'bar01' });
@@ -143,8 +178,12 @@ describe('Operations', () => {
     await wrapper.get('#operations-start-date').setValue('2026-01-01');
     await wrapper.get('#operations-end-date').setValue('2026-01-07');
 
-    const buttons = wrapper.findAll('button');
-    await buttons[1].trigger('click');
+    const backfillButton = wrapper
+      .findAll('button')
+      .find((candidate) => candidate.text().includes('Run Backfill'));
+
+    expect(backfillButton).toBeTruthy();
+    await backfillButton!.trigger('click');
     await flushPromises();
 
     expect(triggerHistoryBackfill).toHaveBeenCalledWith({

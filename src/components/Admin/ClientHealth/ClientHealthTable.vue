@@ -13,16 +13,18 @@ const emit = defineEmits<{
   rowClick: [school: ClientHealthSnapshot];
 }>();
 
-const sortBy = ref<'displayName' | 'sisPlatform' | 'nightlySuccess' | 'nightlyDuration' | 'realtimeSuccess' | 'mergeErrors' | 'activeUsers' | 'health'>('health');
+const sortBy = ref<'displayName' | 'sisPlatform' | 'nightlySuccess' | 'nightlyTotals' | 'nightlyDuration' | 'realtimeSuccess' | 'realtimeTotals' | 'mergeErrors' | 'activeUsers' | 'health'>('health');
 const sortOrder = ref<'asc' | 'desc'>('desc');
 const searchQuery = ref('');
 
 const sortLabels: Record<typeof sortBy.value, string> = {
   displayName: 'School',
   sisPlatform: 'SIS',
-  nightlySuccess: 'Nightly (48h)',
+  nightlySuccess: 'Nightly %',
+  nightlyTotals: 'Nightly Totals',
   nightlyDuration: 'Nightly Duration',
-  realtimeSuccess: 'Realtime (24h)',
+  realtimeSuccess: 'Realtime %',
+  realtimeTotals: 'Realtime Totals',
   mergeErrors: 'Open Errors',
   activeUsers: 'Active Users (24h)',
   health: 'Health',
@@ -111,8 +113,12 @@ const sortedSchools = computed(() => {
   return [...filteredSchools.value].sort((a, b) => {
     const nightlyA = nightlyRate(a) ?? 0;
     const nightlyB = nightlyRate(b) ?? 0;
+    const nightlyTotalA = a.merges.nightly.total;
+    const nightlyTotalB = b.merges.nightly.total;
     const realtimeA = realtimeRate(a) ?? 0;
     const realtimeB = realtimeRate(b) ?? 0;
+    const realtimeTotalA = a.merges.realtime.total;
+    const realtimeTotalB = b.merges.realtime.total;
     const healthA = getHealthScoreValue(a);
     const healthB = getHealthScoreValue(b);
     const durationA = a.merges.nightly.mergeTimeMs ?? 0;
@@ -130,6 +136,10 @@ const sortedSchools = computed(() => {
         aVal = nightlyA;
         bVal = nightlyB;
         break;
+      case 'nightlyTotals':
+        aVal = nightlyTotalA;
+        bVal = nightlyTotalB;
+        break;
       case 'nightlyDuration':
         aVal = durationA;
         bVal = durationB;
@@ -141,6 +151,10 @@ const sortedSchools = computed(() => {
       case 'realtimeSuccess':
         aVal = realtimeA;
         bVal = realtimeB;
+        break;
+      case 'realtimeTotals':
+        aVal = realtimeTotalA;
+        bVal = realtimeTotalB;
         break;
       case 'mergeErrors':
         aVal = a.mergeErrorsCount;
@@ -265,7 +279,12 @@ const getRowTone = (school: ClientHealthSnapshot) => {
             </th>
             <th scope="col" class="px-6 py-4 font-semibold">
               <button @click="handleSort('nightlySuccess')" class="flex items-center gap-2 hover:text-slate-950 transition">
-                Nightly (48h) <span v-if="sortBy === 'nightlySuccess'" class="text-slate-900">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
+                Nightly % <span v-if="sortBy === 'nightlySuccess'" class="text-slate-900">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
+              </button>
+            </th>
+            <th scope="col" class="px-6 py-4 font-semibold">
+              <button @click="handleSort('nightlyTotals')" class="flex items-center gap-2 hover:text-slate-950 transition">
+                Nightly Totals <span v-if="sortBy === 'nightlyTotals'" class="text-slate-900">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
               </button>
             </th>
             <th scope="col" class="px-6 py-4 font-semibold">
@@ -275,7 +294,12 @@ const getRowTone = (school: ClientHealthSnapshot) => {
             </th>
             <th scope="col" class="px-6 py-4 font-semibold">
               <button @click="handleSort('realtimeSuccess')" class="flex items-center gap-2 hover:text-slate-950 transition">
-                Realtime (24h) <span v-if="sortBy === 'realtimeSuccess'" class="text-slate-900">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
+                Realtime % <span v-if="sortBy === 'realtimeSuccess'" class="text-slate-900">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
+              </button>
+            </th>
+            <th scope="col" class="px-6 py-4 font-semibold">
+              <button @click="handleSort('realtimeTotals')" class="flex items-center gap-2 hover:text-slate-950 transition">
+                Realtime Totals <span v-if="sortBy === 'realtimeTotals'" class="text-slate-900">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
               </button>
             </th>
             <th scope="col" class="px-6 py-4 font-semibold">
@@ -295,7 +319,7 @@ const getRowTone = (school: ClientHealthSnapshot) => {
         </thead>
         <tbody>
           <tr v-if="sortedSchools.length === 0">
-            <td colspan="9" class="px-6 py-10 text-center text-sm text-slate-400">
+            <td colspan="11" class="px-6 py-10 text-center text-sm text-slate-400">
               No schools match <span class="font-semibold text-slate-600">"{{ searchQuery }}"</span>.
             </td>
           </tr>
@@ -323,18 +347,22 @@ const getRowTone = (school: ClientHealthSnapshot) => {
             </td>
             <td :class="['whitespace-nowrap border-y border-slate-200 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300', getRowTone(school)]">
               <div class="text-sm font-semibold text-slate-900">{{ school.sisPlatform || 'Unknown' }}</div>
-              <div class="mt-2 text-xs text-slate-500">Integration configuration source</div>
             </td>
             <td :class="['whitespace-nowrap border-y border-slate-200 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300', getRowTone(school)]">
               <Badge :tone="getStatusBadge(school).tone">{{ getStatusBadge(school).label }}</Badge>
               <div class="mt-3 text-2xl font-semibold leading-none text-slate-950">{{ getHealthScore(school) }}</div>
-              <div class="mt-1 text-xs text-slate-500">Success, open errors, and activity confidence.</div>
             </td>
             <td :class="['whitespace-nowrap border-y border-slate-200 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300', getRowTone(school)]">
               <div class="text-lg font-semibold leading-none text-slate-950">
                 {{ nightlyRate(school) === null ? 'N/A' : `${nightlyRate(school)!.toFixed(0)}%` }}
               </div>
-              <div class="mt-2 text-xs font-semibold text-slate-600">{{ school.merges.nightly.succeeded }} / {{ school.merges.nightly.total }} succeeded</div>
+              <div class="mt-2 text-xs text-slate-500">
+                {{ nightlyRate(school) === null ? 'No valid nightly merges in the upstream window' : 'Upstream 48h window' }}
+              </div>
+            </td>
+            <td :class="['whitespace-nowrap border-y border-slate-200 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300', getRowTone(school)]">
+              <div class="text-lg font-semibold leading-none text-slate-950">{{ school.merges.nightly.succeeded }} / {{ school.merges.nightly.total }}</div>
+              <div class="mt-2 text-xs font-semibold text-slate-600">Succeeded / total merges</div>
               <div class="mt-3 flex flex-wrap gap-2">
                 <div v-if="school.merges.nightly.finishedWithIssues > 0" class="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-700" title="Finished With Issues">{{ school.merges.nightly.finishedWithIssues }} Issues</div>
                 <div v-if="school.merges.nightly.noData > 0" class="rounded-full bg-slate-200/80 px-2 py-1 text-[11px] font-semibold text-slate-600" title="No Data">{{ school.merges.nightly.noData }} No Data</div>
@@ -343,29 +371,28 @@ const getRowTone = (school: ClientHealthSnapshot) => {
             </td>
             <td :class="['whitespace-nowrap border-y border-slate-200 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300', getRowTone(school)]">
               <div class="text-lg font-semibold leading-none text-slate-950">{{ formatDuration(school.merges.nightly.mergeTimeMs) }}</div>
-              <div class="mt-2 text-xs text-slate-500">Total merged execution span</div>
             </td>
             <td :class="['whitespace-nowrap border-y border-slate-200 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300', getRowTone(school)]">
               <div class="text-lg font-semibold leading-none text-slate-950">
                 {{ realtimeRate(school) === null ? 'N/A' : `${realtimeRate(school)!.toFixed(0)}%` }}
               </div>
-              <div class="mt-2 text-xs font-semibold text-slate-600">{{ school.merges.realtime.succeeded }} / {{ school.merges.realtime.total }} succeeded</div>
+             
+            </td>
+            <td :class="['whitespace-nowrap border-y border-slate-200 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300', getRowTone(school)]">
+              <div class="text-lg font-semibold leading-none text-slate-950">{{ school.merges.realtime.succeeded }} / {{ school.merges.realtime.total }}</div>
+              <div class="mt-2 text-xs font-semibold text-slate-600">Succeeded / total merges</div>
               <div class="mt-3 flex flex-wrap gap-2">
                 <div v-if="school.merges.realtime.finishedWithIssues > 0" class="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-700" title="Finished With Issues">{{ school.merges.realtime.finishedWithIssues }} Issues</div>
                 <div v-if="school.merges.realtime.noData > 0" class="rounded-full bg-slate-200/80 px-2 py-1 text-[11px] font-semibold text-slate-600" title="No Data">{{ school.merges.realtime.noData }} No Data</div>
               </div>
-              <div class="mt-3 text-xs text-slate-500">
-                {{ realtimeRate(school) === null ? 'No valid realtime merges in the last 24h' : 'Last 24 hours' }}
-              </div>
+              <div class="mt-3 text-xs text-slate-500">Last 24 hours</div>
             </td>
             <td :class="['whitespace-nowrap border-y border-slate-200 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300', getRowTone(school)]">
               <div class="text-lg font-semibold leading-none text-slate-950">{{ school.mergeErrorsCount }}</div>
-              <div class="mt-2 text-xs text-slate-500">Current open-error count</div>
               <div v-if="school.recentFailedMerges.length > 0" class="mt-3 rounded-full bg-rose-100 px-2 py-1 text-[11px] font-semibold tracking-[0.08em] text-rose-700">{{ school.recentFailedMerges.length }} recent failures</div>
             </td>
             <td :class="['whitespace-nowrap border-y border-slate-200 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300', getRowTone(school)]">
               <div class="text-lg font-semibold leading-none text-slate-950">{{ school.activeUsers24h }}</div>
-              <div class="mt-2 text-xs text-slate-500">Distinct emails in the last 24h</div>
             </td>
             <td :class="['whitespace-nowrap border-y border-r border-slate-200 px-6 py-5 text-right align-top shadow-sm transition group-hover:border-slate-300', getRowTone(school), 'rounded-r-3xl']">
               <div class="flex flex-col items-end gap-2">
