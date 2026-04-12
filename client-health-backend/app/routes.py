@@ -6,11 +6,8 @@ and stores it in the database.
 """
 
 import asyncio
-import json
-import random
 import time
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
 from uuid import uuid4
 from typing import Optional
 
@@ -22,28 +19,7 @@ from app.models import SchoolSnapshot, SyncRun
 router = APIRouter(prefix="/api")
 _sync_jobs: dict[str, dict] = {}
 _active_sync_job_id: Optional[str] = None
-TEMP_FULL_SYNC_LIMIT = 10
 EXCLUDED_SCHOOL_TERMS = ("demo", "test", "sandbox", "baseline")
-
-# Path to the persisted dev sample file — sits alongside the SQLite DB.
-# Delete this file to re-roll a new random set of schools on the next sync.
-DEV_SAMPLE_PATH = Path(__file__).parent.parent / "dev_school_sample.json"
-
-
-def _load_dev_sample() -> Optional[list]:
-    """Return the persisted school IDs if the dev sample file exists."""
-    if DEV_SAMPLE_PATH.exists():
-        try:
-            return json.loads(DEV_SAMPLE_PATH.read_text())["schools"]
-        except Exception:
-            pass
-    return None
-
-
-def _save_dev_sample(school_ids: list[str]) -> None:
-    """Persist the chosen school IDs so they survive server restarts."""
-    DEV_SAMPLE_PATH.write_text(json.dumps({"schools": school_ids}, indent=2))
-    print(f"[dev] Saved random school sample ({len(school_ids)} schools) → {DEV_SAMPLE_PATH}")
 
 
 def school_matches_excluded_terms(value: Optional[str]) -> bool:
@@ -269,10 +245,11 @@ async def trigger_sync(school: Optional[str] = Query(default=None)):
 
 @router.post("/client-health/history/backfill")
 async def trigger_history_backfill(
-    school: str = Query(...),
-    days: int = Query(default=7, ge=1, le=30),
+    startDate: str = Query(...),
+    endDate: Optional[str] = Query(default=None),
+    school: Optional[str] = Query(default=None),
 ):
-    """Backfill historical snapshots for a single school."""
+    """Backfill historical snapshots for one school or all schools."""
     global _active_sync_job_id
 
     if _active_sync_job_id:
@@ -280,25 +257,37 @@ async def trigger_history_backfill(
         if active_job and active_job["status"] in {"queued", "running"}:
             return serialize_sync_job(active_job, already_running=True)
 
+    normalized_start, normalized_end = resolve_backfill_date_range(startDate, endDate)
+    snapshot_dates = build_snapshot_dates(normalized_start, normalized_end)
+
     job_id = str(uuid4())
     job = {
         "jobId": job_id,
         "status": "queued",
         "snapshotDate": None,
         "schoolsProcessed": 0,
-        "totalSchools": days,
+        "totalSchools": 0,
         "errors": [],
         "timing": None,
         "error": None,
-        "scope": "history-backfill",
+        "scope": "history-backfill-single" if school else "history-backfill-bulk",
         "school": school,
-        "days": days,
+        "startDate": normalized_start,
+        "endDate": normalized_end,
+        "dateCount": len(snapshot_dates),
         "startedAt": None,
         "finishedAt": None,
     }
     _sync_jobs[job_id] = job
     _active_sync_job_id = job_id
-    asyncio.create_task(run_history_backfill_job(job_id, school=school, days=days))
+    asyncio.create_task(
+        run_history_backfill_job(
+            job_id,
+            school=school,
+            start_date=normalized_start,
+            end_date=normalized_end,
+        )
+    )
     return serialize_sync_job(job)
 
 
@@ -312,34 +301,13 @@ async def get_sync_status(job_id: str):
 
 
 def select_schools_for_sync(schools: list[dict], school: Optional[str]) -> list[dict]:
-    """Select which schools should be synced for the requested scope.
-
-    Single-school requests are always honoured. For bulk syncs in dev mode
-    (TEMP_FULL_SYNC_LIMIT is set), a random sample of that many schools is
-    chosen once and then persisted to DEV_SAMPLE_PATH so the same cohort is
-    used on every subsequent sync. Delete that file to re-roll.
-    """
+    """Select which schools should be synced for the requested scope."""
     if school:
         selected = [item for item in schools if item["school"] == school]
         if not selected:
             raise HTTPException(status_code=404, detail=f"School not found: {school}")
         return selected
-
-    # Build an index of available schools for fast lookup
-    school_index = {s["school"]: s for s in schools}
-
-    # Try to reuse a previously saved sample
-    saved_ids = _load_dev_sample()
-    if saved_ids:
-        # Re-resolve against the current school list (handles removed schools)
-        resolved = [school_index[sid] for sid in saved_ids if sid in school_index]
-        if resolved:
-            return resolved
-
-    # No saved sample — pick a fresh random set
-    chosen = random.sample(schools, min(TEMP_FULL_SYNC_LIMIT, len(schools)))
-    _save_dev_sample([s["school"] for s in chosen])
-    return chosen
+    return list(schools)
 
 
 async def run_sync_job(job_id: str, school: Optional[str] = None):
@@ -484,8 +452,6 @@ def serialize_sync_job(job: dict, already_running: bool = False) -> dict:
     payload = dict(job)
     if already_running:
         payload["alreadyRunning"] = True
-    if payload.get("scope") == "bulk":
-        payload["limit"] = TEMP_FULL_SYNC_LIMIT
     return payload
 
 
@@ -512,6 +478,45 @@ def normalize_time_param(value: Optional[str]) -> Optional[str]:
         return str(int(parsed.timestamp() * 1000))
     except ValueError:
         return value
+
+
+def parse_snapshot_date(value: str, field_name: str) -> str:
+    """Validate and normalize a YYYY-MM-DD snapshot date string."""
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{field_name} must be in YYYY-MM-DD format",
+        ) from exc
+
+
+def resolve_backfill_date_range(start_date: str, end_date: Optional[str]) -> tuple[str, str]:
+    """Return an inclusive validated date range for history backfill."""
+    normalized_start = parse_snapshot_date(start_date, "startDate")
+    normalized_end = (
+        parse_snapshot_date(end_date, "endDate")
+        if end_date
+        else datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    )
+
+    if normalized_start > normalized_end:
+        raise HTTPException(status_code=422, detail="startDate must be on or before endDate")
+
+    return normalized_start, normalized_end
+
+
+def build_snapshot_dates(start_date: str, end_date: str) -> list[str]:
+    """Return all snapshot dates in the inclusive range."""
+    current = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+    snapshot_dates: list[str] = []
+
+    while current <= end:
+        snapshot_dates.append(current.strftime("%Y-%m-%d"))
+        current += timedelta(days=1)
+
+    return snapshot_dates
 
 
 def extract_merge_error_count(payload) -> int:
@@ -1061,8 +1066,13 @@ async def fetch_school_health_for_date(
     return snapshot
 
 
-async def run_history_backfill_job(job_id: str, school: str, days: int):
-    """Backfill historical daily snapshots for a single school."""
+async def run_history_backfill_job(
+    job_id: str,
+    school: Optional[str],
+    start_date: str,
+    end_date: str,
+):
+    """Backfill historical daily snapshots for one school or all schools."""
     global _active_sync_job_id
     job = _sync_jobs[job_id]
     started_at = datetime.now(timezone.utc)
@@ -1086,52 +1096,54 @@ async def run_history_backfill_job(job_id: str, school: str, days: int):
     try:
         schools_resp = await list_schools()
         schools = select_schools_for_sync(schools_resp["schools"], school)
-        school_info = schools[0]
         list_time = time.time()
+        snapshot_dates = build_snapshot_dates(start_date, end_date)
+        total_work_units = len(schools) * len(snapshot_dates)
+        job["totalSchools"] = total_work_units
 
-        snapshot_dates = [
-            (datetime.now(timezone.utc) - timedelta(days=offset)).strftime("%Y-%m-%d")
-            for offset in range(days - 1, -1, -1)
-        ]
-
-        snapshots: list[dict] = []
         errors: list[str] = []
-        for snapshot_date in snapshot_dates:
-            result = await fetch_school_health_for_date(
-                school=school_info["school"],
-                display_name=school_info.get("displayName", school_info["school"]),
-                products=school_info.get("products", []),
-                snapshot_date=snapshot_date,
-            )
-            errors.extend(result.pop("_syncErrors", []))
-            snapshots.append(result)
-            job["schoolsProcessed"] = len(snapshots)
-            job["errors"] = errors[-20:]
-
-        fetch_time = time.time()
-
+        processed_units = 0
         db = get_db()
         try:
-            db.query(SchoolSnapshot).filter(
-                SchoolSnapshot.school == school_info["school"],
-                SchoolSnapshot.snapshot_date.in_(snapshot_dates),
-            ).delete(synchronize_session=False)
-            for snapshot in snapshots:
-                db.add(SchoolSnapshot.from_dict(snapshot))
-            db.commit()
-        except Exception as e:
-            db.rollback()
-            raise RuntimeError(f"Database write error: {e}") from e
+            for school_info in schools:
+                snapshots: list[dict] = []
+                for snapshot_date in snapshot_dates:
+                    result = await fetch_school_health_for_date(
+                        school=school_info["school"],
+                        display_name=school_info.get("displayName", school_info["school"]),
+                        products=school_info.get("products", []),
+                        snapshot_date=snapshot_date,
+                    )
+                    errors.extend(result.pop("_syncErrors", []))
+                    snapshots.append(result)
+                    processed_units += 1
+                    job["schoolsProcessed"] = processed_units
+                    job["errors"] = errors[-20:]
+
+                try:
+                    db.query(SchoolSnapshot).filter(
+                        SchoolSnapshot.school == school_info["school"],
+                        SchoolSnapshot.snapshot_date.in_(snapshot_dates),
+                    ).delete(synchronize_session=False)
+                    for snapshot in snapshots:
+                        db.add(SchoolSnapshot.from_dict(snapshot))
+                    db.commit()
+                except Exception as e:
+                    db.rollback()
+                    raise RuntimeError(
+                        f"Database write error for {school_info['school']}: {e}"
+                    ) from e
         finally:
             db.close()
 
         persist_time = time.time()
+        fetch_time = persist_time
         job.update(
             {
                 "status": "completed",
                 "snapshotDate": snapshot_dates[-1],
-                "schoolsProcessed": len(snapshots),
-                "totalSchools": len(snapshot_dates),
+                "schoolsProcessed": processed_units,
+                "totalSchools": total_work_units,
                 "errors": errors[-20:],
                 "timing": {
                     "listSchoolsSec": round(list_time - start_time, 2),

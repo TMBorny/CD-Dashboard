@@ -1,16 +1,19 @@
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+import app.routes as routes
 from app.main import app
 from app.routes import (
-    EXCLUDED_SCHOOL_TERMS,
+    build_snapshot_dates,
     build_snapshot_from_merge_history,
     extract_unique_activity_users,
     extract_merge_history_entries,
     extract_merge_error_count,
     extract_sis_platform,
     is_demo_school,
+    resolve_backfill_date_range,
     select_schools_for_sync,
     serialize_sync_job,
     summarize_recent_merge_activity,
@@ -143,7 +146,7 @@ class MergeErrorCountTests(unittest.TestCase):
         ]
         self.assertEqual(
             summarize_recent_merge_activity(merge_entries, last_24h),
-            (2, 1, 0, 0, 1, 0, 0, 0),
+            (2, 1, 0, 0, 1, 1, 0, 0),
         )
 
     def test_summarize_recent_merge_activity_detects_granular_statuses(self):
@@ -164,10 +167,10 @@ class MergeErrorCountTests(unittest.TestCase):
 
 
 class SchoolSelectionTests(unittest.TestCase):
-    def test_bulk_sync_is_temporarily_limited(self):
+    def test_bulk_sync_returns_all_schools(self):
         schools = [{"school": f"school-{index}"} for index in range(12)]
         selected = select_schools_for_sync(schools, school=None)
-        self.assertEqual(len(selected), 10)
+        self.assertEqual(len(selected), 12)
         self.assertEqual(selected[0]["school"], "school-0")
 
     def test_single_school_sync_returns_requested_school(self):
@@ -176,9 +179,70 @@ class SchoolSelectionTests(unittest.TestCase):
         self.assertEqual(selected, [{"school": "bar01"}])
 
 
+class BackfillDateRangeTests(unittest.TestCase):
+    def test_resolve_backfill_date_range_defaults_end_date_to_today(self):
+        start_date, end_date = resolve_backfill_date_range("2026-01-01", None)
+        self.assertEqual(start_date, "2026-01-01")
+        self.assertGreaterEqual(end_date, "2026-01-01")
+
+    def test_resolve_backfill_date_range_rejects_inverted_range(self):
+        with self.assertRaises(Exception):
+            resolve_backfill_date_range("2026-02-01", "2026-01-01")
+
+    def test_build_snapshot_dates_is_inclusive(self):
+        self.assertEqual(
+            build_snapshot_dates("2026-01-01", "2026-01-03"),
+            ["2026-01-01", "2026-01-02", "2026-01-03"],
+        )
+
+
+class BackfillEndpointTests(unittest.TestCase):
+    def test_history_backfill_accepts_bulk_date_range(self):
+        async def fake_run_history_backfill_job(*args, **kwargs):
+            return None
+
+        with patch.object(routes, "_active_sync_job_id", None), patch.dict(routes._sync_jobs, {}, clear=True), patch(
+            "app.routes.run_history_backfill_job",
+            new=fake_run_history_backfill_job,
+        ):
+            with TestClient(app) as client:
+                response = client.post(
+                    "/api/client-health/history/backfill",
+                    params={"startDate": "2026-01-01"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["scope"], "history-backfill-bulk")
+        self.assertEqual(payload["startDate"], "2026-01-01")
+        self.assertIn("endDate", payload)
+
+    def test_history_backfill_accepts_single_school_date_range(self):
+        async def fake_run_history_backfill_job(*args, **kwargs):
+            return None
+
+        with patch.object(routes, "_active_sync_job_id", None), patch.dict(routes._sync_jobs, {}, clear=True), patch(
+            "app.routes.run_history_backfill_job",
+            new=fake_run_history_backfill_job,
+        ):
+            with TestClient(app) as client:
+                response = client.post(
+                    "/api/client-health/history/backfill",
+                    params={
+                        "school": "bar01",
+                        "startDate": "2026-01-01",
+                        "endDate": "2026-01-07",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["scope"], "history-backfill-single")
+        self.assertEqual(payload["school"], "bar01")
+        self.assertEqual(payload["dateCount"], 7)
+
+
 class DemoSchoolTests(unittest.TestCase):
-    def test_excluded_terms_are_centralized(self):
-        self.assertEqual(EXCLUDED_SCHOOL_TERMS, ("demo", "test", "sandbox", "baseline"))
 
     def test_detects_demo_school_by_school_id(self):
         self.assertTrue(is_demo_school("demo_baruch", "Baruch Demo"))

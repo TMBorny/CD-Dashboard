@@ -30,11 +30,12 @@ export async function getSyncStatus(jobId: string) {
   return res.data;
 }
 
-export async function triggerHistoryBackfill(params: { school: string; days?: number }) {
+export async function triggerHistoryBackfill(params: { startDate: string; endDate?: string; school?: string }) {
   const res = await backend.post('/client-health/history/backfill', null, {
     params: {
-      school: params.school,
-      days: params.days ?? 30,
+      startDate: params.startDate,
+      ...(params.endDate ? { endDate: params.endDate } : {}),
+      ...(params.school ? { school: params.school } : {}),
     },
   });
   return res.data;

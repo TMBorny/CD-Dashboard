@@ -12,7 +12,7 @@ const { data, isLoading, error } = useQuery({
 const getStatusTone = (status: string) => {
   switch (status.toLowerCase()) {
     case 'completed': return 'emerald';
-    case 'running': return 'blue';
+    case 'running': return 'slate';
     case 'failed': return 'rose';
     default: return 'amber';
   }

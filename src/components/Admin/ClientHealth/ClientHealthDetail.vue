@@ -12,7 +12,7 @@ import { formatSchoolLabel } from '@/utils/schoolNames';
 const route = useRoute();
 const queryClient = useQueryClient();
 const school = route.params.school as string;
-const backfillDays = ref(7);
+const backfillStartDate = ref('2026-01-01');
 
 const isSyncing = ref(false);
 const syncError = ref<string | null>(null);
@@ -225,7 +225,7 @@ async function handleHistoryBackfill() {
   backfillResult.value = null;
 
   try {
-    const result = await triggerHistoryBackfill({ school, days: backfillDays.value });
+    const result = await triggerHistoryBackfill({ school, startDate: backfillStartDate.value });
     await pollBackfillJob(result.jobId);
   } catch (e: any) {
     backfillError.value = e?.response?.data?.detail || e?.message || 'Backfill failed';
@@ -267,16 +267,18 @@ async function handleHistoryBackfill() {
               :disabled="isBackfilling || isSyncing"
               class="rounded-full border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <span v-if="isBackfilling">Backfilling {{ backfillDays }} Days…</span>
-              <span v-else>Backfill Past {{ backfillDays }} Days</span>
+              <span v-if="isBackfilling">Backfilling From {{ backfillStartDate }}…</span>
+              <span v-else>Backfill From {{ backfillStartDate }}</span>
             </button>
             <div class="flex items-center gap-3">
-              <label for="backfill-days" class="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">Backfill Days</label>
-              <select id="backfill-days" v-model.number="backfillDays" :disabled="isBackfilling || isSyncing" class="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-900 focus:border-slate-400 focus:outline-none disabled:opacity-50">
-                <option :value="7">7</option>
-                <option :value="14">14</option>
-                <option :value="30">30</option>
-              </select>
+              <label for="backfill-start-date" class="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">Start Date</label>
+              <input
+                id="backfill-start-date"
+                v-model="backfillStartDate"
+                type="date"
+                :disabled="isBackfilling || isSyncing"
+                class="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-900 focus:border-slate-400 focus:outline-none disabled:opacity-50"
+              />
             </div>
             <p v-if="syncResult" class="text-xs text-emerald-600">
               <span v-if="syncResult.status === 'completed'">✓ {{ school }} synced in {{ syncResult.totalSec }}s</span>
@@ -288,8 +290,8 @@ async function handleHistoryBackfill() {
             </p>
             <p v-if="syncError" class="text-xs text-rose-500">{{ syncError }}</p>
             <p v-if="backfillResult" class="text-xs text-blue-600">
-              <span v-if="backfillResult.status === 'completed'">✓ Backfilled {{ backfillResult.schoolsProcessed }} days in {{ backfillResult.totalSec }}s</span>
-              <span v-else-if="backfillResult.status === 'queued'">Queued {{ backfillDays }}-day backfill</span>
+              <span v-if="backfillResult.status === 'completed'">✓ Backfilled {{ backfillResult.schoolsProcessed }} snapshots in {{ backfillResult.totalSec }}s</span>
+              <span v-else-if="backfillResult.status === 'queued'">Queued backfill from {{ backfillStartDate }}</span>
               <span v-else-if="backfillResult.status === 'running'">Historical backfill in progress</span>
             </p>
             <p v-if="backfillResult?.errors?.length" class="max-w-sm text-right text-xs text-amber-500">
