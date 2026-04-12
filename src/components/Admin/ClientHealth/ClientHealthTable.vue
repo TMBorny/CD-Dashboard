@@ -95,7 +95,7 @@ const filteredSchools = computed(() => {
   const q = searchQuery.value.trim().toLowerCase();
   if (!q) return props.schools;
   return props.schools.filter((school) => {
-    const displayName = formatSchoolLabel(school.school).toLowerCase();
+    const displayName = formatSchoolLabel(school.school, school.displayName).toLowerCase();
     const rawId = school.school.toLowerCase();
     return displayName.includes(q) || rawId.includes(q);
   });
@@ -117,8 +117,8 @@ const sortedSchools = computed(() => {
 
     switch (sortBy.value) {
       case 'displayName':
-        aVal = formatSchoolLabel(a.school);
-        bVal = formatSchoolLabel(b.school);
+        aVal = formatSchoolLabel(a.school, a.displayName);
+        bVal = formatSchoolLabel(b.school, b.displayName);
         break;
       case 'nightlySuccess':
         aVal = nightlyA;
@@ -278,7 +278,7 @@ const getHealthScore = (school: ClientHealthSnapshot) => {
             class="group cursor-pointer transition hover:bg-slate-50"
           >
             <td class="whitespace-nowrap px-6 py-5">
-              <div class="text-base font-semibold text-slate-950">{{ formatSchoolLabel(school.school) }}</div>
+              <div class="text-base font-semibold text-slate-950">{{ formatSchoolLabel(school.school, school.displayName) }}</div>
               <div class="mt-1 text-xs text-slate-500">{{ school.products.join(', ') || 'No products listed' }}</div>
             </td>
             <td class="whitespace-nowrap px-6 py-5">

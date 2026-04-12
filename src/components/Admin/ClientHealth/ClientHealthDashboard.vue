@@ -55,7 +55,7 @@ const schoolOptions = computed(() => {
     : base.filter((s: ClientHealthSnapshot) => s.sisPlatform === selectedSis.value);
   return [
     { value: 'all', label: 'All schools' },
-    ...sisFiltered.map((school: ClientHealthSnapshot) => ({ value: school.school, label: formatSchoolLabel(school.school) })),
+    ...sisFiltered.map((school: ClientHealthSnapshot) => ({ value: school.school, label: formatSchoolLabel(school.school, school.displayName) })),
   ];
 });
 

@@ -12,7 +12,6 @@ import { formatSchoolLabel } from '@/utils/schoolNames';
 const route = useRoute();
 const queryClient = useQueryClient();
 const school = route.params.school as string;
-const schoolLabel = computed(() => formatSchoolLabel(school));
 const backfillDays = ref(7);
 
 const isSyncing = ref(false);
@@ -60,6 +59,7 @@ const latestSnapshot = computed(() => {
   const snapshots = history.value?.snapshots ?? [];
   return snapshots.length > 0 ? snapshots[snapshots.length - 1] : null;
 });
+const schoolLabel = computed(() => formatSchoolLabel(school, latestSnapshot.value?.displayName));
 const lastSuccessfulSyncLabel = computed(() => {
   const createdAt = syncMetadata.value?.lastSuccessfulSync?.createdAt;
   if (!createdAt) return 'No successful sync yet';
