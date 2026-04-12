@@ -1,8 +1,9 @@
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.db import connect_api, close_api, init_db
 from app.routes import router, start_scheduled_sync_service, stop_scheduled_sync_service
+from app.security import get_cors_settings, require_internal_auth
 
 
 @asynccontextmanager
@@ -17,18 +18,23 @@ async def lifespan(app_instance: FastAPI):
     await close_api()
 
 
-app = FastAPI(lifespan=lifespan)
+def create_app() -> FastAPI:
+    app_instance = FastAPI(lifespan=lifespan)
+    cors_settings = get_cors_settings()
 
-# Disable CORS. Do not remove this for full-stack development.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
-    allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
-)
+    app_instance.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_settings["allow_origins"],
+        allow_credentials=cors_settings["allow_credentials"],
+        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+        allow_headers=["X-Internal-API-Key", "Content-Type"],
+    )
 
-app.include_router(router)
+    app_instance.include_router(router, dependencies=[Depends(require_internal_auth)])
+    return app_instance
+
+
+app = create_app()
 
 
 @app.get("/healthz")

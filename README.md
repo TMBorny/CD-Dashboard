@@ -67,16 +67,19 @@ Backend:
 
 ## Environment Variables
 
-The frontend and backend both read from `.env` files.
+Copy `.env.example` to `.env` in the repo root and `client-health-backend/.env.example` to `client-health-backend/.env`. These runtime files are intentionally gitignored and should never be committed.
 
 Commonly used values:
 
 - `BACKEND_URL`: frontend proxy target in development. Defaults to `http://localhost:8000`.
+- `VITE_INTERNAL_API_KEY` and `INTERNAL_API_KEY`: shared secret used to authenticate frontend-to-backend requests. Use the same random value in both files.
+- `VITE_ALLOWED_ORIGINS` and `ALLOWED_ORIGINS`: comma-separated browser origins allowed to access the backend if it is reached directly.
 - `COURSEDOG_BASE_URL` or `VITE_COURSEDOG_PRD_URL`: Coursedog base URL. Defaults to `https://app.coursedog.com`.
 - `COURSEDOG_EMAIL` or `VITE_COURSEDOG_EMAIL`: login email for Coursedog API access.
 - `COURSEDOG_PASSWORD` or `VITE_COURSEDOG_PASSWORD`: login password for Coursedog API access.
 
 If credentials are missing, the backend will still start, but live Coursedog fetches may fail or return limited data.
+If `INTERNAL_API_KEY` is missing, the backend will reject `/api/*` requests until it is configured.
 
 ## Local Development
 
@@ -113,6 +116,13 @@ npm run dev
 ```
 
 The frontend runs on `http://localhost:5173` and proxies `/backend/*` requests to the backend.
+
+## Security Notes
+
+- Treat the backend as an internal privileged service even on a private network.
+- Keep the backend behind trusted network controls or a reverse proxy.
+- Rotate any credentials that were previously committed in `.env` files or scratch scripts.
+- Do not commit SQLite databases or `.env` files; use the example files for onboarding instead.
 
 ## Testing
 

@@ -362,12 +362,10 @@ const getRowTone = (school: ClientHealthSnapshot) => {
             </td>
             <td :class="['whitespace-nowrap border-y border-slate-200 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300', getRowTone(school)]">
               <div class="text-lg font-semibold leading-none text-slate-950">{{ school.merges.nightly.succeeded }} / {{ school.merges.nightly.total }}</div>
-              <div class="mt-2 text-xs font-semibold text-slate-600">Succeeded / total merges</div>
               <div class="mt-3 flex flex-wrap gap-2">
                 <div v-if="school.merges.nightly.finishedWithIssues > 0" class="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-700" title="Finished With Issues">{{ school.merges.nightly.finishedWithIssues }} Issues</div>
                 <div v-if="school.merges.nightly.noData > 0" class="rounded-full bg-slate-200/80 px-2 py-1 text-[11px] font-semibold text-slate-600" title="No Data">{{ school.merges.nightly.noData }} No Data</div>
               </div>
-              <div class="mt-3 text-xs text-slate-500">Upstream 48h window</div>
             </td>
             <td :class="['whitespace-nowrap border-y border-slate-200 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300', getRowTone(school)]">
               <div class="text-lg font-semibold leading-none text-slate-950">{{ formatDuration(school.merges.nightly.mergeTimeMs) }}</div>
@@ -380,12 +378,10 @@ const getRowTone = (school: ClientHealthSnapshot) => {
             </td>
             <td :class="['whitespace-nowrap border-y border-slate-200 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300', getRowTone(school)]">
               <div class="text-lg font-semibold leading-none text-slate-950">{{ school.merges.realtime.succeeded }} / {{ school.merges.realtime.total }}</div>
-              <div class="mt-2 text-xs font-semibold text-slate-600">Succeeded / total merges</div>
               <div class="mt-3 flex flex-wrap gap-2">
                 <div v-if="school.merges.realtime.finishedWithIssues > 0" class="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-700" title="Finished With Issues">{{ school.merges.realtime.finishedWithIssues }} Issues</div>
                 <div v-if="school.merges.realtime.noData > 0" class="rounded-full bg-slate-200/80 px-2 py-1 text-[11px] font-semibold text-slate-600" title="No Data">{{ school.merges.realtime.noData }} No Data</div>
               </div>
-              <div class="mt-3 text-xs text-slate-500">Last 24 hours</div>
             </td>
             <td :class="['whitespace-nowrap border-y border-slate-200 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300', getRowTone(school)]">
               <div class="text-lg font-semibold leading-none text-slate-950">{{ school.mergeErrorsCount }}</div>

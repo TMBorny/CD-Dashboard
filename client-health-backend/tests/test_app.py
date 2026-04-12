@@ -1,11 +1,15 @@
 import unittest
+import os
+from types import SimpleNamespace
 from unittest.mock import patch
 from datetime import datetime, timezone
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import app.routes as routes
-from app.main import app
+from app.main import app, create_app
+from app.security import is_loopback_client, require_internal_auth
 from app.routes import (
     build_snapshot_dates,
     build_snapshot_from_merge_history,
@@ -26,6 +30,9 @@ from app.routes import (
     split_school_catalog,
     summarize_recent_merge_activity,
 )
+
+TEST_INTERNAL_API_KEY = "test-internal-key"
+AUTH_HEADERS = {"X-Internal-API-Key": TEST_INTERNAL_API_KEY}
 
 
 class SerializeSyncJobTests(unittest.TestCase):
@@ -326,7 +333,15 @@ class BackfillEndpointTests(unittest.TestCase):
         async def fake_stop_scheduler():
             return None
 
-        with patch.object(routes, "_active_sync_job_id", None), patch.dict(routes._sync_jobs, {}, clear=True), patch(
+        with patch.object(routes, "_active_sync_job_id", None), patch.object(
+            routes,
+            "_last_job_trigger_monotonic",
+            0.0,
+        ), patch.dict(routes._sync_jobs, {}, clear=True), patch.dict(
+            os.environ,
+            {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY},
+            clear=False,
+        ), patch(
             "app.routes.run_history_backfill_job",
             new=fake_run_history_backfill_job,
         ), patch(
@@ -340,6 +355,7 @@ class BackfillEndpointTests(unittest.TestCase):
                 response = client.post(
                     "/api/client-health/history/backfill",
                     params={"startDate": "2026-01-01"},
+                    headers=AUTH_HEADERS,
                 )
 
         self.assertEqual(response.status_code, 200)
@@ -358,7 +374,15 @@ class BackfillEndpointTests(unittest.TestCase):
         async def fake_stop_scheduler():
             return None
 
-        with patch.object(routes, "_active_sync_job_id", None), patch.dict(routes._sync_jobs, {}, clear=True), patch(
+        with patch.object(routes, "_active_sync_job_id", None), patch.object(
+            routes,
+            "_last_job_trigger_monotonic",
+            0.0,
+        ), patch.dict(routes._sync_jobs, {}, clear=True), patch.dict(
+            os.environ,
+            {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY},
+            clear=False,
+        ), patch(
             "app.routes.run_history_backfill_job",
             new=fake_run_history_backfill_job,
         ), patch(
@@ -376,6 +400,7 @@ class BackfillEndpointTests(unittest.TestCase):
                         "startDate": "2026-01-01",
                         "endDate": "2026-01-07",
                     },
+                    headers=AUTH_HEADERS,
                 )
 
         self.assertEqual(response.status_code, 200)
@@ -422,6 +447,27 @@ class SchoolExclusionTests(unittest.TestCase):
         )
 
 
+class InternalAuthTests(unittest.IsolatedAsyncioTestCase):
+    async def test_loopback_client_is_allowed_without_configured_key(self):
+        request = SimpleNamespace(url=SimpleNamespace(path="/api/schools"), client=SimpleNamespace(host="127.0.0.1"))
+
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": "", "VITE_INTERNAL_API_KEY": ""}, clear=False):
+            await require_internal_auth(request, x_internal_api_key=None)
+
+    async def test_remote_client_is_rejected_without_configured_key(self):
+        request = SimpleNamespace(url=SimpleNamespace(path="/api/schools"), client=SimpleNamespace(host="10.0.0.5"))
+
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": "", "VITE_INTERNAL_API_KEY": ""}, clear=False):
+            with self.assertRaises(HTTPException) as exc:
+                await require_internal_auth(request, x_internal_api_key=None)
+
+        self.assertEqual(exc.exception.status_code, 503)
+
+    def test_detects_loopback_client(self):
+        request = SimpleNamespace(client=SimpleNamespace(host="localhost"))
+        self.assertTrue(is_loopback_client(request))
+
+
 class DemoSchoolTests(unittest.TestCase):
 
     def test_detects_demo_school_by_school_id(self):
@@ -432,6 +478,116 @@ class DemoSchoolTests(unittest.TestCase):
 
     def test_non_demo_school_is_not_filtered(self):
         self.assertFalse(is_demo_school("bar01", "Baruch College"))
+
+
+class ApiSecurityTests(unittest.TestCase):
+    def test_protected_api_rejects_missing_internal_api_key(self):
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
+            "app.main.start_scheduled_sync_service",
+            new=self._async_noop,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=self._async_noop,
+        ):
+            with TestClient(app) as client:
+                response = client.get("/api/client-health/sync-runs")
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"]["code"], "invalid_internal_api_key")
+
+    def test_protected_api_accepts_valid_internal_api_key(self):
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
+            "app.main.start_scheduled_sync_service",
+            new=self._async_noop,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=self._async_noop,
+        ):
+            with TestClient(app) as client:
+                response = client.get("/api/client-health/sync-runs", headers=AUTH_HEADERS)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("syncRuns", response.json())
+
+    def test_active_users_returns_structured_upstream_error(self):
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
+            "app.routes.api_get",
+            side_effect=RuntimeError("upstream down"),
+        ), patch(
+            "app.main.start_scheduled_sync_service",
+            new=self._async_noop,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=self._async_noop,
+        ):
+            with TestClient(app) as client:
+                response = client.get(
+                    "/api/client-health/active-users",
+                    params={"school": "bar01"},
+                    headers=AUTH_HEADERS,
+                )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["detail"]["code"], "active_users_lookup_failed")
+
+    def test_allowed_origin_receives_cors_headers(self):
+        with patch.dict(
+            os.environ,
+            {
+                "INTERNAL_API_KEY": TEST_INTERNAL_API_KEY,
+                "ALLOWED_ORIGINS": "http://localhost:5173",
+            },
+            clear=False,
+        ), patch(
+            "app.main.start_scheduled_sync_service",
+            new=self._async_noop,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=self._async_noop,
+        ):
+            with TestClient(create_app()) as client:
+                response = client.options(
+                    "/api/client-health/sync-runs",
+                    headers={
+                        "Origin": "http://localhost:5173",
+                        "Access-Control-Request-Method": "GET",
+                        "Access-Control-Request-Headers": "X-Internal-API-Key",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers.get("access-control-allow-origin"), "http://localhost:5173")
+
+    def test_unknown_origin_does_not_receive_cors_allow_origin_header(self):
+        with patch.dict(
+            os.environ,
+            {
+                "INTERNAL_API_KEY": TEST_INTERNAL_API_KEY,
+                "ALLOWED_ORIGINS": "http://localhost:5173",
+            },
+            clear=False,
+        ), patch(
+            "app.main.start_scheduled_sync_service",
+            new=self._async_noop,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=self._async_noop,
+        ):
+            with TestClient(create_app()) as client:
+                response = client.options(
+                    "/api/client-health/sync-runs",
+                    headers={
+                        "Origin": "http://evil.example",
+                        "Access-Control-Request-Method": "GET",
+                        "Access-Control-Request-Headers": "X-Internal-API-Key",
+                    },
+                )
+
+        self.assertIsNone(response.headers.get("access-control-allow-origin"))
+
+    @staticmethod
+    async def _async_noop():
+        return None
 
 
 if __name__ == "__main__":

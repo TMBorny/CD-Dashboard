@@ -1,8 +1,17 @@
 import axios from 'axios';
 
+const internalApiKey = import.meta.env.VITE_INTERNAL_API_KEY?.trim();
+
 // --- Backend API (cached data from SQLite) ---
 const backend = axios.create({
   baseURL: '/backend/api',
+  ...(internalApiKey
+    ? {
+        headers: {
+          'X-Internal-API-Key': internalApiKey,
+        },
+      }
+    : {}),
 });
 
 export async function getSchools() {
