@@ -692,29 +692,47 @@ def calculate_nightly_merge_time(merge_entries: list[dict]) -> int:
     nightly runs (e.g. yesterday's run and today's run) from artificially inflating
     the total duration.
     """
-    intervals = []
+    groups: dict[str, list] = {}
+    fallback_intervals = []
+    
     for report in merge_entries:
         if str(report.get("scheduleType", "")).lower() == "nightly":
             start_val = report.get("timestampStart") or report.get("startedAt") or report.get("timestampEnd")
             end_val = report.get("timestampEnd") or report.get("completedAt")
+            
             if start_val and end_val and isinstance(start_val, (int, float)) and isinstance(end_val, (int, float)):
                 if start_val <= end_val:
-                    intervals.append([start_val, end_val])
+                    group_id = report.get("groupId")
+                    if group_id:
+                        if group_id not in groups:
+                            groups[group_id] = {"starts": [], "ends": []}
+                        groups[group_id]["starts"].append(start_val)
+                        groups[group_id]["ends"].append(end_val)
+                    else:
+                        fallback_intervals.append([start_val, end_val])
     
-    if not intervals:
-        return 0
+    total_duration = 0
+    
+    # 1. Calculate duration for explicitly grouped merge events
+    for g in groups.values():
+        total_duration += max(0, int(max(g["ends"]) - min(g["starts"])))
         
-    intervals.sort(key=lambda x: x[0])
-    merged = [intervals[0]]
-    for current in intervals[1:]:
-        prev = merged[-1]
-        # if current overlaps or touches previous
-        if current[0] <= prev[1]:
-            prev[1] = max(prev[1], current[1])
-        else:
-            merged.append(current)
-            
-    return max(0, int(sum(end - start for start, end in merged)))
+    # 2. Handle legacy reports missing a groupId using the 2-hour sliding window tolerance
+    if fallback_intervals:
+        fallback_intervals.sort(key=lambda x: x[0])
+        merged = [fallback_intervals[0]]
+        GROUPING_TOLERANCE_MS = 2 * 60 * 60 * 1000
+        
+        for current in fallback_intervals[1:]:
+            prev = merged[-1]
+            if current[0] <= prev[1] + GROUPING_TOLERANCE_MS:
+                prev[1] = max(prev[1], current[1])
+            else:
+                merged.append(current)
+                
+        total_duration += int(sum(end - start for start, end in merged))
+        
+    return max(0, total_duration)
 
 
 def build_snapshot_from_merge_history(
