@@ -122,6 +122,7 @@ const TOKEN_ALIASES: Record<string, string> = {
   'uwi': 'UWI',
   'uwrf': 'UWRF',
   'uwsp': 'UWSP',
+  'udm': 'University of Detroit Mercy',
 };
 
 // Suffixes to strip from slug (SIS platform / integration identifiers)
@@ -165,7 +166,11 @@ function humanizeSchoolSlug(schoolId: string): string {
   return parts.map(toTitleCaseToken).join(' ');
 }
 
-export function formatSchoolLabel(schoolId: string): string {
+export function formatSchoolLabel(schoolId: string, displayName?: string | null): string {
+  if (displayName && displayName !== schoolId) {
+    return `${displayName} (${schoolId})`;
+  }
+
   const name = humanizeSchoolSlug(schoolId);
   // If the name would just be the slug in title case with no improvement, show it with the id
   // Otherwise show "Name (slug)" so the slug is still searchable
