@@ -18,6 +18,12 @@ const navItems = [
     icon: '⚙️',
     name: 'AdminJobsMonitoring',
   },
+  {
+    label: 'Operations',
+    path: '/admin/operations',
+    icon: '🛠️',
+    name: 'AdminOperations',
+  },
 ];
 
 const toggleSidebar = () => {

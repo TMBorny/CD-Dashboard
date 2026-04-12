@@ -143,18 +143,37 @@ class SyncRun(Base):
     scope = Column(String(64), nullable=False, index=True)
     status = Column(String(32), nullable=False, index=True)
     snapshot_date = Column(String(10), nullable=True)
+    schools_processed = Column(Integer, default=0)
+    total_schools = Column(Integer, default=0)
     attempted_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    started_at = Column(DateTime, nullable=True)
     finished_at = Column(DateTime, nullable=True)
+    start_date = Column(String(10), nullable=True)
+    end_date = Column(String(10), nullable=True)
+    date_count = Column(Integer, nullable=True)
+    errors_json = Column(Text, nullable=True)
+    timing_json = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
 
     def to_dict(self) -> dict:
+        errors = json.loads(self.errors_json) if self.errors_json else []
+        timing = json.loads(self.timing_json) if self.timing_json else None
         return {
             "jobId": self.job_id,
             "school": self.school,
             "scope": self.scope,
             "status": self.status,
             "snapshotDate": self.snapshot_date,
+            "schoolsProcessed": self.schools_processed,
+            "totalSchools": self.total_schools,
             "attemptedAt": self.attempted_at.isoformat() if self.attempted_at else None,
+            "startedAt": self.started_at.isoformat() if self.started_at else None,
             "finishedAt": self.finished_at.isoformat() if self.finished_at else None,
+            "startDate": self.start_date,
+            "endDate": self.end_date,
+            "dateCount": self.date_count,
+            "errors": errors,
+            "errorCount": len(errors),
+            "timing": timing,
             "errorMessage": self.error_message,
         }

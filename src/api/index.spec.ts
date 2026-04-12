@@ -15,6 +15,15 @@ describe('client health api helpers', () => {
     get.mockReset();
   });
 
+  it('fetches the available schools list', async () => {
+    get.mockResolvedValue({ data: { schools: [] } });
+    const { getSchools } = await import('./index');
+
+    await getSchools();
+
+    expect(get).toHaveBeenCalledWith('/schools');
+  });
+
   it('sends bulk history backfill with an absolute start date', async () => {
     post.mockResolvedValue({ data: { jobId: 'bulk-1' } });
     const { triggerHistoryBackfill } = await import('./index');

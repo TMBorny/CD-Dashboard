@@ -5,6 +5,11 @@ const backend = axios.create({
   baseURL: '/backend/api',
 });
 
+export async function getSchools() {
+  const res = await backend.get('/schools');
+  return { data: res.data };
+}
+
 /**
  * Get the latest health snapshot for all schools.
  * This hits our local backend which serves pre-cached data from SQLite.

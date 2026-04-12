@@ -55,3 +55,9 @@ export interface ActiveUsersResponse {
   users: string[];
   error?: string;
 }
+
+export interface SchoolOption {
+  school: string;
+  displayName: string;
+  products: string[];
+}

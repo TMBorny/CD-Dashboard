@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import patch
+from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 
@@ -12,7 +13,11 @@ from app.routes import (
     extract_merge_history_entries,
     extract_merge_error_count,
     extract_sis_platform,
+    get_new_york_snapshot_date,
+    get_next_scheduled_sync_time,
     is_demo_school,
+    maybe_enqueue_catchup_sync,
+    maybe_enqueue_scheduled_sync,
     resolve_backfill_date_range,
     select_schools_for_sync,
     serialize_sync_job,
@@ -65,11 +70,122 @@ class SerializeSyncJobTests(unittest.TestCase):
 
 class HealthcheckTests(unittest.TestCase):
     def test_healthz(self):
-        with TestClient(app) as client:
-            response = client.get("/healthz")
+        async def fake_start_scheduler():
+            return None
+
+        async def fake_stop_scheduler():
+            return None
+
+        with patch("app.main.start_scheduled_sync_service", new=fake_start_scheduler), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=fake_stop_scheduler,
+        ):
+            with TestClient(app) as client:
+                response = client.get("/healthz")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
+
+
+class SchedulerHelperTests(unittest.IsolatedAsyncioTestCase):
+    def test_get_new_york_snapshot_date_uses_local_calendar_day(self):
+        self.assertEqual(
+            get_new_york_snapshot_date(datetime(2026, 4, 12, 3, 30, tzinfo=timezone.utc)),
+            "2026-04-11",
+        )
+
+    def test_get_next_scheduled_sync_time_preserves_new_york_local_clock_time(self):
+        winter = get_next_scheduled_sync_time(datetime(2026, 1, 12, 10, 0, tzinfo=timezone.utc))
+        summer = get_next_scheduled_sync_time(datetime(2026, 7, 12, 10, 0, tzinfo=timezone.utc))
+
+        self.assertEqual((winter.hour, winter.minute), (7, 30))
+        self.assertEqual((summer.hour, summer.minute), (7, 30))
+        self.assertEqual(str(winter.tzinfo), "America/New_York")
+        self.assertEqual(str(summer.tzinfo), "America/New_York")
+
+    async def test_maybe_enqueue_scheduled_sync_uses_latest_only_scope(self):
+        captured = {}
+
+        def fake_enqueue_sync_job(**kwargs):
+            captured.update(kwargs)
+            return {
+                "jobId": "scheduled-job",
+                "scope": kwargs["scope"],
+                "snapshotDate": kwargs["snapshot_date_override"],
+            }, False
+
+        with patch("app.routes.enqueue_sync_job", side_effect=fake_enqueue_sync_job):
+            job = await maybe_enqueue_scheduled_sync(
+                datetime(2026, 4, 12, 12, 0, tzinfo=timezone.utc)
+            )
+
+        self.assertEqual(job["scope"], "scheduled-bulk")
+        self.assertEqual(captured["snapshot_date_override"], "2026-04-12")
+
+    async def test_maybe_enqueue_scheduled_sync_respects_duplicate_guard(self):
+        active_job = {"jobId": "active-job", "status": "running", "scope": "bulk"}
+
+        with patch("app.routes.enqueue_sync_job", return_value=(active_job, True)) as enqueue_mock:
+            job = await maybe_enqueue_scheduled_sync(
+                datetime(2026, 4, 12, 12, 0, tzinfo=timezone.utc)
+            )
+
+        self.assertEqual(job, active_job)
+        enqueue_mock.assert_called_once()
+
+    async def test_catchup_enqueues_when_snapshot_is_missing(self):
+        captured = {}
+
+        def fake_enqueue_sync_job(**kwargs):
+            captured.update(kwargs)
+            return {
+                "jobId": "catchup-job",
+                "scope": kwargs["scope"],
+                "snapshotDate": kwargs["snapshot_date_override"],
+            }, False
+
+        with patch("app.routes.has_successful_snapshot_for_date", return_value=False), patch(
+            "app.routes.enqueue_sync_job",
+            side_effect=fake_enqueue_sync_job,
+        ):
+            job = await maybe_enqueue_catchup_sync(
+                datetime(2026, 4, 12, 12, 0, tzinfo=timezone.utc)
+            )
+
+        self.assertEqual(job["scope"], "scheduled-catchup-bulk")
+        self.assertEqual(captured["snapshot_date_override"], "2026-04-12")
+
+    async def test_catchup_skips_when_snapshot_exists(self):
+        with patch("app.routes.has_successful_snapshot_for_date", return_value=True), patch(
+            "app.routes.enqueue_sync_job",
+        ) as enqueue_mock:
+            job = await maybe_enqueue_catchup_sync(
+                datetime(2026, 4, 12, 12, 0, tzinfo=timezone.utc)
+            )
+
+        self.assertIsNone(job)
+        enqueue_mock.assert_not_called()
+
+
+class LifespanSchedulerTests(unittest.TestCase):
+    def test_lifespan_starts_and_stops_scheduler(self):
+        calls = []
+
+        async def fake_start_scheduler():
+            calls.append("start")
+
+        async def fake_stop_scheduler():
+            calls.append("stop")
+
+        with patch("app.main.start_scheduled_sync_service", new=fake_start_scheduler), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=fake_stop_scheduler,
+        ):
+            with TestClient(app) as client:
+                response = client.get("/healthz")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, ["start", "stop"])
 
 
 class MergeErrorCountTests(unittest.TestCase):
@@ -201,9 +317,21 @@ class BackfillEndpointTests(unittest.TestCase):
         async def fake_run_history_backfill_job(*args, **kwargs):
             return None
 
+        async def fake_start_scheduler():
+            return None
+
+        async def fake_stop_scheduler():
+            return None
+
         with patch.object(routes, "_active_sync_job_id", None), patch.dict(routes._sync_jobs, {}, clear=True), patch(
             "app.routes.run_history_backfill_job",
             new=fake_run_history_backfill_job,
+        ), patch(
+            "app.main.start_scheduled_sync_service",
+            new=fake_start_scheduler,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=fake_stop_scheduler,
         ):
             with TestClient(app) as client:
                 response = client.post(
@@ -221,9 +349,21 @@ class BackfillEndpointTests(unittest.TestCase):
         async def fake_run_history_backfill_job(*args, **kwargs):
             return None
 
+        async def fake_start_scheduler():
+            return None
+
+        async def fake_stop_scheduler():
+            return None
+
         with patch.object(routes, "_active_sync_job_id", None), patch.dict(routes._sync_jobs, {}, clear=True), patch(
             "app.routes.run_history_backfill_job",
             new=fake_run_history_backfill_job,
+        ), patch(
+            "app.main.start_scheduled_sync_service",
+            new=fake_start_scheduler,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=fake_stop_scheduler,
         ):
             with TestClient(app) as client:
                 response = client.post(

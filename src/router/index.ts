@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router';
 import ClientHealthDashboard from '@/components/Admin/ClientHealth/ClientHealthDashboard.vue';
 import ClientHealthDetail from '@/components/Admin/ClientHealth/ClientHealthDetail.vue';
 import JobsMonitoring from '@/components/Admin/JobsMonitoring/JobsMonitoring.vue';
+import Operations from '@/components/Admin/Operations/Operations.vue';
 
 const routes = [
   {
@@ -23,6 +24,11 @@ const routes = [
     path: '/admin/jobs',
     name: 'AdminJobsMonitoring',
     component: JobsMonitoring,
+  },
+  {
+    path: '/admin/operations',
+    name: 'AdminOperations',
+    component: Operations,
   },
   {
     path: '/:catchAll(.*)',

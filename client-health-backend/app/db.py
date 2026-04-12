@@ -114,7 +114,8 @@ def init_db():
 def ensure_schema_updates(engine) -> None:
     """Apply lightweight schema updates for existing SQLite databases."""
     inspector = inspect(engine)
-    if "school_snapshots" not in inspector.get_table_names():
+    table_names = inspector.get_table_names()
+    if "school_snapshots" not in table_names:
         return
 
     columns = {column["name"] for column in inspector.get_columns("school_snapshots")}
@@ -130,6 +131,28 @@ def ensure_schema_updates(engine) -> None:
             connection.execute(text("ALTER TABLE school_snapshots ADD COLUMN manual_no_data INTEGER DEFAULT 0"))
         if "nightly_merge_time_ms" not in columns:
             connection.execute(text("ALTER TABLE school_snapshots ADD COLUMN nightly_merge_time_ms INTEGER DEFAULT 0"))
+
+    if "sync_runs" not in table_names:
+        return
+
+    sync_run_columns = {column["name"] for column in inspector.get_columns("sync_runs")}
+    with engine.begin() as connection:
+        if "schools_processed" not in sync_run_columns:
+            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN schools_processed INTEGER DEFAULT 0"))
+        if "total_schools" not in sync_run_columns:
+            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN total_schools INTEGER DEFAULT 0"))
+        if "started_at" not in sync_run_columns:
+            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN started_at DATETIME"))
+        if "start_date" not in sync_run_columns:
+            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN start_date VARCHAR(10)"))
+        if "end_date" not in sync_run_columns:
+            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN end_date VARCHAR(10)"))
+        if "date_count" not in sync_run_columns:
+            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN date_count INTEGER"))
+        if "errors_json" not in sync_run_columns:
+            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN errors_json TEXT"))
+        if "timing_json" not in sync_run_columns:
+            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN timing_json TEXT"))
 
 
 def get_db() -> Session:

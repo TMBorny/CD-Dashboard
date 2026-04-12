@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import { getClientHealth, getClientHealthHistory, getSyncStatus, triggerHistoryBackfill, triggerSync } from '@/api';
+import { useQuery } from '@tanstack/vue-query';
+import { getClientHealth, getClientHealthHistory } from '@/api';
 import type { ClientHealthSnapshot } from '@/types/clientHealth';
 import { useChartOptions, useStackedBarChartOptions } from '@/composables/useChartOptions';
 import { formatSchoolLabel } from '@/utils/schoolNames';
@@ -11,38 +11,11 @@ import ClientHealthTable from './ClientHealthTable.vue';
 import VueApexCharts from 'vue3-apexcharts';
 
 const router = useRouter();
-const queryClient = useQueryClient();
 const selectedSchool = ref<string>('all');
 const selectedSis = ref<string>('all');
-const backfillStartDate = ref('2026-01-01');
 
 // Reset school filter when SIS changes (to avoid stale cross-filter state)
 watch(selectedSis, () => { selectedSchool.value = 'all'; });
-
-// Sync state
-const isSyncing = ref(false);
-const syncJobId = ref<string | null>(null);
-const syncResult = ref<{
-  status?: string;
-  totalSec?: number;
-  schoolsProcessed?: number;
-  totalSchools?: number;
-  errors?: string[];
-  alreadyRunning?: boolean;
-  limit?: number;
-} | null>(null);
-const syncError = ref<string | null>(null);
-const isBackfilling = ref(false);
-const backfillResult = ref<{
-  status?: string;
-  totalSec?: number;
-  schoolsProcessed?: number;
-  totalSchools?: number;
-  errors?: string[];
-  alreadyRunning?: boolean;
-  scope?: string;
-} | null>(null);
-const backfillError = ref<string | null>(null);
 
 const { data: healthResponse, isLoading: isLoadingHealth, error: healthError } = useQuery({
   queryKey: ['clientHealth'],
@@ -169,9 +142,24 @@ const mergeErrorsSeries = computed(() => {
   const entries = aggregateByDate((s) => s.mergeErrorsCount);
   return [{ name: 'Open Merge Errors', data: entries.map(([, v]) => v) }];
 });
-const mergeErrorsOptions = computed(() => useChartOptions({
-  colors: ['#ef4444'],
-  categories: chartDates.value,
+const mergeErrorsOptions = computed(() => ({
+  ...useChartOptions({
+    colors: ['#ef4444'],
+    categories: chartDates.value,
+  }),
+  yaxis: {
+    labels: {
+      style: { colors: '#64748b', fontSize: '12px' },
+      formatter: (value: number) => `${Math.round(value)}`,
+    },
+  },
+  tooltip: {
+    theme: 'light',
+    y: {
+      formatter: (value: number | undefined) =>
+        typeof value === 'number' ? `${Math.round(value)}` : '',
+    },
+  },
 }));
 
 // Active users over time
@@ -204,94 +192,6 @@ const atRiskOptions = computed(() => useChartOptions({
 const handleRowClick = (school: ClientHealthSnapshot) => {
   router.push({ name: 'AdminClientHealthDetail', params: { school: school.school } });
 };
-
-async function pollSyncJob(jobId: string) {
-  syncJobId.value = jobId;
-
-  while (true) {
-    const status = await getSyncStatus(jobId);
-    syncResult.value = {
-      status: status.status,
-      totalSec: status.timing?.totalSec,
-      schoolsProcessed: status.schoolsProcessed,
-      totalSchools: status.totalSchools,
-      errors: status.errors,
-      alreadyRunning: status.alreadyRunning,
-      limit: status.limit,
-    };
-
-    if (status.status === 'completed') {
-      await queryClient.invalidateQueries({ queryKey: ['clientHealth'] });
-      await queryClient.invalidateQueries({ queryKey: ['clientHealthHistory'] });
-      break;
-    }
-
-    if (status.status === 'failed') {
-      syncError.value = status.error || 'Sync failed';
-      break;
-    }
-
-    await new Promise((resolve) => window.setTimeout(resolve, 1500));
-  }
-}
-
-async function handleSync() {
-  isSyncing.value = true;
-  syncError.value = null;
-  syncResult.value = null;
-
-  try {
-    const result = await triggerSync();
-    await pollSyncJob(result.jobId);
-  } catch (e: any) {
-    syncError.value = e?.response?.data?.detail || e?.message || 'Sync failed';
-  } finally {
-    isSyncing.value = false;
-  }
-}
-
-async function pollBackfillJob(jobId: string) {
-  while (true) {
-    const status = await getSyncStatus(jobId);
-    backfillResult.value = {
-      status: status.status,
-      totalSec: status.timing?.totalSec,
-      schoolsProcessed: status.schoolsProcessed,
-      totalSchools: status.totalSchools,
-      errors: status.errors,
-      alreadyRunning: status.alreadyRunning,
-      scope: status.scope,
-    };
-
-    if (status.status === 'completed') {
-      await queryClient.invalidateQueries({ queryKey: ['clientHealth'] });
-      await queryClient.invalidateQueries({ queryKey: ['clientHealthHistory'] });
-      break;
-    }
-
-    if (status.status === 'failed') {
-      backfillError.value = status.error || 'Backfill failed';
-      break;
-    }
-
-    await new Promise((resolve) => window.setTimeout(resolve, 1500));
-  }
-}
-
-async function handleHistoryBackfill() {
-  isBackfilling.value = true;
-  backfillError.value = null;
-  backfillResult.value = null;
-
-  try {
-    const result = await triggerHistoryBackfill({ startDate: backfillStartDate.value });
-    await pollBackfillJob(result.jobId);
-  } catch (e: any) {
-    backfillError.value = e?.response?.data?.detail || e?.message || 'Backfill failed';
-  } finally {
-    isBackfilling.value = false;
-  }
-}
 </script>
 
 <template>
@@ -304,68 +204,7 @@ async function handleHistoryBackfill() {
             <h1 class="mt-3 text-4xl font-semibold tracking-tight text-slate-950 sm:text-5xl">Client Health Dashboard</h1>
             <p class="mt-4 max-w-3xl text-base leading-7 text-slate-600">Track nightly success from the upstream 48-hour health window, realtime success and active users from the last 24 hours, and current open merge errors from the latest local sync.</p>
           </div>
-          <div class="flex flex-col items-end gap-2">
-            <button
-              @click="handleSync"
-              :disabled="isSyncing || isBackfilling"
-              class="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <span v-if="isSyncing">Syncing…</span>
-              <span v-else>⟳ Sync Now</span>
-            </button>
-            <button
-              @click="handleHistoryBackfill"
-              :disabled="isSyncing || isBackfilling"
-              class="rounded-full border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <span v-if="isBackfilling">Backfilling From {{ backfillStartDate }}…</span>
-              <span v-else>Backfill All Schools From {{ backfillStartDate }}</span>
-            </button>
-            <div class="flex items-center gap-3">
-              <label for="bulk-backfill-start-date" class="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">Start Date</label>
-              <input
-                id="bulk-backfill-start-date"
-                v-model="backfillStartDate"
-                type="date"
-                :disabled="isSyncing || isBackfilling"
-                class="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-900 focus:border-slate-400 focus:outline-none disabled:opacity-50"
-              />
-            </div>
-            <p v-if="isSyncing && syncResult?.totalSchools" class="text-xs text-slate-500">
-              {{ syncResult.schoolsProcessed ?? 0 }} / {{ syncResult.totalSchools }} schools processed
-            </p>
-            <p v-if="isBackfilling && backfillResult?.totalSchools" class="text-xs text-slate-500">
-              {{ backfillResult.schoolsProcessed ?? 0 }} / {{ backfillResult.totalSchools }} snapshots processed
-            </p>
-            <p v-if="syncResult" class="text-xs text-emerald-600">
-              <span v-if="syncResult.status === 'completed'">✓ {{ syncResult.schoolsProcessed }} schools synced in {{ syncResult.totalSec }}s</span>
-              <span v-else-if="syncResult.status === 'queued'">Queued sync job{{ syncResult.alreadyRunning ? ' (joining active run)' : '' }}</span>
-              <span v-else-if="syncResult.status === 'running'">Sync job in progress</span>
-            </p>
-            <p v-if="backfillResult" class="text-xs text-blue-600">
-              <span v-if="backfillResult.status === 'completed'">✓ Backfilled {{ backfillResult.schoolsProcessed }} snapshots in {{ backfillResult.totalSec }}s</span>
-              <span v-else-if="backfillResult.status === 'queued'">Queued bulk backfill from {{ backfillStartDate }}</span>
-              <span v-else-if="backfillResult.status === 'running'">Bulk historical backfill in progress</span>
-            </p>
-            <p v-if="syncResult?.errors?.length" class="text-xs text-amber-600">
-              ⚠ {{ syncResult.errors.length }} errors
-            </p>
-            <div v-if="syncResult?.errors?.length" class="max-w-sm space-y-1 text-right">
-              <p v-for="message in syncResult.errors.slice(0, 3)" :key="message" class="text-xs text-amber-500">
-                {{ message }}
-              </p>
-            </div>
-            <div v-if="backfillResult?.errors?.length" class="max-w-sm space-y-1 text-right">
-              <p v-for="message in backfillResult.errors.slice(0, 3)" :key="message" class="text-xs text-amber-500">
-                {{ message }}
-              </p>
-            </div>
-            <p v-if="syncError" class="text-xs text-rose-500">
-              ✗ {{ syncError }}
-            </p>
-            <p v-if="backfillError" class="text-xs text-rose-500">
-              ✗ {{ backfillError }}
-            </p>
+          <div class="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-sm text-slate-600">
             <p v-if="data?.snapshotDate" class="text-xs text-slate-400">
               Last sync: {{ data.snapshotDate }}
             </p>
@@ -378,7 +217,7 @@ async function handleHistoryBackfill() {
       <div v-else-if="!data?.schools?.length" class="rounded-[28px] border border-slate-200 bg-white p-8 shadow-sm">
         <div class="text-center">
           <p class="text-lg font-semibold text-slate-700">No data yet</p>
-          <p class="mt-2 text-sm text-slate-500">Click "Sync Now" to fetch health data for all schools from Coursedog.</p>
+          <p class="mt-2 text-sm text-slate-500">Run a sync from the Operations tab to fetch health data for all schools from Coursedog.</p>
         </div>
       </div>
       <div v-else class="space-y-6">
