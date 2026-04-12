@@ -3,7 +3,7 @@ import { formatSchoolLabel } from './schoolNames';
 
 describe('formatSchoolLabel', () => {
   it('uses explicit aliases for known shorthand school ids', () => {
-    expect(formatSchoolLabel('bar01')).toBe('Baruch (bar01)');
+    expect(formatSchoolLabel('bar01')).toBe('Baruch College (CUNY) (bar01)');
   });
 
   it('strips SIS suffixes from school ids', () => {
@@ -11,6 +11,6 @@ describe('formatSchoolLabel', () => {
   });
 
   it('humanizes plain school ids', () => {
-    expect(formatSchoolLabel('stanford')).toBe('Stanford (stanford)');
+    expect(formatSchoolLabel('stanford')).toBe('Stanford University (stanford)');
   });
 });

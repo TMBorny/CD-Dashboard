@@ -2,7 +2,7 @@
 import { ref, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import { getClientHealth, getClientHealthHistory, getSyncStatus, triggerSync } from '@/api';
+import { getClientHealth, getClientHealthHistory, getSyncStatus, triggerHistoryBackfill, triggerSync } from '@/api';
 import type { ClientHealthSnapshot } from '@/types/clientHealth';
 import { useChartOptions, useStackedBarChartOptions } from '@/composables/useChartOptions';
 import { formatSchoolLabel } from '@/utils/schoolNames';
@@ -14,6 +14,7 @@ const router = useRouter();
 const queryClient = useQueryClient();
 const selectedSchool = ref<string>('all');
 const selectedSis = ref<string>('all');
+const backfillStartDate = ref('2026-01-01');
 
 // Reset school filter when SIS changes (to avoid stale cross-filter state)
 watch(selectedSis, () => { selectedSchool.value = 'all'; });
@@ -31,6 +32,17 @@ const syncResult = ref<{
   limit?: number;
 } | null>(null);
 const syncError = ref<string | null>(null);
+const isBackfilling = ref(false);
+const backfillResult = ref<{
+  status?: string;
+  totalSec?: number;
+  schoolsProcessed?: number;
+  totalSchools?: number;
+  errors?: string[];
+  alreadyRunning?: boolean;
+  scope?: string;
+} | null>(null);
+const backfillError = ref<string | null>(null);
 
 const { data: healthResponse, isLoading: isLoadingHealth, error: healthError } = useQuery({
   queryKey: ['clientHealth'],
@@ -237,6 +249,49 @@ async function handleSync() {
     isSyncing.value = false;
   }
 }
+
+async function pollBackfillJob(jobId: string) {
+  while (true) {
+    const status = await getSyncStatus(jobId);
+    backfillResult.value = {
+      status: status.status,
+      totalSec: status.timing?.totalSec,
+      schoolsProcessed: status.schoolsProcessed,
+      totalSchools: status.totalSchools,
+      errors: status.errors,
+      alreadyRunning: status.alreadyRunning,
+      scope: status.scope,
+    };
+
+    if (status.status === 'completed') {
+      await queryClient.invalidateQueries({ queryKey: ['clientHealth'] });
+      await queryClient.invalidateQueries({ queryKey: ['clientHealthHistory'] });
+      break;
+    }
+
+    if (status.status === 'failed') {
+      backfillError.value = status.error || 'Backfill failed';
+      break;
+    }
+
+    await new Promise((resolve) => window.setTimeout(resolve, 1500));
+  }
+}
+
+async function handleHistoryBackfill() {
+  isBackfilling.value = true;
+  backfillError.value = null;
+  backfillResult.value = null;
+
+  try {
+    const result = await triggerHistoryBackfill({ startDate: backfillStartDate.value });
+    await pollBackfillJob(result.jobId);
+  } catch (e: any) {
+    backfillError.value = e?.response?.data?.detail || e?.message || 'Backfill failed';
+  } finally {
+    isBackfilling.value = false;
+  }
+}
 </script>
 
 <template>
@@ -252,22 +307,45 @@ async function handleSync() {
           <div class="flex flex-col items-end gap-2">
             <button
               @click="handleSync"
-              :disabled="isSyncing"
+              :disabled="isSyncing || isBackfilling"
               class="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <span v-if="isSyncing">Syncing…</span>
               <span v-else>⟳ Sync Now</span>
             </button>
+            <button
+              @click="handleHistoryBackfill"
+              :disabled="isSyncing || isBackfilling"
+              class="rounded-full border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <span v-if="isBackfilling">Backfilling From {{ backfillStartDate }}…</span>
+              <span v-else>Backfill All Schools From {{ backfillStartDate }}</span>
+            </button>
+            <div class="flex items-center gap-3">
+              <label for="bulk-backfill-start-date" class="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">Start Date</label>
+              <input
+                id="bulk-backfill-start-date"
+                v-model="backfillStartDate"
+                type="date"
+                :disabled="isSyncing || isBackfilling"
+                class="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-900 focus:border-slate-400 focus:outline-none disabled:opacity-50"
+              />
+            </div>
             <p v-if="isSyncing && syncResult?.totalSchools" class="text-xs text-slate-500">
               {{ syncResult.schoolsProcessed ?? 0 }} / {{ syncResult.totalSchools }} schools processed
             </p>
-            <p v-if="syncResult?.limit" class="text-xs text-slate-400">
-              Dev mode: bulk sync is temporarily limited to {{ syncResult.limit }} schools
+            <p v-if="isBackfilling && backfillResult?.totalSchools" class="text-xs text-slate-500">
+              {{ backfillResult.schoolsProcessed ?? 0 }} / {{ backfillResult.totalSchools }} snapshots processed
             </p>
             <p v-if="syncResult" class="text-xs text-emerald-600">
               <span v-if="syncResult.status === 'completed'">✓ {{ syncResult.schoolsProcessed }} schools synced in {{ syncResult.totalSec }}s</span>
               <span v-else-if="syncResult.status === 'queued'">Queued sync job{{ syncResult.alreadyRunning ? ' (joining active run)' : '' }}</span>
               <span v-else-if="syncResult.status === 'running'">Sync job in progress</span>
+            </p>
+            <p v-if="backfillResult" class="text-xs text-blue-600">
+              <span v-if="backfillResult.status === 'completed'">✓ Backfilled {{ backfillResult.schoolsProcessed }} snapshots in {{ backfillResult.totalSec }}s</span>
+              <span v-else-if="backfillResult.status === 'queued'">Queued bulk backfill from {{ backfillStartDate }}</span>
+              <span v-else-if="backfillResult.status === 'running'">Bulk historical backfill in progress</span>
             </p>
             <p v-if="syncResult?.errors?.length" class="text-xs text-amber-600">
               ⚠ {{ syncResult.errors.length }} errors
@@ -277,8 +355,16 @@ async function handleSync() {
                 {{ message }}
               </p>
             </div>
+            <div v-if="backfillResult?.errors?.length" class="max-w-sm space-y-1 text-right">
+              <p v-for="message in backfillResult.errors.slice(0, 3)" :key="message" class="text-xs text-amber-500">
+                {{ message }}
+              </p>
+            </div>
             <p v-if="syncError" class="text-xs text-rose-500">
               ✗ {{ syncError }}
+            </p>
+            <p v-if="backfillError" class="text-xs text-rose-500">
+              ✗ {{ backfillError }}
             </p>
             <p v-if="data?.snapshotDate" class="text-xs text-slate-400">
               Last sync: {{ data.snapshotDate }}

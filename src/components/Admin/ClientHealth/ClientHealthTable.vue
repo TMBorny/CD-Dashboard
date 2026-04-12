@@ -28,6 +28,9 @@ const sortLabels: Record<typeof sortBy.value, string> = {
   health: 'Health',
 };
 
+const healthScoreHelpText =
+  'Score = average nightly and realtime success, minus a modest open-error penalty, plus a small activity confidence adjustment.';
+
 const formatDuration = (ms?: number) => {
   if (!ms) return 'N/A';
   const mins = Math.floor(ms / 60000);
@@ -231,9 +234,23 @@ const getHealthScore = (school: ClientHealthSnapshot) => {
               </button>
             </th>
             <th scope="col" class="px-6 py-4 py-5 font-semibold">
-              <button @click="handleSort('health')" class="flex items-center gap-2 hover:text-slate-950 transition">
-                Status <span v-if="sortBy === 'health'" class="text-slate-900">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
-              </button>
+              <div class="flex items-start gap-2">
+                <button @click="handleSort('health')" class="flex items-center gap-2 hover:text-slate-950 transition">
+                  Status <span v-if="sortBy === 'health'" class="text-slate-900">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
+                </button>
+                <div class="group relative mt-0.5 normal-case tracking-normal">
+                  <button
+                    type="button"
+                    class="flex h-5 w-5 items-center justify-center rounded-full border border-slate-300 bg-white text-[11px] font-semibold text-slate-500 transition hover:border-slate-400 hover:text-slate-700"
+                    :aria-label="healthScoreHelpText"
+                  >
+                    i
+                  </button>
+                  <div class="pointer-events-none absolute left-1/2 top-full z-20 mt-2 hidden w-64 -translate-x-1/2 rounded-2xl border border-slate-200 bg-white p-3 text-[11px] leading-5 text-slate-600 shadow-lg group-hover:block">
+                    {{ healthScoreHelpText }}
+                  </div>
+                </div>
+              </div>
             </th>
             <th scope="col" class="px-6 py-4 py-5 font-semibold">
               <button @click="handleSort('nightlySuccess')" class="flex items-center gap-2 hover:text-slate-950 transition">
@@ -288,6 +305,7 @@ const getHealthScore = (school: ClientHealthSnapshot) => {
             <td class="whitespace-nowrap px-6 py-5">
               <Badge :tone="getStatusBadge(school).tone">{{ getStatusBadge(school).label }}</Badge>
               <div class="mt-2 text-xs font-semibold text-slate-400">Score: <span class="text-slate-600">{{ getHealthScore(school) }}</span></div>
+              <div class="mt-1 text-xs text-slate-500">Uses success, open errors, and active-user confidence.</div>
             </td>
             <td class="whitespace-nowrap px-6 py-5">
               <div class="flex items-center gap-2">
