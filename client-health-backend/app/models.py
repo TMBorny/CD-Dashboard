@@ -177,3 +177,19 @@ class SyncRun(Base):
             "timing": timing,
             "errorMessage": self.error_message,
         }
+
+
+class ExcludedSchool(Base):
+    """A locally managed school exclusion for operations and sync selection."""
+
+    __tablename__ = "excluded_schools"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    school = Column(String(255), nullable=False, unique=True, index=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    def to_dict(self) -> dict:
+        return {
+            "school": self.school,
+            "createdAt": self.created_at.isoformat() if self.created_at else None,
+        }

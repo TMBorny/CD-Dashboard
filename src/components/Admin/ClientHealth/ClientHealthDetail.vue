@@ -132,9 +132,24 @@ const activeUsersChartSeries = computed(() => {
   return [{ name: 'Distinct Active Users (24h)', data }];
 });
 
-const activeUsersChartOptions = computed(() => useChartOptions({
-  colors: ['#36a2eb'],
-  categories: history.value?.snapshots.map((s: any) => s.snapshotDate),
+const activeUsersChartOptions = computed(() => ({
+  ...useChartOptions({
+    colors: ['#36a2eb'],
+    categories: history.value?.snapshots.map((s: any) => s.snapshotDate),
+  }),
+  yaxis: {
+    labels: {
+      style: { colors: '#64748b', fontSize: '12px' },
+      formatter: (value: number) => `${Math.round(value)}`,
+    },
+  },
+  tooltip: {
+    theme: 'light',
+    y: {
+      formatter: (value: number | undefined) =>
+        typeof value === 'number' ? `${Math.round(value)}` : '',
+    },
+  },
 }));
 </script>
 
@@ -145,6 +160,30 @@ const activeUsersChartOptions = computed(() => useChartOptions({
         <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">School Details</p>
+            <div class="mt-4 flex flex-wrap items-center gap-3">
+              <router-link
+                :to="{ name: 'AdminClientHealth' }"
+                class="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-white hover:text-slate-950"
+              >
+                ← Back to Client Health
+              </router-link>
+              <a
+                :href="`https://app.coursedog.com/#/int/${school}`"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="inline-flex items-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+              >
+                Integration Hub ↗
+              </a>
+              <a
+                :href="`https://app.coursedog.com/#/int/${school}/merge-history`"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="inline-flex items-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+              >
+                Merge Reports ↗
+              </a>
+            </div>
             <h1 class="mt-3 text-4xl font-semibold tracking-tight text-slate-950 sm:text-5xl">{{ schoolLabel }}</h1>
             <p class="mt-4 text-base leading-7 text-slate-600">30-day local snapshot history with explicit metric windows and current activity.</p>
             <p class="mt-3 text-sm text-slate-500">Last successful sync: {{ lastSuccessfulSyncLabel }}</p>

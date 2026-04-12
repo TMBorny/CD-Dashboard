@@ -61,3 +61,7 @@ export interface SchoolOption {
   displayName: string;
   products: string[];
 }
+
+export interface ExcludedSchoolOption extends SchoolOption {
+  reason: string;
+}

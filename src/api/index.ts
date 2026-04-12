@@ -10,6 +10,18 @@ export async function getSchools() {
   return { data: res.data };
 }
 
+export async function addSchoolExclusion(params: { school: string }) {
+  const res = await backend.post('/schools/exclusions', {
+    school: params.school,
+  });
+  return { data: res.data };
+}
+
+export async function removeSchoolExclusion(school: string) {
+  const res = await backend.delete(`/schools/exclusions/${school}`);
+  return { data: res.data };
+}
+
 /**
  * Get the latest health snapshot for all schools.
  * This hits our local backend which serves pre-cached data from SQLite.

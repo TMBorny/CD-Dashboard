@@ -14,9 +14,10 @@ from uuid import uuid4
 from typing import Optional
 
 from fastapi import APIRouter, Query, HTTPException
+from pydantic import BaseModel
 
 from app.db import api_get, get_db
-from app.models import SchoolSnapshot, SyncRun
+from app.models import ExcludedSchool, SchoolSnapshot, SyncRun
 
 router = APIRouter(prefix="/api")
 _sync_jobs: dict[str, dict] = {}
@@ -24,6 +25,10 @@ _active_sync_job_id: Optional[str] = None
 _scheduled_sync_task: Optional[asyncio.Task] = None
 _scheduled_sync_stop_event: Optional[asyncio.Event] = None
 EXCLUDED_SCHOOL_TERMS = ("demo", "test", "sandbox", "baseline")
+
+
+class SchoolExclusionPayload(BaseModel):
+    school: str
 SCHEDULE_TIMEZONE = ZoneInfo("America/New_York")
 SCHEDULED_SYNC_HOUR = 7
 SCHEDULED_SYNC_MINUTE = 30
@@ -35,6 +40,77 @@ def school_matches_excluded_terms(value: Optional[str]) -> bool:
         return False
     lowered = value.lower()
     return any(term in lowered for term in EXCLUDED_SCHOOL_TERMS)
+
+
+def get_additional_excluded_schools(db) -> set[str]:
+    """Return locally managed excluded school ids."""
+    return {
+        row.school.strip().lower()
+        for row in db.query(ExcludedSchool).all()
+        if row.school and row.school.strip()
+    }
+
+
+def normalize_school_catalog(data) -> list[dict]:
+    """Normalize the admin schools response into a flat school list without exclusions."""
+    schools: list[dict] = []
+    if isinstance(data, list):
+        for item in data:
+            school = item.get("_id", item.get("school", ""))
+            display_name = item.get("displayName", item.get("_id", ""))
+            schools.append({
+                "school": school,
+                "displayName": display_name,
+                "products": item.get("products", []),
+            })
+    elif isinstance(data, dict):
+        for key, val in data.items():
+            if isinstance(val, dict):
+                schools.append({
+                    "school": key,
+                    "displayName": val.get("displayName", key),
+                    "products": val.get("products", []),
+                })
+            else:
+                schools.append({"school": key, "displayName": key, "products": []})
+    schools.sort(key=lambda s: s["school"])
+    return schools
+
+
+def get_school_exclusion_reason(
+    school: str, display_name: str, additional_excluded_schools: set[str]
+) -> Optional[str]:
+    """Return a human-readable reason when a school should be excluded."""
+    normalized_school = school.strip().lower()
+    if normalized_school in additional_excluded_schools:
+        return "Manually excluded in Operations"
+
+    for term in EXCLUDED_SCHOOL_TERMS:
+        if term in normalized_school or term in (display_name or "").lower():
+            return f"Matches excluded term: {term}"
+
+    return None
+
+
+def split_school_catalog(
+    schools: list[dict], additional_excluded_schools: set[str]
+) -> tuple[list[dict], list[dict]]:
+    """Split a raw school catalog into included and excluded buckets."""
+    included: list[dict] = []
+    excluded: list[dict] = []
+
+    for school in schools:
+        reason = get_school_exclusion_reason(
+            school.get("school", ""),
+            school.get("displayName", ""),
+            additional_excluded_schools,
+        )
+        if reason:
+            excluded.append({**school, "reason": reason})
+        else:
+            included.append(school)
+
+    return included, excluded
 
 
 def is_demo_school(school: str, display_name: str) -> bool:
@@ -59,39 +135,57 @@ def exclude_demo_school_snapshots(query):
 @router.get("/schools")
 async def list_schools():
     """List all schools from the Coursedog admin API."""
+    db = get_db()
     try:
         data = await api_get("/api/v1/admin/schools/products")
-        schools = []
-        if isinstance(data, list):
-            for item in data:
-                school = item.get("_id", item.get("school", ""))
-                display_name = item.get("displayName", item.get("_id", ""))
-                if is_demo_school(school, display_name):
-                    continue
-                schools.append({
-                    "school": school,
-                    "displayName": display_name,
-                    "products": item.get("products", []),
-                })
-        elif isinstance(data, dict):
-            for key, val in data.items():
-                if isinstance(val, dict):
-                    display_name = val.get("displayName", key)
-                    if is_demo_school(key, display_name):
-                        continue
-                    schools.append({
-                        "school": key,
-                        "displayName": display_name,
-                        "products": val.get("products", []),
-                    })
-                else:
-                    if is_demo_school(key, key):
-                        continue
-                    schools.append({"school": key, "displayName": key, "products": []})
-        schools.sort(key=lambda s: s["school"])
-        return {"schools": schools}
+        all_schools = normalize_school_catalog(data)
+        additional_excluded_schools = get_additional_excluded_schools(db)
+        included_schools, excluded_schools = split_school_catalog(
+            all_schools, additional_excluded_schools
+        )
+        return {
+            "schools": included_schools,
+            "excludedSchools": excluded_schools,
+            "excludedTerms": list(EXCLUDED_SCHOOL_TERMS),
+            "additionalExcludedSchools": sorted(additional_excluded_schools),
+        }
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Coursedog API error: {e}")
+    finally:
+        db.close()
+
+
+@router.post("/schools/exclusions")
+async def add_school_exclusion(payload: SchoolExclusionPayload):
+    """Persist an additional school exclusion for Operations and bulk syncs."""
+    normalized_school = payload.school.strip().lower()
+    if not normalized_school:
+        raise HTTPException(status_code=422, detail="school is required")
+
+    db = get_db()
+    try:
+        existing = db.query(ExcludedSchool).filter(ExcludedSchool.school == normalized_school).first()
+        if not existing:
+            db.add(ExcludedSchool(school=normalized_school))
+            db.commit()
+        return {"school": normalized_school}
+    finally:
+        db.close()
+
+
+@router.delete("/schools/exclusions/{school}")
+async def remove_school_exclusion(school: str):
+    """Remove a previously added school exclusion."""
+    normalized_school = school.strip().lower()
+    db = get_db()
+    try:
+        existing = db.query(ExcludedSchool).filter(ExcludedSchool.school == normalized_school).first()
+        if existing:
+            db.delete(existing)
+            db.commit()
+        return {"school": normalized_school}
+    finally:
+        db.close()
 
 
 @router.get("/client-health")

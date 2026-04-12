@@ -40,14 +40,19 @@ const isActive = (itemPath: string) => {
     <!-- Sidebar -->
     <div :class="['fixed left-0 top-0 h-screen bg-slate-900 text-white transition-all duration-300 flex flex-col z-40', isOpen ? 'w-64' : 'w-20']">
       <!-- Header -->
-      <div class="flex items-center justify-between px-3 py-4 border-b border-slate-800">
+      <div class="flex items-center gap-3 border-b border-slate-800 px-3 py-4">
         <button @click="toggleSidebar" class="p-2 hover:bg-slate-800 rounded-lg transition flex-shrink-0">
           <span v-if="isOpen">←</span>
           <span v-else>→</span>
         </button>
-        <div v-if="isOpen" class="flex items-center gap-2 ml-2">
-          <div class="w-7 h-7 bg-blue-500 rounded-lg flex items-center justify-center font-bold text-sm">CD</div>
-          <span class="font-semibold truncate">Dashboard</span>
+        <div v-if="isOpen" class="flex min-w-0 items-center gap-2">
+          <div class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-2xl bg-blue-500 text-sm font-bold text-white shadow-sm">
+            CD
+          </div>
+          <div class="min-w-0">
+            <p class="truncate text-lg font-semibold leading-none text-white">CourseDog</p>
+            <p class="mt-1 truncate text-xs uppercase tracking-[0.2em] text-slate-400">Dashboard</p>
+          </div>
         </div>
       </div>
 
