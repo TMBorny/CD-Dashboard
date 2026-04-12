@@ -6,8 +6,10 @@ and stores it in the database.
 """
 
 import asyncio
+import json
 import time
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from uuid import uuid4
 from typing import Optional
 
@@ -19,7 +21,12 @@ from app.models import SchoolSnapshot, SyncRun
 router = APIRouter(prefix="/api")
 _sync_jobs: dict[str, dict] = {}
 _active_sync_job_id: Optional[str] = None
+_scheduled_sync_task: Optional[asyncio.Task] = None
+_scheduled_sync_stop_event: Optional[asyncio.Event] = None
 EXCLUDED_SCHOOL_TERMS = ("demo", "test", "sandbox", "baseline")
+SCHEDULE_TIMEZONE = ZoneInfo("America/New_York")
+SCHEDULED_SYNC_HOUR = 7
+SCHEDULED_SYNC_MINUTE = 30
 
 
 def school_matches_excluded_terms(value: Optional[str]) -> bool:
@@ -215,32 +222,8 @@ async def get_client_health_sync_runs(
 @router.post("/client-health/sync")
 async def trigger_sync(school: Optional[str] = Query(default=None)):
     """Start a background sync job for all schools or a single school."""
-    global _active_sync_job_id
-
-    if _active_sync_job_id:
-        active_job = _sync_jobs.get(_active_sync_job_id)
-        if active_job and active_job["status"] in {"queued", "running"}:
-            return serialize_sync_job(active_job, already_running=True)
-
-    job_id = str(uuid4())
-    job = {
-        "jobId": job_id,
-        "status": "queued",
-        "snapshotDate": None,
-        "schoolsProcessed": 0,
-        "totalSchools": 0,
-        "errors": [],
-        "timing": None,
-        "error": None,
-        "scope": "single-school" if school else "bulk",
-        "school": school,
-        "startedAt": None,
-        "finishedAt": None,
-    }
-    _sync_jobs[job_id] = job
-    _active_sync_job_id = job_id
-    asyncio.create_task(run_sync_job(job_id, school=school))
-    return serialize_sync_job(job)
+    job, already_running = enqueue_sync_job(school=school)
+    return serialize_sync_job(job, already_running=already_running)
 
 
 @router.post("/client-health/history/backfill")
@@ -300,6 +283,160 @@ async def get_sync_status(job_id: str):
     return serialize_sync_job(job)
 
 
+def current_new_york_time(now: Optional[datetime] = None) -> datetime:
+    """Return the current time in the scheduler timezone."""
+    base = now or datetime.now(timezone.utc)
+    if base.tzinfo is None:
+        base = base.replace(tzinfo=timezone.utc)
+    return base.astimezone(SCHEDULE_TIMEZONE)
+
+
+def get_new_york_snapshot_date(now: Optional[datetime] = None) -> str:
+    """Return today's snapshot date in America/New_York."""
+    return current_new_york_time(now).strftime("%Y-%m-%d")
+
+
+def get_next_scheduled_sync_time(now: Optional[datetime] = None) -> datetime:
+    """Return the next 7:30 AM America/New_York run time."""
+    local_now = current_new_york_time(now)
+    scheduled = local_now.replace(
+        hour=SCHEDULED_SYNC_HOUR,
+        minute=SCHEDULED_SYNC_MINUTE,
+        second=0,
+        microsecond=0,
+    )
+    if scheduled <= local_now:
+        scheduled += timedelta(days=1)
+    return scheduled
+
+
+def get_active_sync_job() -> Optional[dict]:
+    """Return the currently active queued/running job, if any."""
+    if not _active_sync_job_id:
+        return None
+    active_job = _sync_jobs.get(_active_sync_job_id)
+    if active_job and active_job["status"] in {"queued", "running"}:
+        return active_job
+    return None
+
+
+def enqueue_sync_job(
+    school: Optional[str] = None,
+    *,
+    scope: Optional[str] = None,
+    snapshot_date_override: Optional[str] = None,
+) -> tuple[dict, bool]:
+    """Create and queue a sync job unless another sync is already active."""
+    global _active_sync_job_id
+
+    active_job = get_active_sync_job()
+    if active_job:
+        return active_job, True
+
+    job_id = str(uuid4())
+    job = {
+        "jobId": job_id,
+        "status": "queued",
+        "snapshotDate": snapshot_date_override,
+        "schoolsProcessed": 0,
+        "totalSchools": 0,
+        "errors": [],
+        "timing": None,
+        "error": None,
+        "scope": scope or ("single-school" if school else "bulk"),
+        "school": school,
+        "startedAt": None,
+        "finishedAt": None,
+    }
+    _sync_jobs[job_id] = job
+    _active_sync_job_id = job_id
+    asyncio.create_task(
+        run_sync_job(
+            job_id,
+            school=school,
+            snapshot_date_override=snapshot_date_override,
+        )
+    )
+    return job, False
+
+
+def has_successful_snapshot_for_date(snapshot_date: str) -> bool:
+    """Return True when at least one non-demo snapshot exists for the date."""
+    db = get_db()
+    try:
+        snapshot = (
+            exclude_demo_school_snapshots(db.query(SchoolSnapshot))
+            .filter(SchoolSnapshot.snapshot_date == snapshot_date)
+            .first()
+        )
+        return snapshot is not None
+    finally:
+        db.close()
+
+
+async def maybe_enqueue_catchup_sync(now: Optional[datetime] = None) -> Optional[dict]:
+    """Queue one startup catch-up sync when today's local snapshot is missing."""
+    snapshot_date = get_new_york_snapshot_date(now)
+    if has_successful_snapshot_for_date(snapshot_date):
+        return None
+
+    job, _ = enqueue_sync_job(
+        scope="scheduled-catchup-bulk",
+        snapshot_date_override=snapshot_date,
+    )
+    return job
+
+
+async def maybe_enqueue_scheduled_sync(now: Optional[datetime] = None) -> dict:
+    """Queue the daily scheduled latest-only sync for today's New York date."""
+    snapshot_date = get_new_york_snapshot_date(now)
+    job, _ = enqueue_sync_job(
+        scope="scheduled-bulk",
+        snapshot_date_override=snapshot_date,
+    )
+    return job
+
+
+async def run_scheduled_sync_loop(stop_event: asyncio.Event):
+    """Sleep until the next 7:30 AM New York run, then queue a latest-only sync."""
+    while not stop_event.is_set():
+        now_utc = datetime.now(timezone.utc)
+        next_run = get_next_scheduled_sync_time(now_utc)
+        delay_seconds = max(0.0, (next_run.astimezone(timezone.utc) - now_utc).total_seconds())
+
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=delay_seconds)
+            break
+        except asyncio.TimeoutError:
+            await maybe_enqueue_scheduled_sync()
+
+
+async def start_scheduled_sync_service():
+    """Start the daily scheduler and queue a same-day catch-up when needed."""
+    global _scheduled_sync_stop_event, _scheduled_sync_task
+
+    if _scheduled_sync_task and not _scheduled_sync_task.done():
+        return
+
+    _scheduled_sync_stop_event = asyncio.Event()
+    await maybe_enqueue_catchup_sync()
+    _scheduled_sync_task = asyncio.create_task(run_scheduled_sync_loop(_scheduled_sync_stop_event))
+
+
+async def stop_scheduled_sync_service():
+    """Stop the daily scheduler task cleanly."""
+    global _scheduled_sync_stop_event, _scheduled_sync_task
+
+    if _scheduled_sync_stop_event:
+        _scheduled_sync_stop_event.set()
+
+    if _scheduled_sync_task:
+        await asyncio.gather(_scheduled_sync_task, return_exceptions=True)
+
+    _scheduled_sync_stop_event = None
+    _scheduled_sync_task = None
+
+
 def select_schools_for_sync(schools: list[dict], school: Optional[str]) -> list[dict]:
     """Select which schools should be synced for the requested scope."""
     if school:
@@ -310,7 +447,11 @@ def select_schools_for_sync(schools: list[dict], school: Optional[str]) -> list[
     return list(schools)
 
 
-async def run_sync_job(job_id: str, school: Optional[str] = None):
+async def run_sync_job(
+    job_id: str,
+    school: Optional[str] = None,
+    snapshot_date_override: Optional[str] = None,
+):
     """Fetch live health data in the background and persist a daily snapshot."""
     global _active_sync_job_id
     job = _sync_jobs[job_id]
@@ -325,7 +466,10 @@ async def run_sync_job(job_id: str, school: Optional[str] = None):
         school=school,
         scope=job["scope"],
         status="running",
+        schools_processed=0,
+        total_schools=0,
         attempted_at=started_at,
+        started_at=started_at,
     )
     db.add(sync_run)
     db.commit()
@@ -337,10 +481,18 @@ async def run_sync_job(job_id: str, school: Optional[str] = None):
         schools_resp = await list_schools()
         schools = select_schools_for_sync(schools_resp["schools"], school)
         job["totalSchools"] = len(schools)
+        db = get_db()
+        try:
+            sync_run = db.query(SyncRun).filter(SyncRun.job_id == job_id).first()
+            if sync_run:
+                hydrate_sync_run(sync_run, job)
+                db.commit()
+        finally:
+            db.close()
 
         list_time = time.time()
 
-        snapshot_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        snapshot_date = snapshot_date_override or datetime.now(timezone.utc).strftime("%Y-%m-%d")
         new_snapshots: list[dict] = []
         errors: list[str] = []
 
@@ -366,6 +518,14 @@ async def run_sync_job(job_id: str, school: Optional[str] = None):
                     new_snapshots.append(result)
             job["schoolsProcessed"] = len(new_snapshots)
             job["errors"] = errors[-20:]
+            db = get_db()
+            try:
+                sync_run = db.query(SyncRun).filter(SyncRun.job_id == job_id).first()
+                if sync_run:
+                    hydrate_sync_run(sync_run, job)
+                    db.commit()
+            finally:
+                db.close()
 
         fetch_time = time.time()
 
@@ -410,10 +570,7 @@ async def run_sync_job(job_id: str, school: Optional[str] = None):
         try:
             sync_run = db.query(SyncRun).filter(SyncRun.job_id == job_id).first()
             if sync_run:
-                sync_run.status = "completed"
-                sync_run.snapshot_date = snapshot_date
-                sync_run.finished_at = datetime.now(timezone.utc)
-                sync_run.error_message = errors[0] if errors else None
+                hydrate_sync_run(sync_run, job)
                 db.commit()
         finally:
             db.close()
@@ -429,9 +586,7 @@ async def run_sync_job(job_id: str, school: Optional[str] = None):
         try:
             sync_run = db.query(SyncRun).filter(SyncRun.job_id == job_id).first()
             if sync_run:
-                sync_run.status = "failed"
-                sync_run.finished_at = datetime.now(timezone.utc)
-                sync_run.error_message = str(e)
+                hydrate_sync_run(sync_run, job)
                 db.commit()
         finally:
             db.close()
@@ -453,6 +608,26 @@ def serialize_sync_job(job: dict, already_running: bool = False) -> dict:
     if already_running:
         payload["alreadyRunning"] = True
     return payload
+
+
+def hydrate_sync_run(sync_run: SyncRun, job: dict) -> None:
+    """Copy in-memory job metadata onto the persisted sync-run row."""
+    sync_run.status = job["status"]
+    sync_run.snapshot_date = job.get("snapshotDate")
+    sync_run.schools_processed = job.get("schoolsProcessed", 0)
+    sync_run.total_schools = job.get("totalSchools", 0)
+    sync_run.started_at = (
+        datetime.fromisoformat(job["startedAt"]) if job.get("startedAt") else None
+    )
+    sync_run.finished_at = (
+        datetime.fromisoformat(job["finishedAt"]) if job.get("finishedAt") else None
+    )
+    sync_run.start_date = job.get("startDate")
+    sync_run.end_date = job.get("endDate")
+    sync_run.date_count = job.get("dateCount")
+    sync_run.errors_json = json.dumps(job.get("errors", []))
+    sync_run.timing_json = json.dumps(job.get("timing")) if job.get("timing") else None
+    sync_run.error_message = job.get("error") or (job.get("errors") or [None])[0]
 
 
 def parse_count(value) -> Optional[int]:
@@ -1086,7 +1261,13 @@ async def run_history_backfill_job(
         school=school,
         scope=job["scope"],
         status="running",
+        schools_processed=0,
+        total_schools=0,
         attempted_at=started_at,
+        started_at=started_at,
+        start_date=job.get("startDate"),
+        end_date=job.get("endDate"),
+        date_count=job.get("dateCount"),
     )
     db.add(sync_run)
     db.commit()
@@ -1100,6 +1281,14 @@ async def run_history_backfill_job(
         snapshot_dates = build_snapshot_dates(start_date, end_date)
         total_work_units = len(schools) * len(snapshot_dates)
         job["totalSchools"] = total_work_units
+        db = get_db()
+        try:
+            sync_run = db.query(SyncRun).filter(SyncRun.job_id == job_id).first()
+            if sync_run:
+                hydrate_sync_run(sync_run, job)
+                db.commit()
+        finally:
+            db.close()
 
         errors: list[str] = []
         processed_units = 0
@@ -1119,6 +1308,10 @@ async def run_history_backfill_job(
                     processed_units += 1
                     job["schoolsProcessed"] = processed_units
                     job["errors"] = errors[-20:]
+                    sync_run = db.query(SyncRun).filter(SyncRun.job_id == job_id).first()
+                    if sync_run:
+                        hydrate_sync_run(sync_run, job)
+                        db.commit()
 
                 try:
                     db.query(SchoolSnapshot).filter(
@@ -1158,10 +1351,7 @@ async def run_history_backfill_job(
         try:
             sync_run = db.query(SyncRun).filter(SyncRun.job_id == job_id).first()
             if sync_run:
-                sync_run.status = "completed"
-                sync_run.snapshot_date = snapshot_dates[-1]
-                sync_run.finished_at = datetime.now(timezone.utc)
-                sync_run.error_message = errors[0] if errors else None
+                hydrate_sync_run(sync_run, job)
                 db.commit()
         finally:
             db.close()
@@ -1177,9 +1367,7 @@ async def run_history_backfill_job(
         try:
             sync_run = db.query(SyncRun).filter(SyncRun.job_id == job_id).first()
             if sync_run:
-                sync_run.status = "failed"
-                sync_run.finished_at = datetime.now(timezone.utc)
-                sync_run.error_message = str(e)
+                hydrate_sync_run(sync_run, job)
                 db.commit()
         finally:
             db.close()

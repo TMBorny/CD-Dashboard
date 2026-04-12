@@ -1,6 +1,6 @@
 # Coursedog API Endpoints Useful for Client Health Dashboard
 
-All endpoints require authentication (session cookie from `POST /api/v1/login`).
+All endpoints require authentication. The current backend authenticates with `POST /api/v1/sessions` and then reuses the returned token and/or cookies for subsequent requests.
 
 ---
 
@@ -8,7 +8,7 @@ All endpoints require authentication (session cookie from `POST /api/v1/login`).
 
 | # | Endpoint | Method | Description |
 |---|----------|--------|-------------|
-| 1 | `/api/v1/login` | POST | Authenticate with `{ email, password }`. Returns session cookie for subsequent requests. |
+| 1 | `/api/v1/sessions` | POST | Authenticate with `{ email, password }`. The current backend accepts either a returned bearer token or session cookies from this response. |
 | 2 | `/api/v1/admin/schools/products` | GET | Lists all schools with display names and enabled products. Requires `coursedog` role. |
 | 3 | `/api/v1/int/:school/integrations-hub/overview/health` | GET | Returns nightly merge stats (48h window): `allNightlyMergesCount`, `succeededNightlyMergesCount`, and `recentFailedMerges` array (merges that failed with no subsequent success in 24h). |
 | 4 | `/api/v1/int/:school/integrations-hub/overview/merge-errors` | GET | Returns entities with sync errors. Params: `page`, `size`, optional `entityTypes[]`, `termCodes[]`, `allTerms`. Response includes paginated error list with `totalCount`. |
