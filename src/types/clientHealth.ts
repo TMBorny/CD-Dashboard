@@ -5,6 +5,8 @@ export interface FailedMerge {
   scheduleType?: string;
   timestampEnd?: string;
   status?: string;
+  statusDetail?: string;
+  haltReason?: string;
 }
 
 /** A single entry from /integrations-hub/merge-history */
@@ -31,7 +33,7 @@ export interface ClientHealthSnapshot {
   sisPlatform?: string | null;
   products: string[];
   merges: {
-    nightly: { total: number; succeeded: number; failed: number; finishedWithIssues: number; noData: number; mergeTimeMs?: number; };
+    nightly: { total: number; succeeded: number; failed: number; finishedWithIssues: number; noData: number; halted: number; mergeTimeMs?: number; };
     realtime: { total: number; succeeded: number; failed: number; finishedWithIssues: number; noData: number; };
     manual: { total: number; succeeded: number; failed: number; finishedWithIssues: number; noData: number; };
   };

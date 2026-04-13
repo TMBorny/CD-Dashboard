@@ -14,7 +14,7 @@ import time
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from uuid import uuid4
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
@@ -46,6 +46,8 @@ FAILED_UNITS_SAMPLE_LIMIT = 10
 MERGE_ERRORS_PAGE_SIZE = 250
 MERGE_ERRORS_MAX_PAGES = 200
 ERROR_ANALYSIS_SAMPLE_LIMIT = 3
+HALTED_CHANGE_THRESHOLD_STATUS = "Halted: Change Threshold Exceeded"
+HALTED_STAGE_NAME = "Sync Coursedog Updates with SIS"
 
 
 class SchoolExclusionPayload(BaseModel):
@@ -2496,6 +2498,136 @@ def calculate_nightly_merge_time(merge_entries: list[dict]) -> int:
     return max(0, total_duration)
 
 
+def _normalize_merge_identifier(report: dict) -> str:
+    return str(report.get("id") or report.get("_id") or "unknown")
+
+
+def _extract_stage_status_from_payload(payload: Any, stage_name: str) -> Optional[str]:
+    """Search a merge-report payload recursively for the named stage status."""
+    normalized_stage_name = stage_name.strip().lower()
+
+    def walk(node: Any) -> Optional[str]:
+        if isinstance(node, list):
+            for item in node:
+                status = walk(item)
+                if status:
+                    return status
+            return None
+
+        if not isinstance(node, dict):
+            return None
+
+        candidate_name = next(
+            (
+                str(node.get(key)).strip()
+                for key in ("step", "stage", "name", "title", "label")
+                if isinstance(node.get(key), str) and str(node.get(key)).strip()
+            ),
+            None,
+        )
+        candidate_status = node.get("status")
+        if (
+            candidate_name
+            and candidate_name.lower() == normalized_stage_name
+            and isinstance(candidate_status, str)
+            and candidate_status.strip()
+        ):
+            return candidate_status.strip()
+
+        for value in node.values():
+            status = walk(value)
+            if status:
+                return status
+
+        return None
+
+    return walk(payload)
+
+
+async def classify_nightly_merge_halt_status(school: str, merge_report_id: str) -> Optional[str]:
+    """Return the halt status for the nightly sync stage when present."""
+    payload = await api_get(f"/api/v1/{school}/mergeReports/{merge_report_id}")
+    return _extract_stage_status_from_payload(payload, HALTED_STAGE_NAME)
+
+
+async def annotate_nightly_halted_merges(school: str, merge_entries: list[dict]) -> list[dict]:
+    """Annotate nightly finished-with-issues merges with halt reason metadata."""
+    annotated_entries = [dict(entry) for entry in merge_entries if isinstance(entry, dict)]
+    if not annotated_entries:
+        return []
+
+    async def annotate_entry(index: int, entry: dict) -> None:
+        schedule = str(entry.get("scheduleType", "")).lower()
+        status = str(entry.get("status", "")).lower()
+        merge_report_id = _normalize_merge_identifier(entry)
+        if schedule != "nightly" or status != "finishedwithissues" or merge_report_id == "unknown":
+            return
+
+        try:
+            stage_status = await classify_nightly_merge_halt_status(school, merge_report_id)
+        except Exception as exc:
+            logger.warning(
+                "Failed to inspect merge report detail for halt classification school=%s merge_report_id=%s error=%s",
+                school,
+                merge_report_id,
+                exc,
+            )
+            return
+
+        if stage_status == HALTED_CHANGE_THRESHOLD_STATUS:
+            annotated_entries[index]["haltReason"] = stage_status
+            annotated_entries[index]["statusDetail"] = stage_status
+
+    await asyncio.gather(*(annotate_entry(index, entry) for index, entry in enumerate(annotated_entries)))
+    return annotated_entries
+
+
+def summarize_nightly_outcomes(merge_entries: list[dict]) -> tuple[int, int, int]:
+    """Count nightly merges that finished with issues, had no data, or halted."""
+    nightly_issues = nightly_nodata = nightly_halted = 0
+
+    for report in merge_entries:
+        if str(report.get("scheduleType", "")).lower() != "nightly":
+            continue
+
+        if str(report.get("haltReason", "")).strip() == HALTED_CHANGE_THRESHOLD_STATUS:
+            nightly_halted += 1
+            continue
+
+        status = str(report.get("status", "")).lower()
+        if status == "finishedwithissues":
+            nightly_issues += 1
+        elif status == "nodata":
+            nightly_nodata += 1
+
+    return nightly_issues, nightly_nodata, nightly_halted
+
+
+def merge_recent_merge_entries(primary_entries: list[dict], extra_entries: list[dict]) -> list[dict]:
+    """Combine recent failed and halted merge entries without duplicating ids."""
+    merged: list[dict] = []
+    seen_ids: set[str] = set()
+
+    for source in (primary_entries, extra_entries):
+        for entry in source:
+            if not isinstance(entry, dict):
+                continue
+            normalized = dict(entry)
+            merge_id = _normalize_merge_identifier(normalized)
+            if merge_id in seen_ids:
+                continue
+            seen_ids.add(merge_id)
+            if "id" not in normalized:
+                normalized["id"] = merge_id
+            merged.append(normalized)
+
+    merged.sort(
+        key=lambda entry: str(entry.get("timestampEnd") or ""),
+        reverse=True,
+    )
+    return merged[:10]
+
+
 def build_snapshot_from_merge_history(
     school: str,
     display_name: str,
@@ -2506,24 +2638,29 @@ def build_snapshot_from_merge_history(
     active_users_24h: int,
 ) -> dict:
     """Build a historical snapshot from merge history plus user activity."""
-    nightly_total = nightly_success = nightly_issues = nightly_nodata = 0
+    nightly_total = nightly_success = nightly_issues = nightly_nodata = nightly_halted = 0
     realtime_total = realtime_success = realtime_issues = realtime_nodata = 0
     manual_total = manual_success = manual_issues = manual_nodata = 0
     failed_entries: list[dict] = []
+    halted_entries: list[dict] = []
     nightly_merge_time_ms = calculate_nightly_merge_time(merge_entries)
 
     for report in merge_entries:
         schedule = str(report.get("scheduleType", "")).lower()
         status = str(report.get("status", "")).lower()
+        halt_reason = str(report.get("haltReason", "")).strip()
         succeeded = status == "success"
         has_issues = status == "finishedwithissues"
         no_data = status == "nodata"
+        halted = halt_reason == HALTED_CHANGE_THRESHOLD_STATUS
         failed = not (succeeded or has_issues or no_data)
 
         if schedule == "nightly":
             nightly_total += 1
             if succeeded:
                 nightly_success += 1
+            elif halted:
+                nightly_halted += 1
             elif has_issues:
                 nightly_issues += 1
             elif no_data:
@@ -2545,16 +2682,23 @@ def build_snapshot_from_merge_history(
             elif no_data:
                 manual_nodata += 1
 
-        if failed:
-            failed_entries.append(
-                {
-                    "id": report.get("id", report.get("_id", "unknown")),
-                    "type": report.get("type"),
-                    "scheduleType": report.get("scheduleType"),
-                    "timestampEnd": report.get("timestampEnd"),
-                    "status": report.get("status"),
-                }
-            )
+        merge_entry = {
+            "id": _normalize_merge_identifier(report),
+            "type": report.get("type"),
+            "scheduleType": report.get("scheduleType"),
+            "timestampEnd": report.get("timestampEnd"),
+            "status": report.get("status"),
+        }
+        if report.get("statusDetail"):
+            merge_entry["statusDetail"] = report.get("statusDetail")
+        if halt_reason:
+            merge_entry["haltReason"] = halt_reason
+            merge_entry["statusDetail"] = report.get("statusDetail") or halt_reason
+
+        if schedule == "nightly" and halted:
+            halted_entries.append(merge_entry)
+        elif failed:
+            failed_entries.append(merge_entry)
 
     return {
         "snapshotDate": snapshot_date,
@@ -2566,9 +2710,10 @@ def build_snapshot_from_merge_history(
             "nightly": {
                 "total": nightly_total,
                 "succeeded": nightly_success,
-                "failed": nightly_total - nightly_success - nightly_issues - nightly_nodata,
+                "failed": nightly_total - nightly_success - nightly_issues - nightly_nodata - nightly_halted,
                 "finishedWithIssues": nightly_issues,
                 "noData": nightly_nodata,
+                "halted": nightly_halted,
                 "mergeTimeMs": nightly_merge_time_ms,
             },
             "realtime": {
@@ -2586,7 +2731,7 @@ def build_snapshot_from_merge_history(
                 "noData": manual_nodata,
             },
         },
-        "recentFailedMerges": failed_entries[:10],
+        "recentFailedMerges": merge_recent_merge_entries(failed_entries, halted_entries),
         # Historical backfills do not have a trustworthy per-day open merge error total.
         "mergeErrorsCount": None,
         "activeUsers24h": active_users_24h,
@@ -2633,23 +2778,6 @@ def summarize_recent_merge_activity(merge_entries: list[dict], last_24h: int) ->
         realtime_total, realtime_success, realtime_issues, realtime_nodata,
         manual_total, manual_success, manual_issues, manual_nodata
     )
-
-
-def summarize_nightly_granular_statuses(merge_entries: list[dict]) -> tuple[int, int]:
-    """Count nightly merges that finished with issues or no data."""
-    nightly_issues = nightly_nodata = 0
-
-    for report in merge_entries:
-        if str(report.get("scheduleType", "")).lower() != "nightly":
-            continue
-
-        status = str(report.get("status", "")).lower()
-        if status == "finishedwithissues":
-            nightly_issues += 1
-        elif status == "nodata":
-            nightly_nodata += 1
-
-    return nightly_issues, nightly_nodata
 
 
 async def fetch_school_health(
@@ -2713,11 +2841,28 @@ async def fetch_school_health(
         except Exception as e:
             sync_errors.append(f"{school}: nightly merge history request failed ({e})")
 
+        nightly_merge_reports = await annotate_nightly_halted_merges(school, nightly_merge_reports)
+
         # Parse health data
         nightly_total = health_data.get("allNightlyMergesCount", 0)
         nightly_success = health_data.get("succeededNightlyMergesCount", 0)
-        nightly_issues, nightly_nodata = summarize_nightly_granular_statuses(nightly_merge_reports)
-        recent_failed = health_data.get("recentFailedMerges", [])
+        nightly_issues, nightly_nodata, nightly_halted = summarize_nightly_outcomes(nightly_merge_reports)
+        recent_failed = merge_recent_merge_entries(
+            health_data.get("recentFailedMerges", []),
+            [
+                {
+                    "id": _normalize_merge_identifier(report),
+                    "type": report.get("type"),
+                    "scheduleType": report.get("scheduleType"),
+                    "timestampEnd": report.get("timestampEnd"),
+                    "status": report.get("status"),
+                    "haltReason": report.get("haltReason"),
+                    "statusDetail": report.get("statusDetail") or report.get("haltReason"),
+                }
+                for report in nightly_merge_reports
+                if str(report.get("haltReason", "")).strip() == HALTED_CHANGE_THRESHOLD_STATUS
+            ],
+        )
 
         # Compute realtime/manual from merge reports
         (
@@ -2766,9 +2911,10 @@ async def fetch_school_health(
                 "nightly": {
                     "total": nightly_total,
                     "succeeded": nightly_success,
-                    "failed": max(0, nightly_total - nightly_success - nightly_issues - nightly_nodata),
+                    "failed": max(0, nightly_total - nightly_success - nightly_issues - nightly_nodata - nightly_halted),
                     "finishedWithIssues": nightly_issues,
                     "noData": nightly_nodata,
+                    "halted": nightly_halted,
                     "mergeTimeMs": nightly_merge_time,
                 },
                 "realtime": {
@@ -2831,6 +2977,7 @@ async def fetch_school_health_for_date(
         sync_errors.append(f"{school} {snapshot_date}: merge history request failed ({e})")
     if not merge_entries and sync_errors:
         raise RuntimeError("; ".join(sync_errors))
+    merge_entries = await annotate_nightly_halted_merges(school, merge_entries)
 
     active_users_24h = 0
     try:

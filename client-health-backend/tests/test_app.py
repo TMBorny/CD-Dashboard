@@ -16,7 +16,9 @@ os.environ["CLIENT_HEALTH_DB_PATH"] = TEST_DB_PATH
 atexit.register(lambda: shutil.rmtree(TEST_DB_DIR, ignore_errors=True))
 
 import app.routes as routes
-from app.db import get_database_url, get_db, get_default_db_path, init_db
+from sqlalchemy import create_engine, inspect
+
+from app.db import ensure_schema_updates, get_database_url, get_db, get_default_db_path, init_db
 from app.main import app, create_app
 from app.models import BackfillWorkUnit, ErrorAnalysisGroup, SchedulerSettings, SchoolSnapshot, SyncRun
 from app.security import is_loopback_client, require_internal_auth
@@ -24,6 +26,7 @@ from app.routes import (
     build_snapshot_dates,
     build_error_analysis_groups,
     build_resolution_hint,
+    classify_nightly_merge_halt_status,
     fetch_school_health_for_date,
     build_snapshot_from_merge_history,
     derive_sync_run_status,
@@ -48,6 +51,7 @@ from app.routes import (
     select_schools_for_sync,
     serialize_sync_job,
     split_school_catalog,
+    summarize_nightly_outcomes,
     summarize_recent_merge_activity,
 )
 
@@ -459,6 +463,7 @@ class MergeErrorCountTests(unittest.TestCase):
         self.assertEqual(snapshot["merges"]["nightly"]["failed"], 1)
         self.assertEqual(snapshot["merges"]["nightly"]["finishedWithIssues"], 0)
         self.assertEqual(snapshot["merges"]["nightly"]["noData"], 0)
+        self.assertEqual(snapshot["merges"]["nightly"]["halted"], 0)
         
         self.assertEqual(snapshot["merges"]["realtime"]["total"], 1)
         self.assertEqual(snapshot["merges"]["realtime"]["succeeded"], 1)
@@ -468,6 +473,33 @@ class MergeErrorCountTests(unittest.TestCase):
         self.assertIsNone(snapshot["mergeErrorsCount"])
         self.assertEqual(snapshot["activeUsers24h"], 7)
         self.assertEqual(snapshot["sisPlatform"], "PeopleSoftDirect")
+
+    def test_build_snapshot_from_merge_history_reclassifies_halted_nightly_merge(self):
+        snapshot = build_snapshot_from_merge_history(
+            school="bar01",
+            display_name="Baruch College",
+            sis_platform="Banner",
+            products=["integrations"],
+            snapshot_date="2026-04-11",
+            merge_entries=[
+                {
+                    "id": "nightly-halt",
+                    "scheduleType": "nightly",
+                    "status": "finishedWithIssues",
+                    "haltReason": "Halted: Change Threshold Exceeded",
+                    "statusDetail": "Halted: Change Threshold Exceeded",
+                },
+                {"id": "nightly-ok", "scheduleType": "nightly", "status": "success"},
+            ],
+            active_users_24h=0,
+        )
+
+        self.assertEqual(snapshot["merges"]["nightly"]["total"], 2)
+        self.assertEqual(snapshot["merges"]["nightly"]["succeeded"], 1)
+        self.assertEqual(snapshot["merges"]["nightly"]["finishedWithIssues"], 0)
+        self.assertEqual(snapshot["merges"]["nightly"]["halted"], 1)
+        self.assertEqual(snapshot["merges"]["nightly"]["failed"], 0)
+        self.assertEqual(snapshot["recentFailedMerges"][0]["haltReason"], "Halted: Change Threshold Exceeded")
 
     def test_extract_unique_activity_users_from_keyed_object(self):
         payload = {
@@ -505,19 +537,48 @@ class MergeErrorCountTests(unittest.TestCase):
             (2, 0, 1, 1, 1, 0, 1, 0),
         )
 
+    def test_summarize_nightly_outcomes_counts_halted_separately(self):
+        merge_entries = [
+            {"id": "nightly-1", "scheduleType": "nightly", "status": "finishedWithIssues"},
+            {
+                "id": "nightly-2",
+                "scheduleType": "nightly",
+                "status": "finishedWithIssues",
+                "haltReason": "Halted: Change Threshold Exceeded",
+            },
+            {"id": "nightly-3", "scheduleType": "nightly", "status": "noData"},
+        ]
+
+        self.assertEqual(summarize_nightly_outcomes(merge_entries), (1, 1, 1))
+
+    def test_classify_nightly_merge_halt_status_reads_sync_stage_from_detail(self):
+        payload = {
+            "mergeReport": {
+                "stages": [
+                    {"step": "Fetch SIS Data", "status": "Success"},
+                    {"step": "Sync Coursedog Updates with SIS", "status": "Halted: Change Threshold Exceeded"},
+                ]
+            }
+        }
+
+        with patch("app.routes.api_get", return_value=payload):
+            status = routes.asyncio.run(classify_nightly_merge_halt_status("bar01", "report-123"))
+
+        self.assertEqual(status, "Halted: Change Threshold Exceeded")
+
     def test_extract_sis_platform_prefers_platform_name(self):
         payload = {"sisPlatform": "Banner", "integrationBroker": "Ethos"}
         self.assertEqual(extract_sis_platform(payload), "Banner")
 
 
 class FetchSchoolHealthTests(unittest.IsolatedAsyncioTestCase):
-    async def test_fetch_school_health_keeps_nightly_no_data_out_of_failures(self):
+    async def test_fetch_school_health_reclassifies_halted_nightly_merges(self):
         now_ms = int(datetime(2026, 4, 13, 12, 0, tzinfo=timezone.utc).timestamp() * 1000)
 
         async def fake_api_get(path, params=None):
             if path.endswith("/integrations-hub/overview/health"):
                 return {
-                    "allNightlyMergesCount": 2,
+                    "allNightlyMergesCount": 3,
                     "succeededNightlyMergesCount": 1,
                     "recentFailedMerges": [],
                 }
@@ -530,6 +591,7 @@ class FetchSchoolHealthTests(unittest.IsolatedAsyncioTestCase):
                     "content": [
                         {"id": "nightly-1", "scheduleType": "nightly", "status": "success"},
                         {"id": "nightly-2", "scheduleType": "nightly", "status": "noData"},
+                        {"id": "nightly-3", "scheduleType": "nightly", "status": "finishedWithIssues", "timestampEnd": now_ms},
                     ]
                 }
 
@@ -542,6 +604,14 @@ class FetchSchoolHealthTests(unittest.IsolatedAsyncioTestCase):
                             "status": "success",
                             "timestampEnd": now_ms,
                         }
+                    ]
+                }
+
+            if path.endswith("/mergeReports/nightly-3"):
+                return {
+                    "stages": [
+                        {"step": "Fetch SIS Data", "status": "Success"},
+                        {"step": "Sync Coursedog Updates with SIS", "status": "Halted: Change Threshold Exceeded"},
                     ]
                 }
 
@@ -562,11 +632,13 @@ class FetchSchoolHealthTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertIsNotNone(snapshot)
-        self.assertEqual(snapshot["merges"]["nightly"]["total"], 2)
+        self.assertEqual(snapshot["merges"]["nightly"]["total"], 3)
         self.assertEqual(snapshot["merges"]["nightly"]["succeeded"], 1)
         self.assertEqual(snapshot["merges"]["nightly"]["noData"], 1)
+        self.assertEqual(snapshot["merges"]["nightly"]["halted"], 1)
         self.assertEqual(snapshot["merges"]["nightly"]["failed"], 0)
         self.assertEqual(snapshot["merges"]["nightly"]["finishedWithIssues"], 0)
+        self.assertEqual(snapshot["recentFailedMerges"][0]["haltReason"], "Halted: Change Threshold Exceeded")
 
 
 class SyncJobErrorAnalysisPersistenceTests(unittest.IsolatedAsyncioTestCase):
@@ -800,6 +872,81 @@ class BackfillTrackingTests(unittest.TestCase):
         payload = snapshot.to_dict()
 
         self.assertEqual(payload["createdAt"], "2026-04-13T11:30:00+00:00")
+
+    def test_school_snapshot_round_trip_preserves_nightly_halted(self):
+        snapshot = SchoolSnapshot.from_dict(
+            {
+                "snapshotDate": "2026-04-13",
+                "school": "bar01",
+                "displayName": "Baruch College",
+                "products": [],
+                "merges": {
+                    "nightly": {
+                        "total": 3,
+                        "succeeded": 1,
+                        "failed": 1,
+                        "finishedWithIssues": 0,
+                        "noData": 1,
+                        "halted": 1,
+                        "mergeTimeMs": 10,
+                    },
+                    "realtime": {"total": 0, "succeeded": 0, "failed": 0, "finishedWithIssues": 0, "noData": 0},
+                    "manual": {"total": 0, "succeeded": 0, "failed": 0, "finishedWithIssues": 0, "noData": 0},
+                },
+                "recentFailedMerges": [],
+                "mergeErrorsCount": 0,
+                "activeUsers24h": 0,
+            }
+        )
+
+        payload = snapshot.to_dict()
+
+        self.assertEqual(payload["merges"]["nightly"]["halted"], 1)
+
+    def test_ensure_schema_updates_adds_nightly_halted_column_for_existing_db(self):
+        temp_dir = tempfile.mkdtemp(prefix="client-health-schema-test-")
+        try:
+            db_path = os.path.join(temp_dir, "schema_test.db")
+            engine = create_engine(f"sqlite:///{db_path}")
+            with engine.begin() as connection:
+                connection.exec_driver_sql(
+                    """
+                    CREATE TABLE school_snapshots (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        snapshot_date VARCHAR(10) NOT NULL,
+                        school VARCHAR(255) NOT NULL,
+                        display_name VARCHAR(255) NOT NULL,
+                        products_json TEXT DEFAULT '[]',
+                        nightly_total INTEGER DEFAULT 0,
+                        nightly_succeeded INTEGER DEFAULT 0,
+                        nightly_failed INTEGER DEFAULT 0,
+                        nightly_issues INTEGER DEFAULT 0,
+                        nightly_no_data INTEGER DEFAULT 0,
+                        nightly_merge_time_ms INTEGER DEFAULT 0,
+                        realtime_total INTEGER DEFAULT 0,
+                        realtime_succeeded INTEGER DEFAULT 0,
+                        realtime_failed INTEGER DEFAULT 0,
+                        realtime_issues INTEGER DEFAULT 0,
+                        realtime_no_data INTEGER DEFAULT 0,
+                        manual_total INTEGER DEFAULT 0,
+                        manual_succeeded INTEGER DEFAULT 0,
+                        manual_failed INTEGER DEFAULT 0,
+                        manual_issues INTEGER DEFAULT 0,
+                        manual_no_data INTEGER DEFAULT 0,
+                        recent_failed_merges_json TEXT DEFAULT '[]',
+                        merge_errors_count INTEGER DEFAULT 0,
+                        active_users_24h INTEGER DEFAULT 0,
+                        created_at DATETIME
+                    )
+                    """
+                )
+
+            ensure_schema_updates(engine)
+
+            columns = {column["name"] for column in inspect(engine).get_columns("school_snapshots")}
+            self.assertIn("nightly_halted", columns)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
     def test_serialize_persisted_sync_run_adds_reason_for_stalled_backfill(self):
         now = datetime(2026, 4, 13, 16, 0, tzinfo=timezone.utc)

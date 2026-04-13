@@ -68,18 +68,21 @@ const nightlySuccessChartSeries = computed(() => {
   const succeeded = history.value.snapshots.map((s: any) => s.merges.nightly.succeeded);
   const issues = history.value.snapshots.map((s: any) => s.merges.nightly.finishedWithIssues);
   const noData = history.value.snapshots.map((s: any) => s.merges.nightly.noData);
+  const halted = history.value.snapshots.map((s: any) => s.merges.nightly.halted || 0);
   const failed = history.value.snapshots.map((s: any) => s.merges.nightly.failed);
   
   return [
     { name: 'Succeeded', data: succeeded },
     { name: 'Finished With Issues', data: issues },
     { name: 'No Data', data: noData },
+    { name: 'Halted', data: halted },
     { name: 'Failed', data: failed }
   ];
 });
 
 const nightlySuccessChartOptions = computed(() => useStackedBarChartOptions({
   categories: history.value?.snapshots.map((s: any) => s.snapshotDate),
+  colors: ['#10b981', '#f59e0b', '#94a3b8', '#a16207', '#ef4444'],
 }));
 
 const nightlyDurationChartSeries = computed(() => {
@@ -207,7 +210,7 @@ const activeUsersChartOptions = computed(() => ({
             <p v-if="latestSnapshot?.snapshotDate" class="mt-1 text-xs text-slate-400">Latest successful snapshot date: {{ latestSnapshot.snapshotDate }}</p>
             <p v-if="latestSnapshotCapturedAtLabel" class="mt-1 text-xs text-slate-400">Latest snapshot captured locally: {{ latestSnapshotCapturedAtLabel }}</p>
             <p v-if="snapshotCount === 1" class="mt-2 text-xs text-amber-600">Only one local snapshot is available right now, so the charts will show a single point instead of a trend line.</p>
-            <p class="mt-2 max-w-2xl text-xs text-slate-500">Nightly success uses Coursedog's upstream 48-hour health window. Realtime success and active users use the last 24 hours. Open merge errors are shown only for days where that count was captured directly during a local sync.</p>
+            <p class="mt-2 max-w-2xl text-xs text-slate-500">Nightly success uses Coursedog's upstream 48-hour health window. Realtime success and active users use the last 24 hours. Open merge errors are shown only for days where that count was captured directly during a local sync. Halted nightly merges are broken out when the Sync Coursedog Updates with SIS stage reports a change-threshold halt.</p>
           </div>
          
         </div>
@@ -264,6 +267,7 @@ const activeUsersChartOptions = computed(() => ({
                 <span class="font-medium text-slate-900">{{ merge.id }}</span>
                 <span v-if="merge.type" class="text-xs text-slate-500">Type: {{ merge.type }}</span>
                 <span v-if="merge.scheduleType" class="text-xs text-slate-500 capitalize">{{ merge.scheduleType }} merge</span>
+                <span v-if="merge.haltReason || merge.statusDetail" class="text-xs font-medium text-yellow-700">{{ merge.haltReason || merge.statusDetail }}</span>
                 <span v-if="merge.timestampEnd" class="text-xs text-slate-400">
                   {{ formatLocalDateTime(merge.timestampEnd) }}
                 </span>

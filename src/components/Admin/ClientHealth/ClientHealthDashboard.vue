@@ -78,15 +78,16 @@ const filteredHistory = computed(() => {
 // Using percentages so days with different numbers of schools contributing
 // are directly comparable (4/10 had 508 schools, other days have ~7-11).
 const nightlyBreakdownSeries = computed(() => {
-  const byDate = new Map<string, { succeeded: number; issues: number; noData: number; failed: number; total: number }>();
+  const byDate = new Map<string, { succeeded: number; issues: number; noData: number; halted: number; failed: number; total: number }>();
   filteredHistory.value.forEach((s: ClientHealthSnapshot) => {
     const d = s.snapshotDate;
-    const existing = byDate.get(d) ?? { succeeded: 0, issues: 0, noData: 0, failed: 0, total: 0 };
+    const existing = byDate.get(d) ?? { succeeded: 0, issues: 0, noData: 0, halted: 0, failed: 0, total: 0 };
     const n = s.merges.nightly;
     byDate.set(d, {
       succeeded: existing.succeeded + n.succeeded,
       issues:    existing.issues    + (n.finishedWithIssues || 0),
       noData:    existing.noData    + (n.noData || 0),
+      halted:    existing.halted    + (n.halted || 0),
       failed:    existing.failed    + n.failed,
       total:     existing.total     + n.total,
     });
@@ -97,6 +98,7 @@ const nightlyBreakdownSeries = computed(() => {
     { name: 'Success',            data: sortedDates.map((d) => pct(byDate.get(d)!.succeeded, byDate.get(d)!.total)) },
     { name: 'Finished w/ Issues', data: sortedDates.map((d) => pct(byDate.get(d)!.issues,    byDate.get(d)!.total)) },
     { name: 'No Data',            data: sortedDates.map((d) => pct(byDate.get(d)!.noData,    byDate.get(d)!.total)) },
+    { name: 'Halted',             data: sortedDates.map((d) => pct(byDate.get(d)!.halted,    byDate.get(d)!.total)) },
     { name: 'Failed',             data: sortedDates.map((d) => pct(byDate.get(d)!.failed,    byDate.get(d)!.total)) },
   ];
 });
@@ -110,7 +112,7 @@ const nightlyBreakdownDates = computed(() => {
 const nightlyBreakdownOptions = computed(() => ({
   ...useStackedBarChartOptions({
     categories: nightlyBreakdownDates.value,
-    colors: ['#10b981', '#f59e0b', '#94a3b8', '#ef4444'],
+    colors: ['#10b981', '#f59e0b', '#94a3b8', '#a16207', '#ef4444'],
   }),
   yaxis: {
     min: 0,
@@ -256,7 +258,7 @@ const handleRowClick = (school: ClientHealthSnapshot) => {
           <div class="flex flex-col rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
             <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Fleet Health</p>
             <h3 class="mt-2 text-base font-semibold text-slate-950">Nightly merge outcomes</h3>
-            <p class="mt-1 text-xs text-slate-500">Each bar shows the share of nightly merges that succeeded, finished with issues, had no data, or failed on that date: bucket total divided by all nightly merges for the selected schools.</p>
+            <p class="mt-1 text-xs text-slate-500">Each bar shows the share of nightly merges that succeeded, finished with issues, had no data, were halted by change threshold, or failed on that date: bucket total divided by all nightly merges for the selected schools.</p>
             <div class="mt-4 flex-1 min-h-[250px]">
               <VueApexCharts type="bar" :options="nightlyBreakdownOptions" :series="nightlyBreakdownSeries" height="100%" />
             </div>

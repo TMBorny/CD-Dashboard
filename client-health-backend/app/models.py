@@ -45,6 +45,7 @@ class SchoolSnapshot(Base):
     nightly_failed = Column(Integer, default=0)
     nightly_issues = Column(Integer, default=0)
     nightly_no_data = Column(Integer, default=0)
+    nightly_halted = Column(Integer, default=0)
     nightly_merge_time_ms = Column(Integer, default=0)
 
     # Realtime merge stats
@@ -83,6 +84,7 @@ class SchoolSnapshot(Base):
                     "failed": self.nightly_failed,
                     "finishedWithIssues": self.nightly_issues,
                     "noData": self.nightly_no_data,
+                    "halted": self.nightly_halted,
                     "mergeTimeMs": self.nightly_merge_time_ms,
                 },
                 "realtime": {
@@ -127,6 +129,7 @@ class SchoolSnapshot(Base):
             nightly_failed=nightly.get("failed", 0),
             nightly_issues=nightly.get("finishedWithIssues", 0),
             nightly_no_data=nightly.get("noData", 0),
+            nightly_halted=nightly.get("halted", 0),
             nightly_merge_time_ms=nightly.get("mergeTimeMs", 0),
             realtime_total=realtime.get("total", 0),
             realtime_succeeded=realtime.get("succeeded", 0),

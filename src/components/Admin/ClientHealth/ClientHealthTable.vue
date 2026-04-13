@@ -396,6 +396,7 @@ const getRowTone = (school: ClientHealthSnapshot) => {
               <div class="mt-3 flex flex-wrap gap-2">
                 <div v-if="school.merges.nightly.finishedWithIssues > 0" class="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-700" title="Finished With Issues">{{ school.merges.nightly.finishedWithIssues }} Issues</div>
                 <div v-if="school.merges.nightly.noData > 0" class="rounded-full bg-slate-200/80 px-2 py-1 text-[11px] font-semibold text-slate-600" title="No Data">{{ school.merges.nightly.noData }} No Data</div>
+                <div v-if="school.merges.nightly.halted > 0" class="rounded-full bg-yellow-100 px-2 py-1 text-[11px] font-semibold text-yellow-800" title="Halted: Change Threshold Exceeded">{{ school.merges.nightly.halted }} Halted</div>
               </div>
             </td>
             <td :class="['whitespace-nowrap border-y border-slate-200 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300', getRowTone(school)]">

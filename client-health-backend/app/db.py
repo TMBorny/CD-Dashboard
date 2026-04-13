@@ -154,6 +154,8 @@ def ensure_schema_updates(engine) -> None:
             connection.execute(text("ALTER TABLE school_snapshots ADD COLUMN manual_no_data INTEGER DEFAULT 0"))
         if "nightly_merge_time_ms" not in columns:
             connection.execute(text("ALTER TABLE school_snapshots ADD COLUMN nightly_merge_time_ms INTEGER DEFAULT 0"))
+        if "nightly_halted" not in columns:
+            connection.execute(text("ALTER TABLE school_snapshots ADD COLUMN nightly_halted INTEGER DEFAULT 0"))
 
     if "sync_runs" not in table_names:
         return
