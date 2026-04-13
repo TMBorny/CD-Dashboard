@@ -18,10 +18,28 @@ import { formatSchoolLabel } from '@/utils/schoolNames';
 type ErrorViewMode = 'aggregate' | 'school' | 'sis';
 type WindowOption = '7' | '30' | 'all';
 
+interface ErrorDetailContext {
+  title: string;
+  signatureLabel: string;
+  fullErrorText: string;
+  entityType?: string | null;
+  errorCode?: string | null;
+  school?: string | null;
+  schoolLabel?: string | null;
+  sisPlatform?: string | null;
+  termCode?: string | null;
+  scheduleType?: string | null;
+  entityDisplayName?: string | null;
+  mergeReport?: MergeReportReference | null;
+  rawPayload?: string | null;
+  resolutionHint?: ResolutionHint | null;
+}
+
 const selectedWindow = ref<WindowOption>('7');
 const selectedSchool = ref('all');
 const selectedSis = ref('all');
 const activeView = ref<ErrorViewMode>('aggregate');
+const selectedErrorDetail = ref<ErrorDetailContext | null>(null);
 const localTimeZoneLabel = getLocalTimeZoneLabel();
 const coursedogBaseUrl = (import.meta.env.VITE_COURSEDOG_PRD_URL?.trim() || 'https://app.coursedog.com').replace(/\/+$/, '');
 
@@ -140,7 +158,8 @@ const trendOptions = computed(() => ({
   },
 }));
 
-const topSignatures = computed(() => response.value?.signatures.slice(0, 12) ?? []);
+const allSignatures = computed(() => response.value?.signatures ?? []);
+const topSignatures = computed(() => allSignatures.value.slice(0, 12));
 const schoolRows = computed(() => response.value?.schoolBreakdowns ?? []);
 const sisRows = computed(() => response.value?.sisBreakdowns ?? []);
 
@@ -220,6 +239,176 @@ const historyStatus = computed(() => {
 const isEmptyState = computed(() => !isLoading.value && !hasAnyRows.value);
 
 const coerceSchoolSpecificRow = (row: ErrorBreakdownRow) => row.sisPlatform || 'Unknown';
+
+const normalizeInlineText = (value?: string | null) => (value || '').replace(/\s+/g, ' ').trim();
+
+const truncateText = (value: string, limit: number) => {
+  if (value.length <= limit) return value;
+  return `${value.slice(0, Math.max(0, limit - 1)).trimEnd()}…`;
+};
+
+const buildSignatureHeadline = (signatureLabel?: string | null) => {
+  const normalized = normalizeInlineText(signatureLabel);
+  if (!normalized) return 'Unknown signature';
+  const segments = normalized.split('|').map((segment) => segment.trim()).filter(Boolean);
+  const [entity, errorCode, ...rest] = segments;
+  const message = rest.join(' | ');
+
+  if (!message) {
+    return truncateText([entity, errorCode].filter(Boolean).join(' | '), 120);
+  }
+
+  const compactMessage = truncateText(message, 110);
+  return [entity, errorCode, compactMessage].filter(Boolean).join(' | ');
+};
+
+const buildSignatureSubline = (signatureLabel?: string | null) => {
+  const normalized = normalizeInlineText(signatureLabel);
+  if (!normalized) return null;
+  if (normalized.length <= 120) return null;
+  return truncateText(normalized, 220);
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const collectErrorStrings = (value: unknown, sink: string[]) => {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed) sink.push(trimmed);
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((entry) => collectErrorStrings(entry, sink));
+    return;
+  }
+
+  if (!isRecord(value)) return;
+
+  const preferredKeys = ['message', 'detail', 'description', 'title', 'reason'];
+  preferredKeys.forEach((key) => {
+    const candidate = value[key];
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      if (trimmed) sink.push(trimmed);
+    }
+  });
+
+  if ('body' in value) collectErrorStrings(value.body, sink);
+  if ('errors' in value) collectErrorStrings(value.errors, sink);
+  if ('error' in value) collectErrorStrings(value.error, sink);
+  if ('originalError' in value) collectErrorStrings(value.originalError, sink);
+}
+
+const dedupeStrings = (values: string[]) => [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+
+const getBestSamplePayload = (sampleErrors: Record<string, unknown>[]) => sampleErrors.find((entry) => isRecord(entry)) ?? null;
+
+const extractBestErrorText = (sampleErrors: Record<string, unknown>[], fallback?: string | null) => {
+  const matches: string[] = [];
+  sampleErrors.forEach((entry) => collectErrorStrings(entry, matches));
+  const deduped = dedupeStrings(matches);
+  if (deduped.length > 0) {
+    return deduped.join('\n\n');
+  }
+  return fallback?.trim() || 'No captured upstream error text is available for this sample.';
+};
+
+const extractSampleTermCode = (sampleErrors: Record<string, unknown>[]) => {
+  const sample = getBestSamplePayload(sampleErrors);
+  if (!sample) return null;
+  if (typeof sample.termCode === 'string' && sample.termCode.trim()) return sample.termCode;
+  const term = sample.term;
+  if (isRecord(term) && typeof term.code === 'string' && term.code.trim()) {
+    return term.code;
+  }
+  return null;
+};
+
+const extractSampleScheduleType = (
+  sampleErrors: Record<string, unknown>[],
+  mergeReport?: MergeReportReference | null,
+) => {
+  const sample = getBestSamplePayload(sampleErrors);
+  if (sample) {
+    const nestedMergeReport = sample.mergeReport;
+    if (isRecord(nestedMergeReport) && typeof nestedMergeReport.scheduleType === 'string' && nestedMergeReport.scheduleType.trim()) {
+      return nestedMergeReport.scheduleType;
+    }
+  }
+  return mergeReport?.scheduleType || null;
+};
+
+const extractSampleEntityDisplayName = (
+  sampleErrors: Record<string, unknown>[],
+  mergeReport?: MergeReportReference | null,
+) => {
+  const sample = getBestSamplePayload(sampleErrors);
+  if (sample && typeof sample.entityDisplayName === 'string' && sample.entityDisplayName.trim()) {
+    return sample.entityDisplayName;
+  }
+  return mergeReport?.entityDisplayName || null;
+};
+
+const stringifyPayload = (value: unknown) => {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return null;
+  }
+};
+
+const buildSignatureErrorDetail = (signature: ErrorSignatureCluster): ErrorDetailContext => ({
+  title: 'Representative sample error',
+  signatureLabel: signature.signatureLabel,
+  fullErrorText: extractBestErrorText(signature.sampleErrors, signature.sampleMessage),
+  entityType: signature.entityType,
+  errorCode: signature.errorCode,
+  school: signature.dominantSchool,
+  schoolLabel: getSchoolLabel(signature.dominantSchool),
+  sisPlatform: signature.dominantSisPlatform,
+  termCode: extractSampleTermCode(signature.sampleErrors) || signature.termCodes[0] || null,
+  scheduleType: extractSampleScheduleType(signature.sampleErrors, signature.dominantSchoolMergeReport || signature.latestMergeReport),
+  entityDisplayName: extractSampleEntityDisplayName(signature.sampleErrors, signature.dominantSchoolMergeReport || signature.latestMergeReport),
+  mergeReport: signature.dominantSchoolMergeReport || signature.latestMergeReport || null,
+  rawPayload: stringifyPayload(getBestSamplePayload(signature.sampleErrors)),
+  resolutionHint: signature.resolutionHint,
+});
+
+const findDominantSignature = (row: ErrorBreakdownRow) => {
+  if (!row.dominantSignature) return null;
+  return allSignatures.value.find((signature) =>
+    signature.signatureLabel === row.dominantSignature && (!row.key || signature.dominantSchool === row.key),
+  ) || allSignatures.value.find((signature) => signature.signatureLabel === row.dominantSignature) || null;
+};
+
+const buildSchoolErrorDetail = (row: ErrorBreakdownRow): ErrorDetailContext | null => {
+  const signature = findDominantSignature(row);
+  if (!signature) return null;
+  return {
+    ...buildSignatureErrorDetail(signature),
+    title: `${formatSchoolLabel(row.key, row.label)} sample error`,
+    school: row.key,
+    schoolLabel: formatSchoolLabel(row.key, row.label),
+    sisPlatform: row.sisPlatform || signature.dominantSisPlatform || null,
+    mergeReport: row.latestMergeReport || signature.dominantSchoolMergeReport || signature.latestMergeReport || null,
+    scheduleType: extractSampleScheduleType(signature.sampleErrors, row.latestMergeReport || signature.dominantSchoolMergeReport || signature.latestMergeReport),
+    entityDisplayName: extractSampleEntityDisplayName(signature.sampleErrors, row.latestMergeReport || signature.dominantSchoolMergeReport || signature.latestMergeReport),
+  };
+};
+
+const openSignatureDetail = (signature: ErrorSignatureCluster) => {
+  selectedErrorDetail.value = buildSignatureErrorDetail(signature);
+};
+
+const openSchoolErrorDetail = (row: ErrorBreakdownRow) => {
+  selectedErrorDetail.value = buildSchoolErrorDetail(row);
+};
+
+const closeErrorDetail = () => {
+  selectedErrorDetail.value = null;
+};
 </script>
 
 <template>
@@ -342,14 +531,21 @@ const coerceSchoolSpecificRow = (row: ErrorBreakdownRow) => row.sisPlatform || '
           </div>
 
           <Card subtitle="Recurring Patterns" title="Top error signatures">
+            <p class="mb-4 text-sm text-slate-500">Use the actions column to inspect a representative error without crowding the table with raw payload text.</p>
             <div class="overflow-x-auto">
-              <table class="min-w-full border-separate border-spacing-y-3 text-left text-sm text-slate-600">
+              <table class="min-w-full table-fixed border-separate border-spacing-y-3 text-left text-sm text-slate-600">
+                <colgroup>
+                  <col class="w-[40%]">
+                  <col class="w-[16%]">
+                  <col class="w-[28%]">
+                  <col class="w-[16%]">
+                </colgroup>
                 <thead class="text-xs uppercase tracking-[0.12em] text-slate-500">
                   <tr>
-                    <th class="px-4 py-2 font-semibold">Signature</th>
+                    <th class="px-4 py-2 font-semibold">Pattern</th>
                     <th class="px-4 py-2 font-semibold">Impact</th>
-                    <th class="px-4 py-2 font-semibold">Dominant source</th>
-                    <th class="px-4 py-2 font-semibold">Resolution</th>
+                    <th class="px-4 py-2 font-semibold">Likely next step</th>
+                    <th class="px-4 py-2 font-semibold">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -363,51 +559,59 @@ const coerceSchoolSpecificRow = (row: ErrorBreakdownRow) => row.sisPlatform || '
                           {{ signature.errorCode }}
                         </span>
                       </div>
-                      <p class="mt-3 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Signature</p>
-                      <p class="mt-1 font-semibold text-slate-950">{{ signature.signatureLabel }}</p>
-                      <p class="mt-3 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Sample upstream error</p>
-                      <p class="mt-1 text-sm leading-6 text-slate-700">{{ signature.sampleMessage }}</p>
-                      <p v-if="signature.termCodes.length" class="mt-2 text-xs text-slate-500">Terms: {{ signature.termCodes.join(', ') }}</p>
+                      <p class="mt-3 font-semibold leading-6 text-slate-950 break-words" :title="signature.signatureLabel">
+                        {{ buildSignatureHeadline(signature.signatureLabel) }}
+                      </p>
+                      <p
+                        v-if="buildSignatureSubline(signature.signatureLabel)"
+                        class="mt-1 text-xs leading-5 text-slate-500 break-words"
+                        :title="signature.signatureLabel"
+                      >
+                        {{ buildSignatureSubline(signature.signatureLabel) }}
+                      </p>
+                      <p class="mt-2 text-xs leading-5 text-slate-500">
+                        Source: {{ getDominantDrilldownLabel(signature) }}<span v-if="signature.dominantSisPlatform"> · {{ signature.dominantSisPlatform }}</span>
+                      </p>
+                      <p v-if="signature.termCodes.length" class="mt-1 text-xs text-slate-500">Terms: {{ signature.termCodes.join(', ') }}</p>
                     </td>
                     <td class="border-y border-slate-200 bg-slate-50 px-4 py-4 align-top">
                       <p class="text-lg font-semibold text-slate-950">{{ formatCount(signature.totalCount) }}</p>
-                      <p class="mt-2 text-xs text-slate-500">{{ signature.recurrenceDays }} captured day{{ signature.recurrenceDays === 1 ? '' : 's' }}</p>
-                      <p class="mt-1 text-xs text-slate-500">{{ signature.affectedSchools }} school{{ signature.affectedSchools === 1 ? '' : 's' }}</p>
-                      <p class="mt-1 text-xs text-slate-500">Last seen {{ signature.lastSeen }}</p>
+                      <p class="mt-2 text-xs leading-5 text-slate-500">{{ signature.recurrenceDays }} captured day{{ signature.recurrenceDays === 1 ? '' : 's' }}</p>
+                      <p class="mt-1 text-xs leading-5 text-slate-500">{{ signature.affectedSchools }} school{{ signature.affectedSchools === 1 ? '' : 's' }}</p>
+                      <p class="mt-1 text-xs leading-5 text-slate-500">Last seen {{ signature.lastSeen }}</p>
                     </td>
                     <td class="border-y border-slate-200 bg-slate-50 px-4 py-4 align-top">
-                      <p class="font-medium text-slate-900">{{ getDominantDrilldownLabel(signature) }}</p>
-                      <p class="mt-1 text-xs text-slate-500">Primary SIS: {{ signature.dominantSisPlatform || 'Mixed' }}</p>
-                      <div v-if="signature.dominantSchool || signature.latestMergeReport" class="mt-3 flex flex-wrap gap-2">
-                        <router-link v-if="signature.dominantSchool" :to="schoolRoute(signature.dominantSchool)" class="inline-flex items-center rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700">
+                      <span class="inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em]" :class="getResolutionToneClass(signature.resolutionHint)">
+                        {{ signature.resolutionHint.title }}
+                      </span>
+                      <p class="mt-3 text-sm leading-6 text-slate-900">{{ signature.resolutionHint.action }}</p>
+                    </td>
+                    <td class="rounded-r-3xl border-y border-r border-slate-200 bg-slate-50 px-4 py-4 align-top">
+                      <div class="flex flex-col items-start gap-2">
+                        <button
+                          type="button"
+                          class="inline-flex w-full items-center justify-center rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700 sm:w-auto"
+                          @click="openSignatureDetail(signature)"
+                        >
+                          View full error
+                        </button>
+                        <router-link
+                          v-if="signature.dominantSchool"
+                          :to="schoolRoute(signature.dominantSchool)"
+                          class="inline-flex w-full items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950 sm:w-auto"
+                        >
                           School detail
                         </router-link>
-                        <a
-                          v-if="signature.dominantSchool"
-                          :href="getIntegrationHubUrl(signature.dominantSchool)"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
-                        >
-                          Integration Hub
-                        </a>
                         <a
                           v-if="signature.dominantSchoolMergeReport"
                           :href="getMergeReportUrl(signature.dominantSchoolMergeReport)"
                           target="_blank"
                           rel="noopener noreferrer"
-                          class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+                          class="inline-flex w-full items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950 sm:w-auto"
                         >
                           Merge report ↗
                         </a>
                       </div>
-                    </td>
-                    <td class="rounded-r-3xl border-y border-r border-slate-200 bg-slate-50 px-4 py-4 align-top">
-                      <span class="inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em]" :class="getResolutionToneClass(signature.resolutionHint)">
-                        {{ signature.resolutionHint.title }}
-                      </span>
-                      <p class="mt-3 text-sm font-medium leading-6 text-slate-900">{{ signature.resolutionHint.action }}</p>
-                      <p class="mt-2 text-xs leading-5 text-slate-500">{{ signature.resolutionHint.rationale }}</p>
                     </td>
                   </tr>
                 </tbody>
@@ -419,14 +623,19 @@ const coerceSchoolSpecificRow = (row: ErrorBreakdownRow) => row.sisPlatform || '
         <template v-else-if="activeView === 'school'">
           <Card subtitle="School Comparison" title="Where recurring errors concentrate">
             <div class="overflow-x-auto">
-              <table class="min-w-full border-separate border-spacing-y-3 text-left text-sm text-slate-600">
+              <table class="min-w-full table-fixed border-separate border-spacing-y-3 text-left text-sm text-slate-600">
+                <colgroup>
+                  <col class="w-[26%]">
+                  <col class="w-[14%]">
+                  <col class="w-[38%]">
+                  <col class="w-[22%]">
+                </colgroup>
                 <thead class="text-xs uppercase tracking-[0.12em] text-slate-500">
                   <tr>
                     <th class="px-4 py-2 font-semibold">School</th>
-                    <th class="px-4 py-2 font-semibold">SIS</th>
                     <th class="px-4 py-2 font-semibold">Impact</th>
                     <th class="px-4 py-2 font-semibold">Dominant signature</th>
-                    <th class="px-4 py-2 font-semibold">Likely next step</th>
+                    <th class="px-4 py-2 font-semibold">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -435,31 +644,51 @@ const coerceSchoolSpecificRow = (row: ErrorBreakdownRow) => row.sisPlatform || '
                       <router-link :to="schoolRoute(row.key)" class="font-semibold text-slate-950 hover:text-blue-700">
                         {{ formatSchoolLabel(row.key, row.label) }}
                       </router-link>
-                      <p class="mt-1 text-xs text-slate-500">Last seen {{ row.lastSeen }}</p>
-                      <a
-                        v-if="row.latestMergeReport"
-                        :href="getMergeReportUrl(row.latestMergeReport)"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        class="mt-3 inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
-                      >
-                        Latest merge report ↗
-                      </a>
-                    </td>
-                    <td class="border-y border-slate-200 bg-slate-50 px-4 py-4 align-top">
-                      <p class="font-medium text-slate-900">{{ coerceSchoolSpecificRow(row) }}</p>
+                      <p class="mt-1 text-xs leading-5 text-slate-500">{{ coerceSchoolSpecificRow(row) }}</p>
+                      <p class="mt-1 text-xs leading-5 text-slate-500">Last seen {{ row.lastSeen }}</p>
                     </td>
                     <td class="border-y border-slate-200 bg-slate-50 px-4 py-4 align-top">
                       <p class="text-lg font-semibold text-slate-950">{{ row.totalErrors }}</p>
-                      <p class="mt-2 text-xs text-slate-500">{{ row.distinctSignatures }} signatures</p>
-                      <p class="mt-1 text-xs text-slate-500">{{ row.recurrenceDays || 0 }} captured day{{ row.recurrenceDays === 1 ? '' : 's' }}</p>
+                      <p class="mt-2 text-xs leading-5 text-slate-500">{{ row.distinctSignatures }} signatures</p>
+                      <p class="mt-1 text-xs leading-5 text-slate-500">{{ row.recurrenceDays || 0 }} captured day{{ row.recurrenceDays === 1 ? '' : 's' }}</p>
                     </td>
                     <td class="border-y border-slate-200 bg-slate-50 px-4 py-4 align-top">
-                      <p class="font-medium text-slate-900">{{ row.dominantSignature || 'No dominant signature yet' }}</p>
+                      <p
+                        class="font-medium leading-6 text-slate-900 break-words"
+                        :title="row.dominantSignature || undefined"
+                      >
+                        {{ buildSignatureHeadline(row.dominantSignature || undefined) }}
+                      </p>
+                      <p
+                        v-if="buildSignatureSubline(row.dominantSignature || undefined)"
+                        class="mt-1 text-xs leading-5 text-slate-500 break-words"
+                        :title="row.dominantSignature || undefined"
+                      >
+                        {{ buildSignatureSubline(row.dominantSignature || undefined) }}
+                      </p>
                       <p class="mt-2 text-xs text-slate-500">Theme: {{ formatTheme(row.topResolutionTheme) }}</p>
+                      <p class="mt-2 text-xs leading-5 text-slate-500">{{ row.likelyNextStep || 'Inspect the latest Integration Hub samples for this school.' }}</p>
                     </td>
                     <td class="rounded-r-3xl border-y border-r border-slate-200 bg-slate-50 px-4 py-4 align-top">
-                      <p class="text-sm leading-6 text-slate-700">{{ row.likelyNextStep || 'Inspect the latest Integration Hub samples for this school.' }}</p>
+                      <div class="flex flex-col items-start gap-2">
+                        <button
+                          v-if="findDominantSignature(row)"
+                          type="button"
+                          class="inline-flex w-full items-center justify-center rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700 sm:w-auto"
+                          @click="openSchoolErrorDetail(row)"
+                        >
+                          View full error
+                        </button>
+                        <a
+                          v-if="row.latestMergeReport"
+                          :href="getMergeReportUrl(row.latestMergeReport)"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          class="inline-flex w-full items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950 sm:w-auto"
+                        >
+                          Latest merge report ↗
+                        </a>
+                      </div>
                     </td>
                   </tr>
                 </tbody>
@@ -510,6 +739,99 @@ const coerceSchoolSpecificRow = (row: ErrorBreakdownRow) => row.sisPlatform || '
         <div v-if="!hasFilteredRows" class="rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-4 text-sm text-amber-800">
           No grouped error rows match the current filters yet. Captured history remains available starting on {{ response?.metadata.historyStartsOn || 'the next sync' }}.
         </div>
+      </div>
+    </div>
+
+    <div
+      v-if="selectedErrorDetail"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-8"
+      data-testid="error-detail-modal"
+      @click.self="closeErrorDetail"
+    >
+      <div class="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-[28px] border border-slate-200 bg-white p-6 shadow-2xl sm:p-8">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{{ selectedErrorDetail.title }}</p>
+            <h2 class="mt-2 text-2xl font-semibold text-slate-950">Full upstream error</h2>
+            <p class="mt-3 text-sm leading-6 text-slate-600">{{ selectedErrorDetail.signatureLabel }}</p>
+          </div>
+          <button
+            type="button"
+            class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-lg text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
+            aria-label="Close full error modal"
+            @click="closeErrorDetail"
+          >
+            ×
+          </button>
+        </div>
+
+        <div class="mt-6 flex flex-wrap gap-2 text-xs text-slate-600">
+          <span v-if="selectedErrorDetail.entityType" class="rounded-full bg-slate-100 px-3 py-1.5">{{ selectedErrorDetail.entityType }}</span>
+          <span v-if="selectedErrorDetail.errorCode" class="rounded-full bg-slate-100 px-3 py-1.5">{{ selectedErrorDetail.errorCode }}</span>
+          <span v-if="selectedErrorDetail.schoolLabel" class="rounded-full bg-slate-100 px-3 py-1.5">{{ selectedErrorDetail.schoolLabel }}</span>
+          <span v-if="selectedErrorDetail.sisPlatform" class="rounded-full bg-slate-100 px-3 py-1.5">{{ selectedErrorDetail.sisPlatform }}</span>
+          <span v-if="selectedErrorDetail.termCode" class="rounded-full bg-slate-100 px-3 py-1.5">Term {{ selectedErrorDetail.termCode }}</span>
+          <span v-if="selectedErrorDetail.scheduleType" class="rounded-full bg-slate-100 px-3 py-1.5">{{ selectedErrorDetail.scheduleType }}</span>
+        </div>
+
+        <div class="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(260px,0.9fr)]">
+          <div class="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+            <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Captured upstream message</p>
+            <pre class="mt-3 whitespace-pre-wrap break-words font-sans text-sm leading-6 text-slate-800">{{ selectedErrorDetail.fullErrorText }}</pre>
+          </div>
+
+          <div class="space-y-4">
+            <div class="rounded-3xl border border-slate-200 bg-white p-5">
+              <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Context</p>
+              <dl class="mt-3 space-y-3 text-sm text-slate-700">
+                <div v-if="selectedErrorDetail.entityDisplayName">
+                  <dt class="text-xs uppercase tracking-[0.1em] text-slate-500">Entity</dt>
+                  <dd class="mt-1 text-slate-900">{{ selectedErrorDetail.entityDisplayName }}</dd>
+                </div>
+                <div v-if="selectedErrorDetail.resolutionHint">
+                  <dt class="text-xs uppercase tracking-[0.1em] text-slate-500">Likely next step</dt>
+                  <dd class="mt-1 text-slate-900">{{ selectedErrorDetail.resolutionHint.action }}</dd>
+                </div>
+              </dl>
+            </div>
+
+            <div class="rounded-3xl border border-slate-200 bg-white p-5">
+              <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Links</p>
+              <div class="mt-3 flex flex-wrap gap-2">
+                <router-link
+                  v-if="selectedErrorDetail.school"
+                  :to="schoolRoute(selectedErrorDetail.school)"
+                  class="inline-flex items-center rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700"
+                >
+                  School detail
+                </router-link>
+                <a
+                  v-if="selectedErrorDetail.school"
+                  :href="getIntegrationHubUrl(selectedErrorDetail.school)"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+                >
+                  Integration Hub
+                </a>
+                <a
+                  v-if="selectedErrorDetail.mergeReport"
+                  :href="getMergeReportUrl(selectedErrorDetail.mergeReport)"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+                >
+                  Merge report ↗
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <details v-if="selectedErrorDetail.rawPayload" class="mt-6 rounded-3xl border border-slate-200 bg-slate-50 p-5">
+          <summary class="cursor-pointer text-sm font-semibold text-slate-900">Raw sample payload</summary>
+          <pre class="mt-4 overflow-x-auto whitespace-pre-wrap break-words text-xs leading-5 text-slate-700">{{ selectedErrorDetail.rawPayload }}</pre>
+        </details>
       </div>
     </div>
   </div>

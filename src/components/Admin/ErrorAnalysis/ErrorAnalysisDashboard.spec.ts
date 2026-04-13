@@ -74,7 +74,27 @@ const buildResponse = (): ErrorAnalysisResponse => ({
       recurrenceDays: 1,
       dominantSchool: 'foo01',
       dominantSisPlatform: 'PeopleSoftDirect',
-      sampleErrors: [{ message: 'Duplicate course 12345' }],
+      sampleErrors: [
+        {
+          entityDisplayName: 'Duplicate course 12345',
+          termCode: '202505',
+          mergeReport: { scheduleType: 'realtime' },
+          errors: [
+            {
+              originalError: {
+                body: {
+                  errors: [
+                    {
+                      code: 'duplicate_course',
+                      message: 'Duplicate course 12345 already exists in CourseDog',
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      ],
       termCodes: ['202505'],
       latestMergeReport: {
         school: 'bar01',
@@ -113,7 +133,30 @@ const buildResponse = (): ErrorAnalysisResponse => ({
       recurrenceDays: 2,
       dominantSchool: 'bar01',
       dominantSisPlatform: 'Banner',
-      sampleErrors: [{ message: 'Course 202602 missing dependency 987654' }],
+      sampleErrors: [
+        {
+          entityDisplayName: 'Section BIO-101-01',
+          term: { code: '202602' },
+          mergeReport: { scheduleType: 'nightly' },
+          errors: [
+            {
+              originalError: {
+                body: {
+                  errors: [
+                    {
+                      code: 'missing_course',
+                      message: 'Course 202602 missing dependency 987654',
+                    },
+                    {
+                      detail: 'Dependent course must sync first.',
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      ],
       termCodes: ['202505', '202602'],
       latestMergeReport: {
         school: 'bar01',
@@ -259,8 +302,8 @@ describe('ErrorAnalysisDashboard', () => {
     });
 
     expect(wrapper.text()).toContain('Top error signatures');
-    expect(wrapper.text()).toContain('Duplicate course 12345');
     expect(wrapper.text()).toContain('Duplicate or conflicting record');
+    expect(wrapper.text()).toContain('View full error');
     expect(wrapper.html()).toContain('/#/int/foo01/merge-history/report-b1');
     expect(wrapper.html()).not.toContain('/#/int/bar01/merge-history/report-b2');
 
@@ -270,6 +313,56 @@ describe('ErrorAnalysisDashboard', () => {
     expect(wrapper.text()).toContain('Foo State');
     expect(wrapper.text()).toContain('Check for duplicate source records or conflicting identifiers');
     expect(wrapper.html()).toContain('/#/int/foo01/merge-history/report-b1');
+  });
+
+  it('opens a full error modal with nested upstream text and links', async () => {
+    const { default: ErrorAnalysisDashboard } = await import('./ErrorAnalysisDashboard.vue');
+    const wrapper = mount(ErrorAnalysisDashboard, {
+      global: {
+        stubs: {
+          RouterLink: RouterLinkStub,
+          VueApexCharts: { template: '<div class="chart-stub" />' },
+        },
+      },
+    });
+
+    await wrapper.get('[data-testid="signature-row"] button').trigger('click');
+
+    const modal = wrapper.get('[data-testid="error-detail-modal"]');
+    expect(modal.text()).toContain('Full upstream error');
+    expect(modal.text()).toContain('Duplicate course 12345 already exists in CourseDog');
+    expect(modal.text()).toContain('courses');
+    expect(modal.text()).toContain('duplicate_course');
+    expect(modal.text()).toContain('Foo State (foo01)');
+    expect(modal.text()).toContain('PeopleSoftDirect');
+    expect(modal.text()).toContain('Term 202505');
+    expect(modal.text()).toContain('realtime');
+    expect(modal.html()).toContain('/#/int/foo01/merge-history/report-b1');
+    expect(modal.text()).toContain('Integration Hub');
+
+    await modal.get('button[aria-label="Close full error modal"]').trigger('click');
+    expect(wrapper.find('[data-testid="error-detail-modal"]').exists()).toBe(false);
+  });
+
+  it('opens a school-specific full error modal from the school view', async () => {
+    const { default: ErrorAnalysisDashboard } = await import('./ErrorAnalysisDashboard.vue');
+    const wrapper = mount(ErrorAnalysisDashboard, {
+      global: {
+        stubs: {
+          RouterLink: RouterLinkStub,
+          VueApexCharts: { template: '<div class="chart-stub" />' },
+        },
+      },
+    });
+
+    await wrapper.get('[data-testid="view-toggle"]').findAll('button')[1].trigger('click');
+    const schoolButtons = wrapper.findAll('button').filter((button) => button.text() === 'View full error');
+    await schoolButtons[0].trigger('click');
+
+    const modal = wrapper.get('[data-testid="error-detail-modal"]');
+    expect(modal.text()).toContain('Foo State (foo01) sample error');
+    expect(modal.text()).toContain('Duplicate course 12345 already exists in CourseDog');
+    expect(modal.html()).toContain('/#/int/foo01/merge-history/report-b1');
   });
 
   it('narrows school options when the SIS filter changes', async () => {
