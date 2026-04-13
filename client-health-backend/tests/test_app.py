@@ -2,17 +2,20 @@ import unittest
 import os
 from types import SimpleNamespace
 from unittest.mock import patch
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import app.routes as routes
+from app.db import get_db, init_db
 from app.main import app, create_app
+from app.models import BackfillWorkUnit, SyncRun
 from app.security import is_loopback_client, require_internal_auth
 from app.routes import (
     build_snapshot_dates,
     build_snapshot_from_merge_history,
+    derive_sync_run_status,
     extract_unique_activity_users,
     extract_merge_history_entries,
     extract_merge_error_count,
@@ -25,6 +28,7 @@ from app.routes import (
     maybe_enqueue_scheduled_sync,
     normalize_school_catalog,
     resolve_backfill_date_range,
+    serialize_persisted_sync_run,
     select_schools_for_sync,
     serialize_sync_job,
     split_school_catalog,
@@ -320,6 +324,118 @@ class BackfillDateRangeTests(unittest.TestCase):
             build_snapshot_dates("2026-01-01", "2026-01-03"),
             ["2026-01-01", "2026-01-02", "2026-01-03"],
         )
+
+
+class BackfillTrackingTests(unittest.TestCase):
+    def tearDown(self):
+        init_db()
+        db = get_db()
+        try:
+            db.query(BackfillWorkUnit).filter(BackfillWorkUnit.job_id.like("test-backfill-%")).delete(synchronize_session=False)
+            db.query(SyncRun).filter(SyncRun.job_id.like("test-backfill-%")).delete(synchronize_session=False)
+            db.commit()
+        finally:
+            db.close()
+
+    def test_derive_sync_run_status_marks_stalled_backfill(self):
+        status, detail = derive_sync_run_status(
+            "running",
+            scope="history-backfill-bulk",
+            finished_at=None,
+            last_heartbeat_at=datetime.now(timezone.utc) - timedelta(minutes=11),
+            failed_units=0,
+        )
+
+        self.assertEqual(status, "stalled")
+        self.assertEqual(detail, "heartbeat_stale")
+
+    def test_serialize_persisted_sync_run_marks_completed_with_failures(self):
+        sync_run = SyncRun(
+            job_id="test-backfill-completed",
+            scope="history-backfill-bulk",
+            status="completed",
+            failed_units=2,
+        )
+
+        payload = serialize_persisted_sync_run(sync_run)
+
+        self.assertEqual(payload["status"], "completed_with_failures")
+
+    def test_retry_failures_endpoint_requeues_only_failed_units(self):
+        init_db()
+        db = get_db()
+        try:
+            sync_run = SyncRun(
+                job_id="test-backfill-retry",
+                scope="history-backfill-bulk",
+                status="completed",
+                start_date="2026-01-01",
+                end_date="2026-01-02",
+                date_count=2,
+                total_schools=2,
+                completed_units=1,
+                failed_units=1,
+                attempted_at=datetime.now(timezone.utc),
+            )
+            db.add(sync_run)
+            db.add(
+                BackfillWorkUnit(
+                    job_id="test-backfill-retry",
+                    school="bar01",
+                    display_name="Baruch College",
+                    snapshot_date="2026-01-01",
+                    status="completed",
+                )
+            )
+            db.add(
+                BackfillWorkUnit(
+                    job_id="test-backfill-retry",
+                    school="bar01",
+                    display_name="Baruch College",
+                    snapshot_date="2026-01-02",
+                    status="failed",
+                    last_error="boom",
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        async def fake_start_scheduler():
+            return None
+
+        async def fake_stop_scheduler():
+            return None
+
+        async def fake_run_history_backfill_job(*args, **kwargs):
+            return None
+
+        with patch.object(routes, "_active_sync_job_id", None), patch.object(
+            routes,
+            "_last_job_trigger_monotonic",
+            0.0,
+        ), patch.dict(
+            os.environ,
+            {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY},
+            clear=False,
+        ), patch(
+            "app.routes.run_history_backfill_job",
+            new=fake_run_history_backfill_job,
+        ), patch(
+            "app.main.start_scheduled_sync_service",
+            new=fake_start_scheduler,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=fake_stop_scheduler,
+        ):
+            with TestClient(app) as client:
+                response = client.post(
+                    "/api/client-health/history/backfill/test-backfill-retry/retry-failures",
+                    headers=AUTH_HEADERS,
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["jobId"], "test-backfill-retry")
 
 
 class BackfillEndpointTests(unittest.TestCase):

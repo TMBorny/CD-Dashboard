@@ -94,4 +94,22 @@ describe('client health api helpers', () => {
       },
     });
   });
+
+  it('resumes a historical backfill by job id', async () => {
+    post.mockResolvedValue({ data: { jobId: 'bulk-1' } });
+    const { resumeHistoryBackfill } = await import('./index');
+
+    await resumeHistoryBackfill('bulk-1');
+
+    expect(post).toHaveBeenCalledWith('/client-health/history/backfill/bulk-1/resume');
+  });
+
+  it('retries failed historical backfill units by job id', async () => {
+    post.mockResolvedValue({ data: { jobId: 'bulk-1' } });
+    const { retryHistoryBackfillFailures } = await import('./index');
+
+    await retryHistoryBackfillFailures('bulk-1');
+
+    expect(post).toHaveBeenCalledWith('/client-health/history/backfill/bulk-1/retry-failures');
+  });
 });

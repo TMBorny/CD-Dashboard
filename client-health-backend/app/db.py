@@ -149,10 +149,59 @@ def ensure_schema_updates(engine) -> None:
             connection.execute(text("ALTER TABLE sync_runs ADD COLUMN end_date VARCHAR(10)"))
         if "date_count" not in sync_run_columns:
             connection.execute(text("ALTER TABLE sync_runs ADD COLUMN date_count INTEGER"))
+        if "last_heartbeat_at" not in sync_run_columns:
+            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN last_heartbeat_at DATETIME"))
+        if "last_progress_at" not in sync_run_columns:
+            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN last_progress_at DATETIME"))
+        if "current_school" not in sync_run_columns:
+            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN current_school VARCHAR(255)"))
+        if "current_snapshot_date" not in sync_run_columns:
+            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN current_snapshot_date VARCHAR(10)"))
+        if "completed_units" not in sync_run_columns:
+            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN completed_units INTEGER DEFAULT 0"))
+        if "failed_units" not in sync_run_columns:
+            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN failed_units INTEGER DEFAULT 0"))
+        if "skipped_units" not in sync_run_columns:
+            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN skipped_units INTEGER DEFAULT 0"))
+        if "status_detail" not in sync_run_columns:
+            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN status_detail VARCHAR(64)"))
+        if "failure_reason" not in sync_run_columns:
+            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN failure_reason TEXT"))
+        if "failed_units_sample_json" not in sync_run_columns:
+            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN failed_units_sample_json TEXT"))
+        if "checkpoint_state_json" not in sync_run_columns:
+            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN checkpoint_state_json TEXT"))
         if "errors_json" not in sync_run_columns:
             connection.execute(text("ALTER TABLE sync_runs ADD COLUMN errors_json TEXT"))
         if "timing_json" not in sync_run_columns:
             connection.execute(text("ALTER TABLE sync_runs ADD COLUMN timing_json TEXT"))
+
+    if "backfill_work_units" not in table_names:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE backfill_work_units (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        job_id VARCHAR(64) NOT NULL,
+                        school VARCHAR(255) NOT NULL,
+                        display_name VARCHAR(255) NOT NULL,
+                        snapshot_date VARCHAR(10) NOT NULL,
+                        products_json TEXT DEFAULT '[]',
+                        status VARCHAR(32) NOT NULL DEFAULT 'pending',
+                        attempt_count INTEGER NOT NULL DEFAULT 0,
+                        last_error TEXT,
+                        last_attempted_at DATETIME,
+                        completed_at DATETIME,
+                        CONSTRAINT uq_backfill_job_school_date UNIQUE (job_id, school, snapshot_date)
+                    )
+                    """
+                )
+            )
+            connection.execute(text("CREATE INDEX ix_backfill_work_units_job_id ON backfill_work_units (job_id)"))
+            connection.execute(text("CREATE INDEX ix_backfill_work_units_school ON backfill_work_units (school)"))
+            connection.execute(text("CREATE INDEX ix_backfill_work_units_snapshot_date ON backfill_work_units (snapshot_date)"))
+            connection.execute(text("CREATE INDEX ix_backfill_work_units_status ON backfill_work_units (status)"))
 
 
 def get_db() -> Session:

@@ -151,6 +151,17 @@ class SyncRun(Base):
     start_date = Column(String(10), nullable=True)
     end_date = Column(String(10), nullable=True)
     date_count = Column(Integer, nullable=True)
+    last_heartbeat_at = Column(DateTime, nullable=True)
+    last_progress_at = Column(DateTime, nullable=True)
+    current_school = Column(String(255), nullable=True)
+    current_snapshot_date = Column(String(10), nullable=True)
+    completed_units = Column(Integer, default=0)
+    failed_units = Column(Integer, default=0)
+    skipped_units = Column(Integer, default=0)
+    status_detail = Column(String(64), nullable=True)
+    failure_reason = Column(Text, nullable=True)
+    failed_units_sample_json = Column(Text, nullable=True)
+    checkpoint_state_json = Column(Text, nullable=True)
     errors_json = Column(Text, nullable=True)
     timing_json = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
@@ -158,6 +169,8 @@ class SyncRun(Base):
     def to_dict(self) -> dict:
         errors = json.loads(self.errors_json) if self.errors_json else []
         timing = json.loads(self.timing_json) if self.timing_json else None
+        failed_units_sample = json.loads(self.failed_units_sample_json) if self.failed_units_sample_json else []
+        checkpoint_state = json.loads(self.checkpoint_state_json) if self.checkpoint_state_json else None
         return {
             "jobId": self.job_id,
             "school": self.school,
@@ -172,10 +185,56 @@ class SyncRun(Base):
             "startDate": self.start_date,
             "endDate": self.end_date,
             "dateCount": self.date_count,
+            "lastHeartbeatAt": self.last_heartbeat_at.isoformat() if self.last_heartbeat_at else None,
+            "lastProgressAt": self.last_progress_at.isoformat() if self.last_progress_at else None,
+            "currentSchool": self.current_school,
+            "currentSnapshotDate": self.current_snapshot_date,
+            "completedUnits": self.completed_units,
+            "failedUnits": self.failed_units,
+            "skippedUnits": self.skipped_units,
+            "statusDetail": self.status_detail,
+            "failureReason": self.failure_reason,
+            "failedUnitsSample": failed_units_sample,
+            "checkpointState": checkpoint_state,
             "errors": errors,
             "errorCount": len(errors),
             "timing": timing,
             "errorMessage": self.error_message,
+        }
+
+
+class BackfillWorkUnit(Base):
+    """One resumable work item within a historical backfill job."""
+
+    __tablename__ = "backfill_work_units"
+    __table_args__ = (
+        UniqueConstraint("job_id", "school", "snapshot_date", name="uq_backfill_job_school_date"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    job_id = Column(String(64), nullable=False, index=True)
+    school = Column(String(255), nullable=False, index=True)
+    display_name = Column(String(255), nullable=False)
+    snapshot_date = Column(String(10), nullable=False, index=True)
+    products_json = Column(Text, default="[]")
+    status = Column(String(32), nullable=False, default="pending", index=True)
+    attempt_count = Column(Integer, nullable=False, default=0)
+    last_error = Column(Text, nullable=True)
+    last_attempted_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "jobId": self.job_id,
+            "school": self.school,
+            "displayName": self.display_name,
+            "snapshotDate": self.snapshot_date,
+            "products": json.loads(self.products_json) if self.products_json else [],
+            "status": self.status,
+            "attemptCount": self.attempt_count,
+            "lastError": self.last_error,
+            "lastAttemptedAt": self.last_attempted_at.isoformat() if self.last_attempted_at else None,
+            "completedAt": self.completed_at.isoformat() if self.completed_at else None,
         }
 
 
