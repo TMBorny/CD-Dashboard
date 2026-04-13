@@ -36,7 +36,7 @@ export interface ClientHealthSnapshot {
     manual: { total: number; succeeded: number; failed: number; finishedWithIssues: number; noData: number; };
   };
   recentFailedMerges: FailedMerge[];
-  mergeErrorsCount: number;
+  mergeErrorsCount: number | null;
   activeUsers24h: number;
   createdAt: Date;
 }

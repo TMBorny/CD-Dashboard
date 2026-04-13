@@ -10,21 +10,27 @@ import { useChartOptions, useStackedBarChartOptions } from '@/composables/useCha
 import { formatSchoolLabel } from '@/utils/schoolNames';
 
 const route = useRoute();
-const school = route.params.school as string;
+const school = computed(() => String(route.params.school ?? ''));
+const coursedogBaseUrl = (import.meta.env.VITE_COURSEDOG_PRD_URL?.trim() || 'https://app.coursedog.com').replace(/\/+$/, '');
+const integrationHubUrl = computed(() => `${coursedogBaseUrl}/#/int/${school.value}`);
+const mergeReportsUrl = computed(() => `${coursedogBaseUrl}/#/int/${school.value}/merge-history`);
 
 const { data: history, isLoading: isLoadingHistory, error: historyError } = useQuery({
-  queryKey: ['clientHealthHistory', school, { days: 30 }],
-  queryFn: () => getClientHealthHistory({ school, days: 30 }).then((res) => res.data),
+  queryKey: computed(() => ['clientHealthHistory', school.value, { days: 30 }]),
+  queryFn: () => getClientHealthHistory({ school: school.value, days: 30 }).then((res) => res.data),
+  enabled: computed(() => school.value.length > 0),
 });
 
 const { data: activeUsers, isLoading: isLoadingUsers, error: usersError } = useQuery({
-  queryKey: ['clientHealthActiveUsers', school],
-  queryFn: () => getClientHealthActiveUsers({ school }).then((res) => res.data),
+  queryKey: computed(() => ['clientHealthActiveUsers', school.value]),
+  queryFn: () => getClientHealthActiveUsers({ school: school.value }).then((res) => res.data),
+  enabled: computed(() => school.value.length > 0),
 });
 
 const { data: syncMetadata, isLoading: isLoadingSyncMetadata } = useQuery({
-  queryKey: ['clientHealthSyncMetadata', school],
-  queryFn: () => getClientHealthSyncMetadata({ school }).then((res) => res.data),
+  queryKey: computed(() => ['clientHealthSyncMetadata', school.value]),
+  queryFn: () => getClientHealthSyncMetadata({ school: school.value }).then((res) => res.data),
+  enabled: computed(() => school.value.length > 0),
 });
 
 const loading = computed(() => isLoadingHistory.value || isLoadingUsers.value || isLoadingSyncMetadata.value);
@@ -34,7 +40,7 @@ const latestSnapshot = computed(() => {
   const snapshots = history.value?.snapshots ?? [];
   return snapshots.length > 0 ? snapshots[snapshots.length - 1] : null;
 });
-const schoolLabel = computed(() => formatSchoolLabel(school, latestSnapshot.value?.displayName));
+const schoolLabel = computed(() => formatSchoolLabel(school.value, latestSnapshot.value?.displayName));
 const lastSuccessfulSyncLabel = computed(() => {
   const createdAt = syncMetadata.value?.lastSuccessfulSync?.createdAt;
   if (!createdAt) return 'No successful sync yet';
@@ -102,7 +108,7 @@ const realtimeSuccessChartOptions = computed(() => useStackedBarChartOptions({
 
 const mergeErrorsChartSeries = computed(() => {
   if (!history.value) return [];
-  const data = history.value.snapshots.map((s: any) => s.mergeErrorsCount);
+  const data = history.value.snapshots.map((s: any) => s.mergeErrorsCount ?? null);
   return [{ name: 'Open Merge Errors per Snapshot', data }];
 });
 
@@ -168,7 +174,7 @@ const activeUsersChartOptions = computed(() => ({
                 ← Back to Client Health
               </router-link>
               <a
-                :href="`https://app.coursedog.com/#/int/${school}`"
+                :href="integrationHubUrl"
                 target="_blank"
                 rel="noopener noreferrer"
                 class="inline-flex items-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
@@ -176,7 +182,7 @@ const activeUsersChartOptions = computed(() => ({
                 Integration Hub ↗
               </a>
               <a
-                :href="`https://app.coursedog.com/#/int/${school}/merge-history`"
+                :href="mergeReportsUrl"
                 target="_blank"
                 rel="noopener noreferrer"
                 class="inline-flex items-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
@@ -193,7 +199,7 @@ const activeUsersChartOptions = computed(() => ({
             </p>
             <p v-if="latestSnapshot?.snapshotDate" class="mt-1 text-xs text-slate-400">Latest successful snapshot date: {{ latestSnapshot.snapshotDate }}</p>
             <p v-if="snapshotCount === 1" class="mt-2 text-xs text-amber-600">Only one local snapshot is available right now, so the charts will show a single point instead of a trend line.</p>
-            <p class="mt-2 max-w-2xl text-xs text-slate-500">Nightly success uses Coursedog's upstream 48-hour health window. Realtime success and active users use the last 24 hours. Merge errors reflect the current open-error count on synced days; backfilled history uses a failed-merge proxy.</p>
+            <p class="mt-2 max-w-2xl text-xs text-slate-500">Nightly success uses Coursedog's upstream 48-hour health window. Realtime success and active users use the last 24 hours. Open merge errors are shown only for days where that count was captured directly during a local sync.</p>
           </div>
          
         </div>

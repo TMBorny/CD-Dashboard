@@ -69,12 +69,13 @@ const getBaseSuccessScore = (school: ClientHealthSnapshot) => {
 };
 
 const getErrorPenalty = (school: ClientHealthSnapshot) => {
-  if (school.mergeErrorsCount <= 0) {
+  const mergeErrorsCount = school.mergeErrorsCount ?? 0;
+  if (mergeErrorsCount <= 0) {
     return 0;
   }
 
   // Use a capped logarithmic penalty so errors matter without overwhelming the score.
-  return Math.min(20, Math.log2(school.mergeErrorsCount + 1) * 4);
+  return Math.min(20, Math.log2(mergeErrorsCount + 1) * 4);
 };
 
 const getActivityAdjustment = (school: ClientHealthSnapshot) => {
@@ -157,8 +158,8 @@ const sortedSchools = computed(() => {
         bVal = realtimeTotalB;
         break;
       case 'mergeErrors':
-        aVal = a.mergeErrorsCount;
-        bVal = b.mergeErrorsCount;
+        aVal = a.mergeErrorsCount ?? 0;
+        bVal = b.mergeErrorsCount ?? 0;
         break;
       case 'activeUsers':
         aVal = a.activeUsers24h;
@@ -185,6 +186,10 @@ const handleSort = (field: typeof sortBy.value) => {
     sortBy.value = field;
     sortOrder.value = 'desc';
   }
+};
+
+const updateSortBy = (field: typeof sortBy.value) => {
+  sortBy.value = field;
 };
 
 const getStatusBadge = (school: ClientHealthSnapshot) => {
@@ -238,9 +243,38 @@ const getRowTone = (school: ClientHealthSnapshot) => {
             </svg>
           </button>
         </div>
-        <!-- Sort indicator -->
-        <span class="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.24em] text-slate-600">Sorted by</span>
-        <span class="rounded-full bg-slate-950 px-3 py-2 text-xs font-semibold uppercase tracking-[0.24em] text-white">{{ sortLabels[sortBy] }} {{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
+        <div class="relative">
+          <select
+            :value="sortBy"
+            @change="updateSortBy(($event.target as HTMLSelectElement).value as typeof sortBy)"
+            class="h-9 appearance-none rounded-full border border-slate-200 bg-slate-50 pl-4 pr-10 text-xs font-semibold uppercase tracking-[0.24em] text-slate-600 outline-none transition focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200"
+            aria-label="Sort schools by"
+          >
+            <option
+              v-for="(label, value) in sortLabels"
+              :key="value"
+              :value="value"
+            >
+              Sorted by {{ label }}
+            </option>
+          </select>
+          <svg
+            class="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400"
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+          >
+            <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 10.94l3.71-3.71a.75.75 0 1 1 1.06 1.06l-4.24 4.24a.75.75 0 0 1-1.06 0L5.21 8.29a.75.75 0 0 1 .02-1.08Z" clip-rule="evenodd" />
+          </svg>
+        </div>
+        <button
+          type="button"
+          @click="sortOrder = sortOrder === 'asc' ? 'desc' : 'asc'"
+          class="rounded-full bg-slate-950 px-3 py-2 text-xs font-semibold uppercase tracking-[0.24em] text-white transition hover:bg-slate-800"
+          :aria-label="`Toggle sort order for ${sortLabels[sortBy]}`"
+        >
+          {{ sortLabels[sortBy] }} {{ sortOrder === 'asc' ? '↑' : '↓' }}
+        </button>
       </div>
     </div>
 
@@ -384,7 +418,7 @@ const getRowTone = (school: ClientHealthSnapshot) => {
               </div>
             </td>
             <td :class="['whitespace-nowrap border-y border-slate-200 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300', getRowTone(school)]">
-              <div class="text-lg font-semibold leading-none text-slate-950">{{ school.mergeErrorsCount }}</div>
+              <div class="text-lg font-semibold leading-none text-slate-950">{{ school.mergeErrorsCount ?? 0 }}</div>
               <div v-if="school.recentFailedMerges.length > 0" class="mt-3 rounded-full bg-rose-100 px-2 py-1 text-[11px] font-semibold tracking-[0.08em] text-rose-700">{{ school.recentFailedMerges.length }} recent failures</div>
             </td>
             <td :class="['whitespace-nowrap border-y border-slate-200 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300', getRowTone(school)]">

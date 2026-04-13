@@ -2,17 +2,21 @@ import unittest
 import os
 from types import SimpleNamespace
 from unittest.mock import patch
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import app.routes as routes
+from app.db import get_db, init_db
 from app.main import app, create_app
+from app.models import BackfillWorkUnit, SchoolSnapshot, SyncRun
 from app.security import is_loopback_client, require_internal_auth
 from app.routes import (
     build_snapshot_dates,
+    fetch_school_health_for_date,
     build_snapshot_from_merge_history,
+    derive_sync_run_status,
     extract_unique_activity_users,
     extract_merge_history_entries,
     extract_merge_error_count,
@@ -22,9 +26,12 @@ from app.routes import (
     get_next_scheduled_sync_time,
     is_demo_school,
     maybe_enqueue_catchup_sync,
+    maybe_auto_resume_stalled_backfill,
     maybe_enqueue_scheduled_sync,
     normalize_school_catalog,
+    prepare_backfill_auto_resume,
     resolve_backfill_date_range,
+    serialize_persisted_sync_run,
     select_schools_for_sync,
     serialize_sync_job,
     split_school_catalog,
@@ -247,7 +254,7 @@ class MergeErrorCountTests(unittest.TestCase):
         
         self.assertEqual(snapshot["merges"]["manual"]["failed"], 1)
         self.assertEqual(snapshot["merges"]["manual"]["finishedWithIssues"], 0)
-        self.assertEqual(snapshot["mergeErrorsCount"], 2)
+        self.assertIsNone(snapshot["mergeErrorsCount"])
         self.assertEqual(snapshot["activeUsers24h"], 7)
         self.assertEqual(snapshot["sisPlatform"], "PeopleSoftDirect")
 
@@ -307,9 +314,11 @@ class SchoolSelectionTests(unittest.TestCase):
 
 class BackfillDateRangeTests(unittest.TestCase):
     def test_resolve_backfill_date_range_defaults_end_date_to_today(self):
-        start_date, end_date = resolve_backfill_date_range("2026-01-01", None)
+        with patch("app.routes.get_new_york_snapshot_date", return_value="2026-04-11"):
+            start_date, end_date = resolve_backfill_date_range("2026-01-01", None)
+
         self.assertEqual(start_date, "2026-01-01")
-        self.assertGreaterEqual(end_date, "2026-01-01")
+        self.assertEqual(end_date, "2026-04-11")
 
     def test_resolve_backfill_date_range_rejects_inverted_range(self):
         with self.assertRaises(Exception):
@@ -320,6 +329,508 @@ class BackfillDateRangeTests(unittest.TestCase):
             build_snapshot_dates("2026-01-01", "2026-01-03"),
             ["2026-01-01", "2026-01-02", "2026-01-03"],
         )
+
+
+class BackfillTrackingTests(unittest.TestCase):
+    def tearDown(self):
+        init_db()
+        db = get_db()
+        try:
+            db.query(BackfillWorkUnit).filter(BackfillWorkUnit.job_id.like("test-backfill-%")).delete(synchronize_session=False)
+            db.query(SyncRun).filter(SyncRun.job_id.like("test-backfill-%")).delete(synchronize_session=False)
+            db.query(SchoolSnapshot).filter(SchoolSnapshot.school.like("test-backfill-%")).delete(synchronize_session=False)
+            db.commit()
+        finally:
+            db.close()
+
+    def test_derive_sync_run_status_marks_stalled_backfill(self):
+        status, detail = derive_sync_run_status(
+            "running",
+            scope="history-backfill-bulk",
+            finished_at=None,
+            last_heartbeat_at=datetime.now(timezone.utc) - timedelta(minutes=11),
+            failed_units=0,
+        )
+
+        self.assertEqual(status, "stalled")
+        self.assertEqual(detail, "heartbeat_stale")
+
+    def test_serialize_persisted_sync_run_marks_completed_with_failures(self):
+        sync_run = SyncRun(
+            job_id="test-backfill-completed",
+            scope="history-backfill-bulk",
+            status="completed",
+            failed_units=2,
+        )
+
+        payload = serialize_persisted_sync_run(sync_run)
+
+        self.assertEqual(payload["status"], "completed_with_failures")
+
+    def test_serialize_persisted_sync_run_adds_reason_for_stalled_backfill(self):
+        now = datetime(2026, 4, 13, 16, 0, tzinfo=timezone.utc)
+        sync_run = SyncRun(
+            job_id="test-backfill-stalled",
+            scope="history-backfill-bulk",
+            status="running",
+            current_school="bar01",
+            current_snapshot_date="2026-04-10",
+            last_heartbeat_at=now - timedelta(minutes=14),
+            last_progress_at=now - timedelta(minutes=22),
+            error_message="merge history request timed out",
+        )
+
+        with patch("app.routes.datetime") as mock_datetime:
+            mock_datetime.now.return_value = now
+            mock_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            mock_datetime.fromisoformat = datetime.fromisoformat
+            payload = serialize_persisted_sync_run(sync_run)
+
+        self.assertEqual(payload["status"], "stalled")
+        self.assertEqual(payload["statusDetail"], "heartbeat_stale")
+        self.assertIn("No heartbeat for 14m", payload["failureReason"])
+        self.assertIn("while processing bar01 on 2026-04-10", payload["failureReason"])
+        self.assertIn("last progress 22m ago", payload["failureReason"])
+        self.assertIn("last error: merge history request timed out", payload["failureReason"])
+
+    def test_serialize_persisted_sync_run_preserves_existing_failure_reason_for_stalled_backfill(self):
+        now = datetime(2026, 4, 13, 16, 0, tzinfo=timezone.utc)
+        sync_run = SyncRun(
+            job_id="test-backfill-stalled-explicit",
+            scope="history-backfill-bulk",
+            status="running",
+            last_heartbeat_at=now - timedelta(minutes=14),
+            failure_reason="Waiting on upstream dependency",
+        )
+
+        with patch("app.routes.datetime") as mock_datetime:
+            mock_datetime.now.return_value = now
+            mock_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            mock_datetime.fromisoformat = datetime.fromisoformat
+            payload = serialize_persisted_sync_run(sync_run)
+
+        self.assertEqual(payload["status"], "stalled")
+        self.assertEqual(payload["failureReason"], "Waiting on upstream dependency")
+
+    def test_prepare_backfill_auto_resume_adds_recovery_note(self):
+        now = datetime(2026, 4, 13, 16, 0, tzinfo=timezone.utc)
+        job = {
+            "jobId": "test-backfill-auto-resume",
+            "errors": ["older issue"],
+            "failureReason": None,
+            "statusDetail": "heartbeat_stale",
+            "finishedAt": "2026-04-13T15:00:00+00:00",
+            "error": "stale",
+        }
+
+        note = prepare_backfill_auto_resume(
+            job,
+            "No heartbeat for 14m; while processing bar01 on 2026-04-10",
+            now=now,
+        )
+
+        self.assertIn("Auto-resume triggered", note)
+        self.assertEqual(job["errors"][-1], note)
+        self.assertEqual(
+            job["failureReason"],
+            "Recovering from stall: No heartbeat for 14m; while processing bar01 on 2026-04-10",
+        )
+        self.assertEqual(job["statusDetail"], "auto_resuming")
+        self.assertIsNone(job["finishedAt"])
+        self.assertIsNone(job["error"])
+
+    def test_retry_failures_endpoint_requeues_only_failed_units(self):
+        init_db()
+        db = get_db()
+        try:
+            sync_run = SyncRun(
+                job_id="test-backfill-retry",
+                scope="history-backfill-bulk",
+                status="completed",
+                start_date="2026-01-01",
+                end_date="2026-01-02",
+                date_count=2,
+                total_schools=2,
+                schools_processed=2,
+                completed_units=1,
+                failed_units=1,
+                current_school="bar01",
+                current_snapshot_date="2026-01-02",
+                status_detail="completed_with_failures",
+                failure_reason="1 work unit failed",
+                errors_json='["boom"]',
+                failed_units_sample_json='[{"school":"bar01","snapshotDate":"2026-01-02","error":"boom"}]',
+                checkpoint_state_json='{"currentSchool":"bar01","currentSnapshotDate":"2026-01-02","failedUnits":1}',
+                attempted_at=datetime.now(timezone.utc),
+            )
+            db.add(sync_run)
+            db.add(
+                BackfillWorkUnit(
+                    job_id="test-backfill-retry",
+                    school="bar01",
+                    display_name="Baruch College",
+                    snapshot_date="2026-01-01",
+                    status="completed",
+                )
+            )
+            db.add(
+                BackfillWorkUnit(
+                    job_id="test-backfill-retry",
+                    school="bar01",
+                    display_name="Baruch College",
+                    snapshot_date="2026-01-02",
+                    status="failed",
+                    last_error="boom",
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        async def fake_start_scheduler():
+            return None
+
+        async def fake_stop_scheduler():
+            return None
+
+        async def fake_run_history_backfill_job(*args, **kwargs):
+            return None
+
+        with patch.object(routes, "_active_sync_job_id", None), patch.object(
+            routes,
+            "_last_job_trigger_monotonic",
+            0.0,
+        ), patch.dict(
+            os.environ,
+            {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY},
+            clear=False,
+        ), patch(
+            "app.routes.run_history_backfill_job",
+            new=fake_run_history_backfill_job,
+        ), patch(
+            "app.main.start_scheduled_sync_service",
+            new=fake_start_scheduler,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=fake_stop_scheduler,
+        ):
+            with TestClient(app) as client:
+                response = client.post(
+                    "/api/client-health/history/backfill/test-backfill-retry/retry-failures",
+                    headers=AUTH_HEADERS,
+                )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["jobId"], "test-backfill-retry")
+        self.assertEqual(payload["completedUnits"], 1)
+        self.assertEqual(payload["failedUnits"], 1)
+        self.assertEqual(payload["totalSchools"], 2)
+        self.assertEqual(payload["schoolsProcessed"], 2)
+        self.assertEqual(payload["statusDetail"], "completed_with_failures")
+        self.assertEqual(payload["failureReason"], "1 work unit failed")
+        self.assertEqual(payload["errors"], ["boom"])
+        self.assertEqual(
+            payload["checkpointState"],
+            {"currentSchool": "bar01", "currentSnapshotDate": "2026-01-02", "failedUnits": 1},
+        )
+
+    def test_build_backfill_job_from_sync_run_preserves_resume_context(self):
+        sync_run = SyncRun(
+            job_id="test-backfill-resume",
+            school="bar01",
+            scope="history-backfill-single",
+            status="failed",
+            snapshot_date="2026-01-02",
+            schools_processed=3,
+            total_schools=4,
+            start_date="2026-01-01",
+            end_date="2026-01-04",
+            date_count=4,
+            started_at=datetime(2026, 1, 5, 10, 0, tzinfo=timezone.utc),
+            finished_at=datetime(2026, 1, 5, 10, 30, tzinfo=timezone.utc),
+            last_heartbeat_at=datetime(2026, 1, 5, 10, 15, tzinfo=timezone.utc),
+            last_progress_at=datetime(2026, 1, 5, 10, 20, tzinfo=timezone.utc),
+            current_school="bar01",
+            current_snapshot_date="2026-01-03",
+            completed_units=2,
+            failed_units=1,
+            skipped_units=0,
+            status_detail="failed",
+            failure_reason="merge history request failed",
+            failed_units_sample_json='[{"school":"bar01","snapshotDate":"2026-01-03","error":"boom"}]',
+            checkpoint_state_json='{"currentSchool":"bar01","currentSnapshotDate":"2026-01-03","failedUnits":1}',
+            errors_json='["boom"]',
+            timing_json='{"totalSec":12.3}',
+            error_message="boom",
+        )
+
+        payload = routes.build_backfill_job_from_sync_run(sync_run)
+
+        self.assertEqual(payload["jobId"], "test-backfill-resume")
+        self.assertEqual(payload["completedUnits"], 2)
+        self.assertEqual(payload["failedUnits"], 1)
+        self.assertEqual(payload["totalSchools"], 4)
+        self.assertEqual(payload["schoolsProcessed"], 3)
+        self.assertEqual(payload["statusDetail"], "failed")
+        self.assertEqual(payload["failureReason"], "merge history request failed")
+        self.assertEqual(payload["errors"], ["boom"])
+        self.assertEqual(payload["checkpointState"]["currentSnapshotDate"], "2026-01-03")
+
+
+class HistoricalBackfillFetchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_fetch_school_health_for_date_uses_new_york_today_boundary(self):
+        async def fake_fetch_school_health(**kwargs):
+            return {"snapshotDate": kwargs["snapshot_date"], "school": kwargs["school"]}
+
+        with patch(
+            "app.routes.get_new_york_snapshot_date",
+            return_value="2026-04-11",
+        ), patch("app.routes.fetch_school_health", side_effect=fake_fetch_school_health) as fetch_mock:
+            result = await fetch_school_health_for_date(
+                school="bar01",
+                display_name="Baruch College",
+                products=[],
+                snapshot_date="2026-04-11",
+            )
+
+        self.assertEqual(result["snapshotDate"], "2026-04-11")
+        fetch_mock.assert_awaited_once()
+
+    async def test_maybe_auto_resume_stalled_backfill_requeues_job(self):
+        now = datetime.now(timezone.utc)
+        sync_run = SyncRun(
+            job_id="test-backfill-auto-resume-db",
+            scope="history-backfill-bulk",
+            status="running",
+            school="bar01",
+            start_date="2026-04-01",
+            end_date="2026-04-10",
+            date_count=10,
+            attempted_at=now - timedelta(hours=1),
+            last_heartbeat_at=now - timedelta(minutes=14),
+            last_progress_at=now - timedelta(minutes=22),
+            current_school="bar01",
+            current_snapshot_date="2026-04-10",
+            errors_json='["merge history request timed out"]',
+        )
+
+        init_db()
+        db = get_db()
+        try:
+            db.add(sync_run)
+            db.commit()
+        finally:
+            db.close()
+
+        started_jobs: list[tuple[str, str]] = []
+
+        def fake_start_backfill_job_task(job, *, mode="initial"):
+            started_jobs.append((job["jobId"], mode))
+            routes._sync_jobs[job["jobId"]] = job
+            routes._active_sync_job_id = job["jobId"]
+
+        with patch.object(routes, "_active_sync_job_id", None), patch.object(
+            routes,
+            "_sync_jobs",
+            {},
+        ), patch("app.routes.start_backfill_job_task", side_effect=fake_start_backfill_job_task):
+            result = await maybe_auto_resume_stalled_backfill(now=now)
+
+        self.assertEqual(result["jobId"], "test-backfill-auto-resume-db")
+        self.assertEqual(started_jobs, [("test-backfill-auto-resume-db", "resume")])
+
+        db = get_db()
+        try:
+            persisted = db.query(SyncRun).filter(SyncRun.job_id == "test-backfill-auto-resume-db").first()
+            self.assertIsNotNone(persisted)
+            errors = persisted.to_dict()["errors"]
+            self.assertTrue(any("Auto-resume triggered" in entry for entry in errors))
+            self.assertIn("Recovering from stall:", persisted.failure_reason)
+        finally:
+            db.query(SyncRun).filter(SyncRun.job_id == "test-backfill-auto-resume-db").delete(synchronize_session=False)
+            db.commit()
+            db.close()
+
+
+class HistoricalBackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
+    def tearDown(self):
+        init_db()
+        db = get_db()
+        try:
+            db.query(BackfillWorkUnit).filter(BackfillWorkUnit.job_id.like("test-backfill-%")).delete(synchronize_session=False)
+            db.query(SyncRun).filter(SyncRun.job_id.like("test-backfill-%")).delete(synchronize_session=False)
+            db.query(SchoolSnapshot).filter(SchoolSnapshot.school.like("test-backfill-%")).delete(synchronize_session=False)
+            db.commit()
+        finally:
+            db.close()
+
+    async def test_backfill_does_not_overwrite_existing_snapshot_when_merge_history_fails(self):
+        init_db()
+        routes._sync_jobs["test-backfill-merge-fail"] = routes.create_backfill_job_payload(
+            job_id="test-backfill-merge-fail",
+            school="test-backfill-school",
+            start_date="2026-01-01",
+            end_date="2026-01-01",
+            date_count=1,
+        )
+        db = get_db()
+        try:
+            db.add(
+                SchoolSnapshot.from_dict(
+                    {
+                        "snapshotDate": "2026-01-01",
+                        "school": "test-backfill-school",
+                        "displayName": "Existing Snapshot",
+                        "sisPlatform": "Banner",
+                        "products": [],
+                        "merges": {
+                            "nightly": {"total": 1, "succeeded": 1, "failed": 0, "finishedWithIssues": 0, "noData": 0, "mergeTimeMs": 10},
+                            "realtime": {"total": 1, "succeeded": 1, "failed": 0, "finishedWithIssues": 0, "noData": 0},
+                            "manual": {"total": 0, "succeeded": 0, "failed": 0, "finishedWithIssues": 0, "noData": 0},
+                        },
+                        "recentFailedMerges": [],
+                        "mergeErrorsCount": 0,
+                        "activeUsers24h": 9,
+                    }
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        async def fake_list_schools():
+            return {
+                "schools": [
+                    {
+                        "school": "test-backfill-school",
+                        "displayName": "Test Backfill School",
+                        "products": [],
+                    }
+                ]
+            }
+
+        async def fake_api_get(path, params=None):
+            if "merge-history" in path:
+                raise RuntimeError("upstream merge history outage")
+            if "userActivity" in path:
+                return {"data": [{"email": "a@example.com"}]}
+            raise AssertionError(f"Unexpected path {path}")
+
+        with patch("app.routes.list_schools", side_effect=fake_list_schools), patch(
+            "app.routes.api_get",
+            side_effect=fake_api_get,
+        ), patch("app.routes.fetch_school_sis_platform", return_value="Banner"):
+            await routes.run_history_backfill_job(
+                "test-backfill-merge-fail",
+                school="test-backfill-school",
+                start_date="2026-01-01",
+                end_date="2026-01-01",
+            )
+
+        db = get_db()
+        try:
+            snapshot = (
+                db.query(SchoolSnapshot)
+                .filter(
+                    SchoolSnapshot.school == "test-backfill-school",
+                    SchoolSnapshot.snapshot_date == "2026-01-01",
+                )
+                .one()
+            )
+            sync_run = db.query(SyncRun).filter(SyncRun.job_id == "test-backfill-merge-fail").one()
+            unit = db.query(BackfillWorkUnit).filter(BackfillWorkUnit.job_id == "test-backfill-merge-fail").one()
+        finally:
+            db.close()
+
+        self.assertEqual(snapshot.display_name, "Existing Snapshot")
+        self.assertEqual(snapshot.active_users_24h, 9)
+        self.assertEqual(unit.status, "failed")
+        self.assertEqual(sync_run.failed_units, 1)
+        self.assertEqual(sync_run.completed_units, 0)
+
+    async def test_backfill_does_not_overwrite_existing_snapshot_when_user_activity_fails(self):
+        init_db()
+        routes._sync_jobs["test-backfill-activity-fail"] = routes.create_backfill_job_payload(
+            job_id="test-backfill-activity-fail",
+            school="test-backfill-school",
+            start_date="2026-01-02",
+            end_date="2026-01-02",
+            date_count=1,
+        )
+        db = get_db()
+        try:
+            db.add(
+                SchoolSnapshot.from_dict(
+                    {
+                        "snapshotDate": "2026-01-02",
+                        "school": "test-backfill-school",
+                        "displayName": "Existing Snapshot",
+                        "sisPlatform": "Banner",
+                        "products": [],
+                        "merges": {
+                            "nightly": {"total": 2, "succeeded": 2, "failed": 0, "finishedWithIssues": 0, "noData": 0, "mergeTimeMs": 20},
+                            "realtime": {"total": 0, "succeeded": 0, "failed": 0, "finishedWithIssues": 0, "noData": 0},
+                            "manual": {"total": 0, "succeeded": 0, "failed": 0, "finishedWithIssues": 0, "noData": 0},
+                        },
+                        "recentFailedMerges": [],
+                        "mergeErrorsCount": 0,
+                        "activeUsers24h": 13,
+                    }
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        async def fake_list_schools():
+            return {
+                "schools": [
+                    {
+                        "school": "test-backfill-school",
+                        "displayName": "Test Backfill School",
+                        "products": [],
+                    }
+                ]
+            }
+
+        async def fake_api_get(path, params=None):
+            if "merge-history" in path:
+                return {"data": {"content": [{"id": "m1", "scheduleType": "nightly", "status": "success"}]}}
+            if "userActivity" in path:
+                raise RuntimeError("user activity timeout")
+            raise AssertionError(f"Unexpected path {path}")
+
+        with patch("app.routes.list_schools", side_effect=fake_list_schools), patch(
+            "app.routes.api_get",
+            side_effect=fake_api_get,
+        ), patch("app.routes.fetch_school_sis_platform", return_value="Banner"):
+            await routes.run_history_backfill_job(
+                "test-backfill-activity-fail",
+                school="test-backfill-school",
+                start_date="2026-01-02",
+                end_date="2026-01-02",
+            )
+
+        db = get_db()
+        try:
+            snapshot = (
+                db.query(SchoolSnapshot)
+                .filter(
+                    SchoolSnapshot.school == "test-backfill-school",
+                    SchoolSnapshot.snapshot_date == "2026-01-02",
+                )
+                .one()
+            )
+            sync_run = db.query(SyncRun).filter(SyncRun.job_id == "test-backfill-activity-fail").one()
+            unit = db.query(BackfillWorkUnit).filter(BackfillWorkUnit.job_id == "test-backfill-activity-fail").one()
+        finally:
+            db.close()
+
+        self.assertEqual(snapshot.display_name, "Existing Snapshot")
+        self.assertEqual(snapshot.active_users_24h, 13)
+        self.assertEqual(unit.status, "failed")
+        self.assertEqual(sync_run.failed_units, 1)
 
 
 class BackfillEndpointTests(unittest.TestCase):

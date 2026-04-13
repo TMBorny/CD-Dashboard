@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
-import { mount } from '@vue/test-utils';
 import { ref } from 'vue';
+import { describe, expect, it, vi } from 'vitest';
+import { mount, RouterLinkStub } from '@vue/test-utils';
 
 vi.mock('vue-router', () => ({
   useRoute: () => ({ params: { school: 'bar01' } }),
@@ -8,7 +8,8 @@ vi.mock('vue-router', () => ({
 
 vi.mock('@tanstack/vue-query', () => ({
   useQuery: vi.fn(({ queryKey }) => {
-    const key = queryKey[0];
+    const resolvedQueryKey = Array.isArray(queryKey) ? queryKey : queryKey?.value ?? [];
+    const key = resolvedQueryKey[0];
 
     if (key === 'clientHealthHistory') {
       return {
@@ -76,6 +77,7 @@ describe('ClientHealthDetail', () => {
     const wrapper = mount(ClientHealthDetail, {
       global: {
         stubs: {
+          RouterLink: RouterLinkStub,
           Card: true,
           VueApexCharts: true,
         },

@@ -34,7 +34,7 @@ const realtimeSplits = computed(() => calcSplits(props.schools, 'realtime'));
 // Computed properties for the template
 const totalSchools = computed(() => props.schools.length);
 
-const totalMergeErrors = computed(() => props.schools.reduce((sum, s) => sum + s.mergeErrorsCount, 0));
+const totalMergeErrors = computed(() => props.schools.reduce((sum, s) => sum + (s.mergeErrorsCount ?? 0), 0));
 
 const totalActiveUsers = computed(() => props.schools.reduce((sum, s) => sum + s.activeUsers24h, 0));
 </script>

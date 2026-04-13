@@ -67,6 +67,16 @@ export async function triggerHistoryBackfill(params: { startDate: string; endDat
   return res.data;
 }
 
+export async function resumeHistoryBackfill(jobId: string) {
+  const res = await backend.post(`/client-health/history/backfill/${jobId}/resume`);
+  return res.data;
+}
+
+export async function retryHistoryBackfillFailures(jobId: string) {
+  const res = await backend.post(`/client-health/history/backfill/${jobId}/retry-failures`);
+  return res.data;
+}
+
 export async function getClientHealthSyncMetadata(params?: { school?: string }) {
   const res = await backend.get('/client-health/sync-metadata', {
     params: params?.school ? { school: params.school } : {},
