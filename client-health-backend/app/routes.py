@@ -422,6 +422,7 @@ async def get_error_analysis(
         for group in groups:
             sample_errors = json.loads(group.sample_errors_json) if group.sample_errors_json else []
             term_codes = json.loads(group.term_codes_json) if group.term_codes_json else []
+            merge_report_reference = extract_merge_report_reference(sample_errors)
             resolution_hint = build_resolution_hint(
                 group.normalized_message,
                 group.entity_type,
@@ -452,6 +453,11 @@ async def get_error_analysis(
                     "signatureKey": group.signature_key,
                     "entityType": group.entity_type,
                     "errorCode": group.error_code,
+                    "signatureLabel": build_error_signature_label(
+                        group.entity_type,
+                        group.error_code,
+                        group.normalized_message,
+                    ),
                     "normalizedMessage": group.normalized_message,
                     "sampleMessage": group.sample_message,
                     "totalCount": 0,
@@ -462,9 +468,11 @@ async def get_error_analysis(
                     "recurrenceDays": set(),
                     "countsBySchool": {},
                     "countsBySis": {},
+                    "latestMergeReportBySchool": {},
                     "sampleErrors": sample_errors,
                     "termCodes": set(term_codes),
                     "resolutionHint": resolution_hint,
+                    "latestMergeReport": None,
                 },
             )
             signature_row["totalCount"] += group.count
@@ -476,6 +484,23 @@ async def get_error_analysis(
             signature_row["countsBySchool"][group.school] = signature_row["countsBySchool"].get(group.school, 0) + group.count
             signature_row["countsBySis"][sis_label] = signature_row["countsBySis"].get(sis_label, 0) + group.count
             signature_row["termCodes"].update(term_codes)
+            if merge_report_reference and (
+                signature_row["latestMergeReport"] is None
+                or group.snapshot_date >= signature_row["latestMergeReport"]["snapshotDate"]
+            ):
+                signature_row["latestMergeReport"] = {
+                    **merge_report_reference,
+                    "school": group.school,
+                    "snapshotDate": group.snapshot_date,
+                }
+            if merge_report_reference:
+                existing_school_report = signature_row["latestMergeReportBySchool"].get(group.school)
+                if existing_school_report is None or group.snapshot_date >= existing_school_report["snapshotDate"]:
+                    signature_row["latestMergeReportBySchool"][group.school] = {
+                        **merge_report_reference,
+                        "school": group.school,
+                        "snapshotDate": group.snapshot_date,
+                    }
 
             school_row = school_breakdowns.setdefault(
                 group.school,
@@ -489,6 +514,7 @@ async def get_error_analysis(
                     "resolutionBuckets": {},
                     "lastSeen": group.snapshot_date,
                     "recurrenceDays": set(),
+                    "latestMergeReport": None,
                 },
             )
             school_row["totalErrors"] += group.count
@@ -497,6 +523,15 @@ async def get_error_analysis(
             school_row["resolutionBuckets"][resolution_hint["bucket"]] = school_row["resolutionBuckets"].get(resolution_hint["bucket"], 0) + group.count
             school_row["lastSeen"] = max(school_row["lastSeen"], group.snapshot_date)
             school_row["recurrenceDays"].add(group.snapshot_date)
+            if merge_report_reference and (
+                school_row["latestMergeReport"] is None
+                or group.snapshot_date >= school_row["latestMergeReport"]["snapshotDate"]
+            ):
+                school_row["latestMergeReport"] = {
+                    **merge_report_reference,
+                    "school": group.school,
+                    "snapshotDate": group.snapshot_date,
+                }
 
             sis_row = sis_breakdowns.setdefault(
                 sis_label,
@@ -533,11 +568,17 @@ async def get_error_analysis(
         for signature in signatures.values():
             dominant_school = get_dominant_entry(signature["countsBySchool"])
             dominant_sis = get_dominant_entry(signature["countsBySis"])
+            dominant_school_merge_report = (
+                signature["latestMergeReportBySchool"].get(dominant_school)
+                if dominant_school
+                else None
+            )
             serialized_signatures.append(
                 {
                     "signatureKey": signature["signatureKey"],
                     "entityType": signature["entityType"],
                     "errorCode": signature["errorCode"],
+                    "signatureLabel": signature["signatureLabel"],
                     "normalizedMessage": signature["normalizedMessage"],
                     "sampleMessage": signature["sampleMessage"],
                     "totalCount": signature["totalCount"],
@@ -551,6 +592,8 @@ async def get_error_analysis(
                     "sampleErrors": signature["sampleErrors"],
                     "termCodes": sorted(signature["termCodes"]),
                     "resolutionHint": signature["resolutionHint"],
+                    "latestMergeReport": signature["latestMergeReport"],
+                    "dominantSchoolMergeReport": dominant_school_merge_report,
                 }
             )
         serialized_signatures.sort(
@@ -569,11 +612,12 @@ async def get_error_analysis(
                     "sisPlatform": school_row["sisPlatform"],
                     "totalErrors": school_row["totalErrors"],
                     "distinctSignatures": len(school_row["distinctSignatures"]),
-                    "dominantSignature": dominant_signature["sampleMessage"] if dominant_signature else None,
+                    "dominantSignature": dominant_signature["signatureLabel"] if dominant_signature else None,
                     "lastSeen": school_row["lastSeen"],
                     "recurrenceDays": len(school_row["recurrenceDays"]),
                     "likelyNextStep": dominant_signature["resolutionHint"]["action"] if dominant_signature else None,
                     "topResolutionTheme": dominant_bucket,
+                    "latestMergeReport": school_row["latestMergeReport"],
                 }
             )
         serialized_school_breakdowns.sort(key=lambda item: (-item["totalErrors"], item["label"]))
@@ -590,7 +634,7 @@ async def get_error_analysis(
                     "affectedSchools": len(sis_row["schoolCountSet"]),
                     "totalErrors": sis_row["totalErrors"],
                     "distinctSignatures": len(sis_row["distinctSignatures"]),
-                    "dominantSignature": dominant_signature["sampleMessage"] if dominant_signature else None,
+                    "dominantSignature": dominant_signature["signatureLabel"] if dominant_signature else None,
                     "lastSeen": sis_row["lastSeen"],
                     "commonResolutionTheme": dominant_bucket,
                 }
@@ -1893,6 +1937,20 @@ def collect_term_codes(payload) -> list[str]:
     return sorted(set(values))
 
 
+def iterate_original_error_payloads(payload: dict):
+    """Yield nested original-error payloads from a merge-error row."""
+    nested_errors = payload.get("errors")
+    if not isinstance(nested_errors, list):
+        return
+
+    for entry in nested_errors:
+        if not isinstance(entry, dict):
+            continue
+        original_error = entry.get("originalError")
+        if isinstance(original_error, dict):
+            yield original_error
+
+
 def extract_merge_error_message(payload: dict) -> str:
     """Extract the most human-readable message from a merge-error row."""
     message = first_non_empty_string(
@@ -1906,6 +1964,50 @@ def extract_merge_error_message(payload: dict) -> str:
     )
     if message:
         return message
+
+    for original_error in iterate_original_error_payloads(payload):
+        body = original_error.get("body")
+
+        if isinstance(body, dict):
+            body_message = first_non_empty_string(
+                body.get("message"),
+                body.get("errorMessage"),
+                body.get("detail"),
+                body.get("reason"),
+                body.get("description"),
+                body.get("title"),
+            )
+            if body_message:
+                return body_message
+
+            body_errors = body.get("errors")
+            if isinstance(body_errors, list):
+                for entry in body_errors:
+                    if not isinstance(entry, dict):
+                        continue
+                    nested_body_message = first_non_empty_string(
+                        entry.get("message"),
+                        entry.get("errorMessage"),
+                        entry.get("detail"),
+                        entry.get("reason"),
+                        entry.get("description"),
+                        entry.get("error"),
+                    )
+                    if nested_body_message:
+                        return nested_body_message
+        elif isinstance(body, str) and body.strip():
+            return body.strip()
+
+        original_error_message = first_non_empty_string(
+            original_error.get("message"),
+            original_error.get("errorMessage"),
+            original_error.get("detail"),
+            original_error.get("reason"),
+            original_error.get("description"),
+            original_error.get("error"),
+        )
+        if original_error_message:
+            return original_error_message
 
     nested_errors = payload.get("errors")
     if isinstance(nested_errors, list):
@@ -1961,12 +2063,65 @@ def extract_merge_error_entity_type(payload: dict) -> Optional[str]:
 
 def extract_merge_error_code(payload: dict) -> Optional[str]:
     """Extract a stable machine-readable code when available."""
-    return first_non_empty_string(
+    code = first_non_empty_string(
         payload.get("errorCode"),
         payload.get("code"),
         payload.get("reasonCode"),
         payload.get("statusCode"),
     )
+    if code:
+        return code
+
+    for original_error in iterate_original_error_payloads(payload):
+        body = original_error.get("body")
+        if isinstance(body, dict):
+            code = first_non_empty_string(
+                body.get("code"),
+                body.get("errorCode"),
+                body.get("reasonCode"),
+                body.get("statusCode"),
+            )
+            if code:
+                return code
+
+            body_errors = body.get("errors")
+            if isinstance(body_errors, list):
+                for entry in body_errors:
+                    if not isinstance(entry, dict):
+                        continue
+                    nested_code = first_non_empty_string(
+                        entry.get("code"),
+                        entry.get("errorCode"),
+                        entry.get("reasonCode"),
+                        entry.get("statusCode"),
+                    )
+                    if nested_code:
+                        return nested_code
+
+        code = first_non_empty_string(
+            original_error.get("code"),
+            original_error.get("errorCode"),
+            original_error.get("reasonCode"),
+            original_error.get("statusCode"),
+            original_error.get("postType"),
+        )
+        if code:
+            return code
+
+    return None
+
+
+def build_error_signature_label(
+    entity_type: Optional[str],
+    error_code: Optional[str],
+    normalized_message: str,
+) -> str:
+    """Build a readable signature label for aggregate and breakdown views."""
+    parts = [entity_type or "unknown-entity"]
+    if error_code:
+        parts.append(error_code)
+    parts.append(normalized_message)
+    return " | ".join(parts)
 
 
 def normalize_merge_error_row(payload: dict) -> dict:
@@ -1975,6 +2130,7 @@ def normalize_merge_error_row(payload: dict) -> dict:
     normalized_message = normalize_error_message(sample_message)
     entity_type = extract_merge_error_entity_type(payload)
     error_code = extract_merge_error_code(payload)
+    signature_label = build_error_signature_label(entity_type, error_code, normalized_message)
     signature_basis = "|".join(
         [
             entity_type or "unknown-entity",
@@ -1987,6 +2143,7 @@ def normalize_merge_error_row(payload: dict) -> dict:
         "entityType": entity_type,
         "errorCode": error_code,
         "signatureKey": signature_key,
+        "signatureLabel": signature_label,
         "normalizedMessage": normalized_message,
         "sampleMessage": sample_message,
         "termCodes": collect_term_codes(payload),
@@ -2018,6 +2175,7 @@ def build_error_analysis_groups(
                 "entityType": normalized_row["entityType"],
                 "errorCode": normalized_row["errorCode"],
                 "signatureKey": signature_key,
+                "signatureLabel": normalized_row["signatureLabel"],
                 "normalizedMessage": normalized_row["normalizedMessage"],
                 "sampleMessage": normalized_row["sampleMessage"],
                 "count": 0,
@@ -2073,7 +2231,7 @@ def build_resolution_hint(normalized_message: str, entity_type: Optional[str], e
     """Return a likely next-step recommendation for a normalized error signature."""
     haystack = " ".join(part for part in [normalized_message, entity_type or "", error_code or ""] if part).lower()
 
-    if any(token in haystack for token in ("missing", "not found", "unknown", "reference", "dependency", "prerequisite", "does not exist")):
+    if any(token in haystack for token in ("missing", "not found", "not.found", "unknown", "reference", "dependency", "prerequisite", "does not exist")):
         return {
             "bucket": "missing_reference",
             "title": "Missing dependency or reference",
@@ -2116,6 +2274,41 @@ def build_resolution_hint(normalized_message: str, entity_type: Optional[str], e
         "rationale": "The signature is not specific enough for a stronger automatic recommendation.",
         "confidence": 0.52,
     }
+
+
+def extract_merge_report_reference(sample_errors: list[dict]) -> Optional[dict]:
+    """Extract the best available merge-report reference from stored sample errors."""
+    for sample_error in sample_errors:
+        if not isinstance(sample_error, dict):
+            continue
+
+        merge_report_id = first_non_empty_string(
+            sample_error.get("lastSyncMergeReportId"),
+            sample_error.get("mergeReportId"),
+            sample_error.get("mergeReport", {}).get("id")
+            if isinstance(sample_error.get("mergeReport"), dict)
+            else None,
+        )
+        if not merge_report_id:
+            continue
+
+        merge_report = sample_error.get("mergeReport")
+        schedule_type = (
+            merge_report.get("scheduleType")
+            if isinstance(merge_report, dict)
+            else None
+        )
+        entity_display_name = first_non_empty_string(
+            sample_error.get("entityDisplayName"),
+            sample_error.get("entityId"),
+        )
+        return {
+            "mergeReportId": merge_report_id,
+            "scheduleType": schedule_type,
+            "entityDisplayName": entity_display_name,
+        }
+
+    return None
 
 
 def extract_merge_history_entries(payload) -> list[dict]:

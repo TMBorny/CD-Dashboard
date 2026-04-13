@@ -361,10 +361,72 @@ class MergeErrorCountTests(unittest.TestCase):
         self.assertEqual(len(groups), 1)
         self.assertEqual(groups[0]["count"], 2)
         self.assertEqual(groups[0]["termCodes"], ["202505", "202602"])
+        self.assertEqual(
+            groups[0]["signatureLabel"],
+            "sections | missing_course | course <num> missing dependency <num>",
+        )
 
     def test_build_resolution_hint_detects_missing_reference(self):
         hint = build_resolution_hint("section missing prerequisite reference", "sections", None)
         self.assertEqual(hint["bucket"], "missing_reference")
+
+    def test_extract_merge_error_message_from_nested_original_error_body(self):
+        payload = {
+            "entityType": "sections",
+            "errors": [
+                {
+                    "originalError": {
+                        "error": "SIS operation was not successful",
+                        "body": {
+                            "errors": [
+                                {
+                                    "code": "Record.Not.Found",
+                                    "description": "Unknown error code.",
+                                    "message": "Invalid GUID 'DLS SEM Dist Lrn Sem' supplied for site.",
+                                }
+                            ]
+                        },
+                        "postType": "UpdateSection",
+                    }
+                }
+            ],
+        }
+
+        groups = build_error_analysis_groups(
+            snapshot_date="2026-04-13",
+            school="bar01",
+            display_name="Baruch College",
+            sis_platform="Banner",
+            merge_error_rows=[payload],
+        )
+
+        self.assertEqual(groups[0]["sampleMessage"], "Invalid GUID 'DLS SEM Dist Lrn Sem' supplied for site.")
+        self.assertEqual(groups[0]["errorCode"], "Record.Not.Found")
+
+    def test_extract_merge_error_message_from_string_body(self):
+        payload = {
+            "entityType": "sections",
+            "errors": [
+                {
+                    "originalError": {
+                        "error": "SIS operation was not successful",
+                        "body": "ORA-20001: ORA-20100: ::Room is not defined as a classroom; cannot schedule section in it::",
+                        "postType": "SetMeetingTimes",
+                    }
+                }
+            ],
+        }
+
+        groups = build_error_analysis_groups(
+            snapshot_date="2026-04-13",
+            school="bar01",
+            display_name="Baruch College",
+            sis_platform="Banner",
+            merge_error_rows=[payload],
+        )
+
+        self.assertIn("room is not defined as a classroom", groups[0]["normalizedMessage"])
+        self.assertEqual(groups[0]["errorCode"], "SetMeetingTimes")
 
     def test_extract_merge_history_entries_from_nested_content(self):
         payload = {"data": {"content": [{"id": "a"}, {"id": "b"}]}}
@@ -1795,7 +1857,7 @@ class ErrorAnalysisEndpointTests(unittest.TestCase):
                             "normalizedMessage": "course <num> missing dependency <num>",
                             "sampleMessage": "Course 202505 missing dependency 123456",
                             "count": 2,
-                            "sampleErrors": [{"message": "Course 202505 missing dependency 123456"}],
+                            "sampleErrors": [{"message": "Course 202505 missing dependency 123456", "lastSyncMergeReportId": "report-a1"}],
                             "termCodes": ["202505"],
                         }
                     ),
@@ -1811,7 +1873,7 @@ class ErrorAnalysisEndpointTests(unittest.TestCase):
                             "normalizedMessage": "course <num> missing dependency <num>",
                             "sampleMessage": "Course 202602 missing dependency 987654",
                             "count": 1,
-                            "sampleErrors": [{"message": "Course 202602 missing dependency 987654"}],
+                            "sampleErrors": [{"message": "Course 202602 missing dependency 987654", "lastSyncMergeReportId": "report-a2", "mergeReport": {"scheduleType": "nightly"}}],
                             "termCodes": ["202602"],
                         }
                     ),
@@ -1827,8 +1889,24 @@ class ErrorAnalysisEndpointTests(unittest.TestCase):
                             "normalizedMessage": "duplicate course <num>",
                             "sampleMessage": "Duplicate course 12345",
                             "count": 4,
-                            "sampleErrors": [{"message": "Duplicate course 12345"}],
+                            "sampleErrors": [{"message": "Duplicate course 12345", "lastSyncMergeReportId": "report-b1", "mergeReport": {"scheduleType": "realtime"}}],
                             "termCodes": ["202505"],
+                        }
+                    ),
+                    ErrorAnalysisGroup.from_dict(
+                        {
+                            "snapshotDate": "2026-04-14",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": "Banner",
+                            "entityType": "courses",
+                            "errorCode": "duplicate_course",
+                            "signatureKey": "sig-b",
+                            "normalizedMessage": "duplicate course <num>",
+                            "sampleMessage": "Duplicate course 99999",
+                            "count": 1,
+                            "sampleErrors": [{"message": "Duplicate course 99999", "lastSyncMergeReportId": "report-b2", "mergeReport": {"scheduleType": "nightly"}}],
+                            "termCodes": ["202506"],
                         }
                     ),
                 ]
@@ -1850,12 +1928,16 @@ class ErrorAnalysisEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertTrue(payload["metadata"]["hasCapturedData"])
-        self.assertEqual(payload["summary"]["totalErrorInstances"], 7)
+        self.assertEqual(payload["summary"]["totalErrorInstances"], 8)
         self.assertEqual(payload["summary"]["distinctSignatures"], 2)
         self.assertEqual(payload["trends"][0]["snapshotDate"], "2026-04-12")
         self.assertEqual(payload["signatures"][0]["signatureKey"], "sig-b")
-        self.assertEqual(payload["schoolBreakdowns"][0]["key"], "foo01")
-        self.assertEqual(payload["sisBreakdowns"][0]["key"], "PeopleSoftDirect")
+        self.assertEqual(payload["signatures"][0]["latestMergeReport"]["mergeReportId"], "report-b2")
+        self.assertEqual(payload["signatures"][0]["dominantSchoolMergeReport"]["mergeReportId"], "report-b1")
+        school_breakdowns = {row["key"]: row for row in payload["schoolBreakdowns"]}
+        self.assertEqual(school_breakdowns["foo01"]["latestMergeReport"]["mergeReportId"], "report-b1")
+        sis_breakdowns = {row["key"]: row for row in payload["sisBreakdowns"]}
+        self.assertEqual(sis_breakdowns["PeopleSoftDirect"]["key"], "PeopleSoftDirect")
         self.assertEqual(len(payload["filterOptions"]["schools"]), 2)
 
     def test_error_analysis_filters_by_school_and_sis(self):

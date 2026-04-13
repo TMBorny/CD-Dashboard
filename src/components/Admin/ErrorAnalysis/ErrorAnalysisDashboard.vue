@@ -9,6 +9,7 @@ import type {
   ErrorAnalysisResponse,
   ErrorBreakdownRow,
   ErrorSignatureCluster,
+  MergeReportReference,
   ResolutionHint,
 } from '@/types/errorAnalysis';
 import { formatLocalDateTime, getLocalTimeZoneLabel } from '@/utils/dateTime';
@@ -156,6 +157,8 @@ const windowOptions: Array<{ value: WindowOption; label: string }> = [
 ];
 
 const getIntegrationHubUrl = (school: string) => `${coursedogBaseUrl}/#/int/${school}`;
+const getMergeReportUrl = (reference: MergeReportReference) =>
+  `${coursedogBaseUrl}/#/int/${reference.school}/merge-history/${reference.mergeReportId}`;
 
 const formatTheme = (value?: string | null) => {
   if (!value) return 'Mixed';
@@ -222,47 +225,39 @@ const coerceSchoolSpecificRow = (row: ErrorBreakdownRow) => row.sisPlatform || '
 <template>
   <div class="w-full bg-slate-50 text-slate-900">
     <div class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-      <div class="mb-8 rounded-[28px] border border-slate-200 bg-white/95 p-8 shadow-sm">
-        <div class="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Admin Analytics</p>
-            <h1 class="mt-3 text-4xl font-semibold tracking-tight text-slate-950 sm:text-5xl">Error Analysis</h1>
-            <p class="mt-4 max-w-3xl text-base leading-7 text-slate-600">
-              Aggregate open merge errors into recurring signatures, compare patterns across schools and SIS platforms,
-              and surface likely next steps from captured trends.
-            </p>
-            <p class="mt-3 text-sm text-slate-500">{{ headerStatus }}</p>
-            <p class="mt-1 text-sm text-slate-500">{{ historyStatus }}</p>
-            <p class="mt-2 text-xs text-slate-400">Times shown in {{ localTimeZoneLabel }}.</p>
-          </div>
-
-          <div class="rounded-[24px] border border-slate-200 bg-slate-50 p-4">
-            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">View</p>
-            <div class="mt-3 flex flex-wrap gap-2" data-testid="view-toggle">
-              <button
-                v-for="option in viewOptions"
-                :key="option.value"
-                class="rounded-full px-4 py-2 text-sm font-semibold transition"
-                :class="activeView === option.value ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 hover:bg-slate-100'"
-                @click="activeView = option.value"
-              >
-                {{ option.label }}
-              </button>
-            </div>
+      <div class="mb-6 rounded-[28px] border border-slate-200 bg-white/95 p-8 shadow-sm">
+        <div class="max-w-4xl">
+          <h1 class="text-4xl font-semibold tracking-tight text-slate-950 sm:text-5xl">Error Analysis</h1>
+          <p class="mt-4 text-base leading-7 text-slate-600">
+            Find recurring open merge-error patterns, compare them across schools and SIS platforms,
+            and surface likely next steps from captured trends.
+          </p>
+          <div class="mt-5 flex flex-wrap gap-2 text-sm">
+            <span class="inline-flex rounded-full bg-slate-100 px-3 py-1.5 text-slate-700">{{ headerStatus }}</span>
+            <span class="inline-flex rounded-full bg-slate-100 px-3 py-1.5 text-slate-700">{{ historyStatus }}</span>
+            <span class="inline-flex rounded-full bg-slate-100 px-3 py-1.5 text-slate-500">Times shown in {{ localTimeZoneLabel }}</span>
           </div>
         </div>
-      </div>
 
-      <div class="mb-6 rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-        <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h2 class="text-lg font-semibold text-slate-950">Filters</h2>
-            <p class="mt-1 text-sm text-slate-500">Slice recurring error patterns by capture window, school, or SIS cohort.</p>
-          </div>
+        <div class="mt-8 border-t border-slate-200 pt-6">
+          <div class="grid gap-4 xl:grid-cols-[max-content_max-content_minmax(220px,1fr)_minmax(260px,1.2fr)]">
+            <div>
+              <label class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">View</label>
+              <div class="flex flex-wrap gap-2" data-testid="view-toggle">
+                <button
+                  v-for="option in viewOptions"
+                  :key="option.value"
+                  class="rounded-full px-4 py-2 text-sm font-semibold transition"
+                  :class="activeView === option.value ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
+                  @click="activeView = option.value"
+                >
+                  {{ option.label }}
+                </button>
+              </div>
+            </div>
 
-          <div class="flex flex-wrap items-center gap-3">
-            <div class="flex items-center gap-2">
-              <label class="text-sm font-medium text-slate-700">Window</label>
+            <div>
+              <label class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Window</label>
               <div class="flex rounded-full border border-slate-200 bg-slate-50 p-1">
                 <button
                   v-for="option in windowOptions"
@@ -276,16 +271,16 @@ const coerceSchoolSpecificRow = (row: ErrorBreakdownRow) => row.sisPlatform || '
               </div>
             </div>
 
-            <div class="flex items-center gap-2">
-              <label class="text-sm font-medium text-slate-700">SIS</label>
-              <select v-model="selectedSis" data-testid="sis-filter" class="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-900 shadow-sm focus:border-slate-400 focus:outline-none">
+            <div>
+              <label class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">SIS</label>
+              <select v-model="selectedSis" data-testid="sis-filter" class="w-full rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm focus:border-slate-400 focus:outline-none">
                 <option v-for="option in sisOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
               </select>
             </div>
 
-            <div class="flex items-center gap-2">
-              <label class="text-sm font-medium text-slate-700">School</label>
-              <select v-model="selectedSchool" data-testid="school-filter" class="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-900 shadow-sm focus:border-slate-400 focus:outline-none">
+            <div>
+              <label class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">School</label>
+              <select v-model="selectedSchool" data-testid="school-filter" class="w-full rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm focus:border-slate-400 focus:outline-none">
                 <option v-for="option in schoolOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
               </select>
             </div>
@@ -368,8 +363,10 @@ const coerceSchoolSpecificRow = (row: ErrorBreakdownRow) => row.sisPlatform || '
                           {{ signature.errorCode }}
                         </span>
                       </div>
-                      <p class="mt-3 font-semibold text-slate-950">{{ signature.sampleMessage }}</p>
-                      <p class="mt-2 text-xs leading-5 text-slate-500">{{ signature.normalizedMessage }}</p>
+                      <p class="mt-3 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Signature</p>
+                      <p class="mt-1 font-semibold text-slate-950">{{ signature.signatureLabel }}</p>
+                      <p class="mt-3 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Sample upstream error</p>
+                      <p class="mt-1 text-sm leading-6 text-slate-700">{{ signature.sampleMessage }}</p>
                       <p v-if="signature.termCodes.length" class="mt-2 text-xs text-slate-500">Terms: {{ signature.termCodes.join(', ') }}</p>
                     </td>
                     <td class="border-y border-slate-200 bg-slate-50 px-4 py-4 align-top">
@@ -381,12 +378,27 @@ const coerceSchoolSpecificRow = (row: ErrorBreakdownRow) => row.sisPlatform || '
                     <td class="border-y border-slate-200 bg-slate-50 px-4 py-4 align-top">
                       <p class="font-medium text-slate-900">{{ getDominantDrilldownLabel(signature) }}</p>
                       <p class="mt-1 text-xs text-slate-500">Primary SIS: {{ signature.dominantSisPlatform || 'Mixed' }}</p>
-                      <div v-if="signature.dominantSchool" class="mt-3 flex flex-wrap gap-2">
-                        <router-link :to="schoolRoute(signature.dominantSchool)" class="inline-flex items-center rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700">
+                      <div v-if="signature.dominantSchool || signature.latestMergeReport" class="mt-3 flex flex-wrap gap-2">
+                        <router-link v-if="signature.dominantSchool" :to="schoolRoute(signature.dominantSchool)" class="inline-flex items-center rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700">
                           School detail
                         </router-link>
-                        <a :href="getIntegrationHubUrl(signature.dominantSchool)" target="_blank" rel="noopener noreferrer" class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950">
+                        <a
+                          v-if="signature.dominantSchool"
+                          :href="getIntegrationHubUrl(signature.dominantSchool)"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+                        >
                           Integration Hub
+                        </a>
+                        <a
+                          v-if="signature.dominantSchoolMergeReport"
+                          :href="getMergeReportUrl(signature.dominantSchoolMergeReport)"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+                        >
+                          Merge report ↗
                         </a>
                       </div>
                     </td>
@@ -424,6 +436,15 @@ const coerceSchoolSpecificRow = (row: ErrorBreakdownRow) => row.sisPlatform || '
                         {{ formatSchoolLabel(row.key, row.label) }}
                       </router-link>
                       <p class="mt-1 text-xs text-slate-500">Last seen {{ row.lastSeen }}</p>
+                      <a
+                        v-if="row.latestMergeReport"
+                        :href="getMergeReportUrl(row.latestMergeReport)"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="mt-3 inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+                      >
+                        Latest merge report ↗
+                      </a>
                     </td>
                     <td class="border-y border-slate-200 bg-slate-50 px-4 py-4 align-top">
                       <p class="font-medium text-slate-900">{{ coerceSchoolSpecificRow(row) }}</p>

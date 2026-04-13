@@ -6,6 +6,14 @@ export interface ResolutionHint {
   confidence: number;
 }
 
+export interface MergeReportReference {
+  school: string;
+  mergeReportId: string;
+  scheduleType?: string | null;
+  entityDisplayName?: string | null;
+  snapshotDate: string;
+}
+
 export interface ErrorTrendPoint {
   snapshotDate: string;
   totalErrors: number;
@@ -17,6 +25,7 @@ export interface ErrorSignatureCluster {
   signatureKey: string;
   entityType?: string | null;
   errorCode?: string | null;
+  signatureLabel: string;
   normalizedMessage: string;
   sampleMessage: string;
   totalCount: number;
@@ -30,6 +39,8 @@ export interface ErrorSignatureCluster {
   sampleErrors: Record<string, unknown>[];
   termCodes: string[];
   resolutionHint: ResolutionHint;
+  latestMergeReport?: MergeReportReference | null;
+  dominantSchoolMergeReport?: MergeReportReference | null;
 }
 
 export interface ErrorBreakdownRow {
@@ -45,6 +56,7 @@ export interface ErrorBreakdownRow {
   topResolutionTheme?: string | null;
   affectedSchools?: number;
   commonResolutionTheme?: string | null;
+  latestMergeReport?: MergeReportReference | null;
 }
 
 export interface ErrorAnalysisFilterOption {

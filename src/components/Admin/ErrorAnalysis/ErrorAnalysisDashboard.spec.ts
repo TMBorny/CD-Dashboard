@@ -63,6 +63,7 @@ const buildResponse = (): ErrorAnalysisResponse => ({
       signatureKey: 'sig-b',
       entityType: 'courses',
       errorCode: 'duplicate_course',
+      signatureLabel: 'courses | duplicate_course | duplicate course <num>',
       normalizedMessage: 'duplicate course <num>',
       sampleMessage: 'Duplicate course 12345',
       totalCount: 4,
@@ -75,6 +76,20 @@ const buildResponse = (): ErrorAnalysisResponse => ({
       dominantSisPlatform: 'PeopleSoftDirect',
       sampleErrors: [{ message: 'Duplicate course 12345' }],
       termCodes: ['202505'],
+      latestMergeReport: {
+        school: 'bar01',
+        mergeReportId: 'report-b2',
+        scheduleType: 'nightly',
+        entityDisplayName: 'Duplicate course 99999',
+        snapshotDate: '2026-04-14',
+      },
+      dominantSchoolMergeReport: {
+        school: 'foo01',
+        mergeReportId: 'report-b1',
+        scheduleType: 'realtime',
+        entityDisplayName: 'Duplicate course 12345',
+        snapshotDate: '2026-04-13',
+      },
       resolutionHint: {
         bucket: 'duplicate_conflict',
         title: 'Duplicate or conflicting record',
@@ -87,6 +102,7 @@ const buildResponse = (): ErrorAnalysisResponse => ({
       signatureKey: 'sig-a',
       entityType: 'sections',
       errorCode: 'missing_course',
+      signatureLabel: 'sections | missing_course | course <num> missing dependency <num>',
       normalizedMessage: 'course <num> missing dependency <num>',
       sampleMessage: 'Course 202602 missing dependency 987654',
       totalCount: 3,
@@ -99,6 +115,20 @@ const buildResponse = (): ErrorAnalysisResponse => ({
       dominantSisPlatform: 'Banner',
       sampleErrors: [{ message: 'Course 202602 missing dependency 987654' }],
       termCodes: ['202505', '202602'],
+      latestMergeReport: {
+        school: 'bar01',
+        mergeReportId: 'report-a2',
+        scheduleType: 'nightly',
+        entityDisplayName: 'Course 202602 missing dependency 987654',
+        snapshotDate: '2026-04-13',
+      },
+      dominantSchoolMergeReport: {
+        school: 'bar01',
+        mergeReportId: 'report-a2',
+        scheduleType: 'nightly',
+        entityDisplayName: 'Course 202602 missing dependency 987654',
+        snapshotDate: '2026-04-13',
+      },
       resolutionHint: {
         bucket: 'missing_reference',
         title: 'Missing dependency or reference',
@@ -115,11 +145,18 @@ const buildResponse = (): ErrorAnalysisResponse => ({
       sisPlatform: 'PeopleSoftDirect',
       totalErrors: 4,
       distinctSignatures: 1,
-      dominantSignature: 'Duplicate course 12345',
+      dominantSignature: 'courses | duplicate_course | duplicate course <num>',
       lastSeen: '2026-04-13',
       recurrenceDays: 1,
       likelyNextStep: 'Check for duplicate source records or conflicting identifiers and resolve the collision before rerunning the sync.',
       topResolutionTheme: 'duplicate_conflict',
+      latestMergeReport: {
+        school: 'foo01',
+        mergeReportId: 'report-b1',
+        scheduleType: 'realtime',
+        entityDisplayName: 'Duplicate course 12345',
+        snapshotDate: '2026-04-13',
+      },
     },
     {
       key: 'bar01',
@@ -127,11 +164,18 @@ const buildResponse = (): ErrorAnalysisResponse => ({
       sisPlatform: 'Banner',
       totalErrors: 3,
       distinctSignatures: 1,
-      dominantSignature: 'Course 202602 missing dependency 987654',
+      dominantSignature: 'sections | missing_course | course <num> missing dependency <num>',
       lastSeen: '2026-04-13',
       recurrenceDays: 2,
       likelyNextStep: 'Verify the referenced records exist in the SIS and are synced before retrying dependent entities.',
       topResolutionTheme: 'missing_reference',
+      latestMergeReport: {
+        school: 'bar01',
+        mergeReportId: 'report-a2',
+        scheduleType: 'nightly',
+        entityDisplayName: 'Course 202602 missing dependency 987654',
+        snapshotDate: '2026-04-13',
+      },
     },
   ],
   sisBreakdowns: [
@@ -140,7 +184,7 @@ const buildResponse = (): ErrorAnalysisResponse => ({
       label: 'PeopleSoftDirect',
       totalErrors: 4,
       distinctSignatures: 1,
-      dominantSignature: 'Duplicate course 12345',
+      dominantSignature: 'courses | duplicate_course | duplicate course <num>',
       lastSeen: '2026-04-13',
       affectedSchools: 1,
       commonResolutionTheme: 'duplicate_conflict',
@@ -150,7 +194,7 @@ const buildResponse = (): ErrorAnalysisResponse => ({
       label: 'Banner',
       totalErrors: 3,
       distinctSignatures: 1,
-      dominantSignature: 'Course 202602 missing dependency 987654',
+      dominantSignature: 'sections | missing_course | course <num> missing dependency <num>',
       lastSeen: '2026-04-13',
       affectedSchools: 1,
       commonResolutionTheme: 'missing_reference',
@@ -217,12 +261,15 @@ describe('ErrorAnalysisDashboard', () => {
     expect(wrapper.text()).toContain('Top error signatures');
     expect(wrapper.text()).toContain('Duplicate course 12345');
     expect(wrapper.text()).toContain('Duplicate or conflicting record');
+    expect(wrapper.html()).toContain('/#/int/foo01/merge-history/report-b1');
+    expect(wrapper.html()).not.toContain('/#/int/bar01/merge-history/report-b2');
 
     await wrapper.get('[data-testid="view-toggle"]').findAll('button')[1].trigger('click');
 
     expect(wrapper.text()).toContain('Where recurring errors concentrate');
     expect(wrapper.text()).toContain('Foo State');
     expect(wrapper.text()).toContain('Check for duplicate source records or conflicting identifiers');
+    expect(wrapper.html()).toContain('/#/int/foo01/merge-history/report-b1');
   });
 
   it('narrows school options when the SIS filter changes', async () => {
