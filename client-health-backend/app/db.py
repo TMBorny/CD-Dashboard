@@ -241,6 +241,36 @@ def ensure_schema_updates(engine) -> None:
                 )
             )
 
+    if "error_analysis_groups" not in table_names:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE error_analysis_groups (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        snapshot_date VARCHAR(10) NOT NULL,
+                        school VARCHAR(255) NOT NULL,
+                        display_name VARCHAR(255) NOT NULL,
+                        sis_platform VARCHAR(255),
+                        entity_type VARCHAR(255),
+                        error_code VARCHAR(255),
+                        signature_key VARCHAR(64) NOT NULL,
+                        normalized_message TEXT NOT NULL,
+                        sample_message TEXT NOT NULL,
+                        count INTEGER NOT NULL DEFAULT 0,
+                        sample_errors_json TEXT NOT NULL DEFAULT '[]',
+                        term_codes_json TEXT NOT NULL DEFAULT '[]',
+                        created_at DATETIME NOT NULL,
+                        CONSTRAINT uq_error_analysis_group UNIQUE (snapshot_date, school, signature_key)
+                    )
+                    """
+                )
+            )
+            connection.execute(text("CREATE INDEX ix_error_analysis_groups_snapshot_date ON error_analysis_groups (snapshot_date)"))
+            connection.execute(text("CREATE INDEX ix_error_analysis_groups_school ON error_analysis_groups (school)"))
+            connection.execute(text("CREATE INDEX ix_error_analysis_groups_sis_platform ON error_analysis_groups (sis_platform)"))
+            connection.execute(text("CREATE INDEX ix_error_analysis_groups_signature_key ON error_analysis_groups (signature_key)"))
+
 
 def get_db() -> Session:
     """Get a new database session. Caller is responsible for closing it."""

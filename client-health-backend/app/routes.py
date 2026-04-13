@@ -6,8 +6,10 @@ and stores it in the database.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
+import re
 import time
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
@@ -18,7 +20,15 @@ from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 
 from app.db import api_get, get_db
-from app.models import BackfillWorkUnit, ExcludedSchool, SchedulerSettings, SchoolSnapshot, SyncRun, serialize_datetime
+from app.models import (
+    BackfillWorkUnit,
+    ErrorAnalysisGroup,
+    ExcludedSchool,
+    SchedulerSettings,
+    SchoolSnapshot,
+    SyncRun,
+    serialize_datetime,
+)
 
 router = APIRouter(prefix="/api")
 logger = logging.getLogger(__name__)
@@ -33,6 +43,9 @@ JOB_TRIGGER_COOLDOWN_SECONDS = 15
 BACKFILL_STALL_THRESHOLD_SECONDS = 10 * 60
 BACKFILL_AUTO_RESUME_POLL_SECONDS = 60
 FAILED_UNITS_SAMPLE_LIMIT = 10
+MERGE_ERRORS_PAGE_SIZE = 250
+MERGE_ERRORS_MAX_PAGES = 200
+ERROR_ANALYSIS_SAMPLE_LIMIT = 3
 
 
 class SchoolExclusionPayload(BaseModel):
@@ -293,6 +306,311 @@ async def get_client_health_history(
             serialized_snapshots.append(payload)
 
         return {"snapshots": serialized_snapshots}
+    finally:
+        db.close()
+
+
+@router.get("/error-analysis")
+async def get_error_analysis(
+    days: Optional[int] = Query(default=None, ge=1),
+    school: Optional[str] = Query(default=None),
+    sis_platform: Optional[str] = Query(default=None, alias="sisPlatform"),
+):
+    """Return aggregate error-analysis data from captured open merge-error groups."""
+    db = get_db()
+    try:
+        latest_snapshot = (
+            db.query(SchoolSnapshot.snapshot_date)
+            .order_by(SchoolSnapshot.snapshot_date.desc())
+            .first()
+        )
+        school_options: list[dict] = []
+        sis_values: set[str] = set()
+        if latest_snapshot:
+            latest_rows = (
+                exclude_demo_school_snapshots(db.query(SchoolSnapshot))
+                .filter(SchoolSnapshot.snapshot_date == latest_snapshot[0])
+                .order_by(SchoolSnapshot.display_name, SchoolSnapshot.school)
+                .all()
+            )
+            school_options = [
+                {
+                    "value": row.school,
+                    "label": row.display_name or row.school,
+                    "sisPlatform": row.sis_platform,
+                }
+                for row in latest_rows
+            ]
+            for row in latest_rows:
+                if row.sis_platform:
+                    sis_values.add(row.sis_platform)
+
+        history_start = (
+            db.query(ErrorAnalysisGroup.snapshot_date)
+            .order_by(ErrorAnalysisGroup.snapshot_date.asc())
+            .first()
+        )
+        last_capture = (
+            db.query(ErrorAnalysisGroup.created_at)
+            .order_by(ErrorAnalysisGroup.created_at.desc())
+            .first()
+        )
+
+        query = db.query(ErrorAnalysisGroup)
+        if days is not None:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+            query = query.filter(ErrorAnalysisGroup.snapshot_date >= cutoff)
+        if school:
+            query = query.filter(ErrorAnalysisGroup.school == school)
+        if sis_platform:
+            query = query.filter(ErrorAnalysisGroup.sis_platform == sis_platform)
+
+        groups = query.order_by(
+            ErrorAnalysisGroup.snapshot_date.asc(),
+            ErrorAnalysisGroup.school.asc(),
+            ErrorAnalysisGroup.signature_key.asc(),
+        ).all()
+
+        response = {
+            "metadata": {
+                "historyStartsOn": history_start[0] if history_start else None,
+                "lastCapturedAt": serialize_datetime(last_capture[0]) if last_capture else None,
+                "appliedFilters": {
+                    "days": days,
+                    "school": school,
+                    "sisPlatform": sis_platform,
+                },
+                "hasCapturedData": bool(history_start),
+                "filteredGroupCount": len(groups),
+            },
+            "filterOptions": {
+                "schools": school_options,
+                "sisPlatforms": sorted(sis_values),
+            },
+            "summary": {
+                "totalGroupedErrors": len(groups),
+                "totalErrorInstances": 0,
+                "distinctSignatures": 0,
+                "affectedSchools": 0,
+                "affectedSisPlatforms": 0,
+                "captureDays": 0,
+                "latestSnapshotDate": None,
+            },
+            "trends": [],
+            "signatures": [],
+            "schoolBreakdowns": [],
+            "sisBreakdowns": [],
+        }
+
+        if not groups:
+            return response
+
+        trends: dict[str, dict] = {}
+        signatures: dict[str, dict] = {}
+        school_breakdowns: dict[str, dict] = {}
+        sis_breakdowns: dict[str, dict] = {}
+        affected_schools: set[str] = set()
+        affected_sis: set[str] = set()
+        capture_days: set[str] = set()
+        total_error_instances = 0
+
+        def get_dominant_entry(counter: dict[str, int]) -> Optional[str]:
+            if not counter:
+                return None
+            return max(counter.items(), key=lambda item: (item[1], item[0]))[0]
+
+        for group in groups:
+            sample_errors = json.loads(group.sample_errors_json) if group.sample_errors_json else []
+            term_codes = json.loads(group.term_codes_json) if group.term_codes_json else []
+            resolution_hint = build_resolution_hint(
+                group.normalized_message,
+                group.entity_type,
+                group.error_code,
+            )
+            sis_label = group.sis_platform or "Unknown"
+            total_error_instances += group.count
+            affected_schools.add(group.school)
+            affected_sis.add(sis_label)
+            capture_days.add(group.snapshot_date)
+
+            trend_row = trends.setdefault(
+                group.snapshot_date,
+                {
+                    "snapshotDate": group.snapshot_date,
+                    "totalErrors": 0,
+                    "distinctSignatures": set(),
+                    "affectedSchools": set(),
+                },
+            )
+            trend_row["totalErrors"] += group.count
+            trend_row["distinctSignatures"].add(group.signature_key)
+            trend_row["affectedSchools"].add(group.school)
+
+            signature_row = signatures.setdefault(
+                group.signature_key,
+                {
+                    "signatureKey": group.signature_key,
+                    "entityType": group.entity_type,
+                    "errorCode": group.error_code,
+                    "normalizedMessage": group.normalized_message,
+                    "sampleMessage": group.sample_message,
+                    "totalCount": 0,
+                    "affectedSchools": set(),
+                    "affectedSisPlatforms": set(),
+                    "firstSeen": group.snapshot_date,
+                    "lastSeen": group.snapshot_date,
+                    "recurrenceDays": set(),
+                    "countsBySchool": {},
+                    "countsBySis": {},
+                    "sampleErrors": sample_errors,
+                    "termCodes": set(term_codes),
+                    "resolutionHint": resolution_hint,
+                },
+            )
+            signature_row["totalCount"] += group.count
+            signature_row["affectedSchools"].add(group.school)
+            signature_row["affectedSisPlatforms"].add(sis_label)
+            signature_row["firstSeen"] = min(signature_row["firstSeen"], group.snapshot_date)
+            signature_row["lastSeen"] = max(signature_row["lastSeen"], group.snapshot_date)
+            signature_row["recurrenceDays"].add(group.snapshot_date)
+            signature_row["countsBySchool"][group.school] = signature_row["countsBySchool"].get(group.school, 0) + group.count
+            signature_row["countsBySis"][sis_label] = signature_row["countsBySis"].get(sis_label, 0) + group.count
+            signature_row["termCodes"].update(term_codes)
+
+            school_row = school_breakdowns.setdefault(
+                group.school,
+                {
+                    "key": group.school,
+                    "label": group.display_name or group.school,
+                    "sisPlatform": group.sis_platform,
+                    "totalErrors": 0,
+                    "distinctSignatures": set(),
+                    "countsBySignature": {},
+                    "resolutionBuckets": {},
+                    "lastSeen": group.snapshot_date,
+                    "recurrenceDays": set(),
+                },
+            )
+            school_row["totalErrors"] += group.count
+            school_row["distinctSignatures"].add(group.signature_key)
+            school_row["countsBySignature"][group.signature_key] = school_row["countsBySignature"].get(group.signature_key, 0) + group.count
+            school_row["resolutionBuckets"][resolution_hint["bucket"]] = school_row["resolutionBuckets"].get(resolution_hint["bucket"], 0) + group.count
+            school_row["lastSeen"] = max(school_row["lastSeen"], group.snapshot_date)
+            school_row["recurrenceDays"].add(group.snapshot_date)
+
+            sis_row = sis_breakdowns.setdefault(
+                sis_label,
+                {
+                    "key": sis_label,
+                    "label": sis_label,
+                    "schoolCountSet": set(),
+                    "totalErrors": 0,
+                    "distinctSignatures": set(),
+                    "countsBySignature": {},
+                    "resolutionBuckets": {},
+                    "lastSeen": group.snapshot_date,
+                },
+            )
+            sis_row["schoolCountSet"].add(group.school)
+            sis_row["totalErrors"] += group.count
+            sis_row["distinctSignatures"].add(group.signature_key)
+            sis_row["countsBySignature"][group.signature_key] = sis_row["countsBySignature"].get(group.signature_key, 0) + group.count
+            sis_row["resolutionBuckets"][resolution_hint["bucket"]] = sis_row["resolutionBuckets"].get(resolution_hint["bucket"], 0) + group.count
+            sis_row["lastSeen"] = max(sis_row["lastSeen"], group.snapshot_date)
+
+        serialized_trends = [
+            {
+                "snapshotDate": trend["snapshotDate"],
+                "totalErrors": trend["totalErrors"],
+                "distinctSignatures": len(trend["distinctSignatures"]),
+                "affectedSchools": len(trend["affectedSchools"]),
+            }
+            for trend in trends.values()
+        ]
+        serialized_trends.sort(key=lambda item: item["snapshotDate"])
+
+        serialized_signatures = []
+        for signature in signatures.values():
+            dominant_school = get_dominant_entry(signature["countsBySchool"])
+            dominant_sis = get_dominant_entry(signature["countsBySis"])
+            serialized_signatures.append(
+                {
+                    "signatureKey": signature["signatureKey"],
+                    "entityType": signature["entityType"],
+                    "errorCode": signature["errorCode"],
+                    "normalizedMessage": signature["normalizedMessage"],
+                    "sampleMessage": signature["sampleMessage"],
+                    "totalCount": signature["totalCount"],
+                    "affectedSchools": len(signature["affectedSchools"]),
+                    "affectedSisPlatforms": len(signature["affectedSisPlatforms"]),
+                    "firstSeen": signature["firstSeen"],
+                    "lastSeen": signature["lastSeen"],
+                    "recurrenceDays": len(signature["recurrenceDays"]),
+                    "dominantSchool": dominant_school,
+                    "dominantSisPlatform": dominant_sis,
+                    "sampleErrors": signature["sampleErrors"],
+                    "termCodes": sorted(signature["termCodes"]),
+                    "resolutionHint": signature["resolutionHint"],
+                }
+            )
+        serialized_signatures.sort(
+            key=lambda item: (-item["totalCount"], -item["recurrenceDays"], item["sampleMessage"])
+        )
+
+        serialized_school_breakdowns = []
+        for school_row in school_breakdowns.values():
+            dominant_signature_key = get_dominant_entry(school_row["countsBySignature"])
+            dominant_signature = signatures.get(dominant_signature_key) if dominant_signature_key else None
+            dominant_bucket = get_dominant_entry(school_row["resolutionBuckets"])
+            serialized_school_breakdowns.append(
+                {
+                    "key": school_row["key"],
+                    "label": school_row["label"],
+                    "sisPlatform": school_row["sisPlatform"],
+                    "totalErrors": school_row["totalErrors"],
+                    "distinctSignatures": len(school_row["distinctSignatures"]),
+                    "dominantSignature": dominant_signature["sampleMessage"] if dominant_signature else None,
+                    "lastSeen": school_row["lastSeen"],
+                    "recurrenceDays": len(school_row["recurrenceDays"]),
+                    "likelyNextStep": dominant_signature["resolutionHint"]["action"] if dominant_signature else None,
+                    "topResolutionTheme": dominant_bucket,
+                }
+            )
+        serialized_school_breakdowns.sort(key=lambda item: (-item["totalErrors"], item["label"]))
+
+        serialized_sis_breakdowns = []
+        for sis_row in sis_breakdowns.values():
+            dominant_signature_key = get_dominant_entry(sis_row["countsBySignature"])
+            dominant_signature = signatures.get(dominant_signature_key) if dominant_signature_key else None
+            dominant_bucket = get_dominant_entry(sis_row["resolutionBuckets"])
+            serialized_sis_breakdowns.append(
+                {
+                    "key": sis_row["key"],
+                    "label": sis_row["label"],
+                    "affectedSchools": len(sis_row["schoolCountSet"]),
+                    "totalErrors": sis_row["totalErrors"],
+                    "distinctSignatures": len(sis_row["distinctSignatures"]),
+                    "dominantSignature": dominant_signature["sampleMessage"] if dominant_signature else None,
+                    "lastSeen": sis_row["lastSeen"],
+                    "commonResolutionTheme": dominant_bucket,
+                }
+            )
+        serialized_sis_breakdowns.sort(key=lambda item: (-item["totalErrors"], item["label"]))
+
+        response["summary"] = {
+            "totalGroupedErrors": len(groups),
+            "totalErrorInstances": total_error_instances,
+            "distinctSignatures": len(signatures),
+            "affectedSchools": len(affected_schools),
+            "affectedSisPlatforms": len(affected_sis),
+            "captureDays": len(capture_days),
+            "latestSnapshotDate": max(capture_days),
+        }
+        response["trends"] = serialized_trends
+        response["signatures"] = serialized_signatures
+        response["schoolBreakdowns"] = serialized_school_breakdowns
+        response["sisBreakdowns"] = serialized_sis_breakdowns
+        return response
     finally:
         db.close()
 
@@ -1141,6 +1459,7 @@ async def run_sync_job(
 
         snapshot_date = snapshot_date_override or datetime.now(timezone.utc).strftime("%Y-%m-%d")
         new_snapshots: list[dict] = []
+        new_error_groups: list[dict] = []
         errors: list[str] = []
 
         # 2. Process schools in batches of 10
@@ -1162,6 +1481,7 @@ async def run_sync_job(
                     errors.append(str(result))
                 elif result is not None:
                     errors.extend(result.pop("_syncErrors", []))
+                    new_error_groups.extend(result.pop("_errorGroups", []))
                     new_snapshots.append(result)
             job["schoolsProcessed"] = len(new_snapshots)
             job["errors"] = errors[-20:]
@@ -1182,11 +1502,18 @@ async def run_sync_job(
             delete_query = db.query(SchoolSnapshot).filter(
                 SchoolSnapshot.snapshot_date == snapshot_date
             )
+            delete_error_groups_query = db.query(ErrorAnalysisGroup).filter(
+                ErrorAnalysisGroup.snapshot_date == snapshot_date
+            )
             if school:
                 delete_query = delete_query.filter(SchoolSnapshot.school == school)
+                delete_error_groups_query = delete_error_groups_query.filter(ErrorAnalysisGroup.school == school)
             delete_query.delete()
+            delete_error_groups_query.delete()
             for snap_data in new_snapshots:
                 db.add(SchoolSnapshot.from_dict(snap_data))
+            for group_data in new_error_groups:
+                db.add(ErrorAnalysisGroup.from_dict(group_data))
             db.commit()
         except Exception as e:
             db.rollback()
@@ -1504,6 +1831,291 @@ def extract_merge_error_count(payload) -> int:
                 return nested_count
 
     return 0
+
+
+def extract_merge_error_rows(payload) -> list[dict]:
+    """Best-effort extraction of merge-error rows from varied API response shapes."""
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+
+    if not isinstance(payload, dict):
+        return []
+
+    for key in ("content", "items", "rows", "mergeErrors", "errors", "data", "results"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            rows: list[dict] = []
+            for item in value:
+                if not isinstance(item, dict):
+                    continue
+                rows.append(item.get("mergeError", item))
+            return rows
+        if isinstance(value, dict):
+            nested = extract_merge_error_rows(value)
+            if nested:
+                return nested
+
+    return []
+
+
+def first_non_empty_string(*values) -> Optional[str]:
+    """Return the first non-empty string-ish value."""
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def collect_term_codes(payload) -> list[str]:
+    """Extract stable term code strings from a merge-error row."""
+    values: list[str] = []
+
+    direct_term = payload.get("termCode")
+    if isinstance(direct_term, str) and direct_term.strip():
+        values.append(direct_term.strip())
+
+    term_codes = payload.get("termCodes")
+    if isinstance(term_codes, list):
+        for term_code in term_codes:
+            if isinstance(term_code, str) and term_code.strip():
+                values.append(term_code.strip())
+
+    term_like = payload.get("term") or payload.get("academicTerm")
+    if isinstance(term_like, dict):
+        for key in ("code", "termCode", "id"):
+            term_code = term_like.get(key)
+            if isinstance(term_code, str) and term_code.strip():
+                values.append(term_code.strip())
+                break
+    elif isinstance(term_like, str) and term_like.strip():
+        values.append(term_like.strip())
+
+    return sorted(set(values))
+
+
+def extract_merge_error_message(payload: dict) -> str:
+    """Extract the most human-readable message from a merge-error row."""
+    message = first_non_empty_string(
+        payload.get("message"),
+        payload.get("errorMessage"),
+        payload.get("detail"),
+        payload.get("reason"),
+        payload.get("error"),
+        payload.get("description"),
+        payload.get("title"),
+    )
+    if message:
+        return message
+
+    nested_errors = payload.get("errors")
+    if isinstance(nested_errors, list):
+        nested_messages = [
+            first_non_empty_string(
+                entry.get("message"),
+                entry.get("errorMessage"),
+                entry.get("detail"),
+                entry.get("reason"),
+                entry.get("error"),
+            )
+            for entry in nested_errors
+            if isinstance(entry, dict)
+        ]
+        for nested_message in nested_messages:
+            if nested_message:
+                return nested_message
+
+    return "Unspecified upstream merge error"
+
+
+def normalize_error_message(message: str) -> str:
+    """Reduce volatile values so recurring error signatures group together."""
+    normalized = message.strip().lower()
+    normalized = re.sub(r"https?://\S+", "<url>", normalized)
+    normalized = re.sub(r"\b[0-9a-f]{8}-[0-9a-f-]{27,}\b", "<uuid>", normalized)
+    normalized = re.sub(r"\b[a-z0-9]{16,}\b", "<token>", normalized)
+    normalized = re.sub(r"\b\d{2,}\b", "<num>", normalized)
+    normalized = re.sub(r"['\"`][^'\"`]{2,}['\"`]", "<value>", normalized)
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized.strip() or "unspecified upstream merge error"
+
+
+def extract_merge_error_entity_type(payload: dict) -> Optional[str]:
+    """Extract the entity type involved in a merge error."""
+    entity_type = first_non_empty_string(
+        payload.get("entityType"),
+        payload.get("entityName"),
+        payload.get("mergeType"),
+        payload.get("objectType"),
+    )
+    if entity_type:
+        return entity_type
+
+    type_value = payload.get("type")
+    if isinstance(type_value, str) and type_value.strip():
+        lowered = type_value.strip().lower()
+        if lowered not in {"error", "validation", "warning"}:
+            return type_value.strip()
+
+    return None
+
+
+def extract_merge_error_code(payload: dict) -> Optional[str]:
+    """Extract a stable machine-readable code when available."""
+    return first_non_empty_string(
+        payload.get("errorCode"),
+        payload.get("code"),
+        payload.get("reasonCode"),
+        payload.get("statusCode"),
+    )
+
+
+def normalize_merge_error_row(payload: dict) -> dict:
+    """Normalize a raw merge-error row into a grouping-friendly shape."""
+    sample_message = extract_merge_error_message(payload)
+    normalized_message = normalize_error_message(sample_message)
+    entity_type = extract_merge_error_entity_type(payload)
+    error_code = extract_merge_error_code(payload)
+    signature_basis = "|".join(
+        [
+            entity_type or "unknown-entity",
+            error_code or "unknown-code",
+            normalized_message,
+        ]
+    )
+    signature_key = hashlib.sha1(signature_basis.encode("utf-8")).hexdigest()[:16]
+    return {
+        "entityType": entity_type,
+        "errorCode": error_code,
+        "signatureKey": signature_key,
+        "normalizedMessage": normalized_message,
+        "sampleMessage": sample_message,
+        "termCodes": collect_term_codes(payload),
+        "rawError": payload,
+    }
+
+
+def build_error_analysis_groups(
+    snapshot_date: str,
+    school: str,
+    display_name: str,
+    sis_platform: Optional[str],
+    merge_error_rows: list[dict],
+) -> list[dict]:
+    """Group raw merge-error rows by normalized signature for one school snapshot."""
+    grouped: dict[str, dict] = {}
+
+    for row in merge_error_rows:
+        normalized_row = normalize_merge_error_row(row)
+        signature_key = normalized_row["signatureKey"]
+        existing = grouped.get(signature_key)
+
+        if existing is None:
+            existing = {
+                "snapshotDate": snapshot_date,
+                "school": school,
+                "displayName": display_name,
+                "sisPlatform": sis_platform,
+                "entityType": normalized_row["entityType"],
+                "errorCode": normalized_row["errorCode"],
+                "signatureKey": signature_key,
+                "normalizedMessage": normalized_row["normalizedMessage"],
+                "sampleMessage": normalized_row["sampleMessage"],
+                "count": 0,
+                "sampleErrors": [],
+                "termCodes": set(),
+            }
+            grouped[signature_key] = existing
+
+        existing["count"] += 1
+        existing["termCodes"].update(normalized_row["termCodes"])
+        if len(existing["sampleErrors"]) < ERROR_ANALYSIS_SAMPLE_LIMIT:
+            existing["sampleErrors"].append(normalized_row["rawError"])
+
+    normalized_groups: list[dict] = []
+    for group in grouped.values():
+        normalized_groups.append(
+            {
+                **group,
+                "termCodes": sorted(group["termCodes"]),
+            }
+        )
+
+    return sorted(normalized_groups, key=lambda group: (-group["count"], group["signatureKey"]))
+
+
+async def fetch_all_merge_error_rows(school: str) -> tuple[list[dict], int]:
+    """Fetch the full open merge-error inventory for a school via pagination."""
+    all_rows: list[dict] = []
+    total_count: Optional[int] = None
+
+    for page in range(MERGE_ERRORS_MAX_PAGES):
+        payload = await api_get(
+            f"/api/v1/int/{school}/integrations-hub/overview/merge-errors",
+            params={"page": str(page), "size": str(MERGE_ERRORS_PAGE_SIZE)},
+        )
+        page_rows = extract_merge_error_rows(payload)
+        page_total = extract_merge_error_count(payload)
+        if total_count is None:
+            total_count = page_total
+        all_rows.extend(page_rows)
+
+        if not page_rows:
+            break
+        if total_count is not None and len(all_rows) >= total_count:
+            break
+        if len(page_rows) < MERGE_ERRORS_PAGE_SIZE:
+            break
+
+    return all_rows, (total_count if total_count is not None else len(all_rows))
+
+
+def build_resolution_hint(normalized_message: str, entity_type: Optional[str], error_code: Optional[str]) -> dict:
+    """Return a likely next-step recommendation for a normalized error signature."""
+    haystack = " ".join(part for part in [normalized_message, entity_type or "", error_code or ""] if part).lower()
+
+    if any(token in haystack for token in ("missing", "not found", "unknown", "reference", "dependency", "prerequisite", "does not exist")):
+        return {
+            "bucket": "missing_reference",
+            "title": "Missing dependency or reference",
+            "action": "Verify the referenced records exist in the SIS and are synced before retrying dependent entities.",
+            "rationale": "The signature reads like a missing upstream dependency or lookup reference.",
+            "confidence": 0.82,
+        }
+
+    if any(token in haystack for token in ("duplicate", "already exists", "conflict", "unique", "overlap", "overlapping")):
+        return {
+            "bucket": "duplicate_conflict",
+            "title": "Duplicate or conflicting record",
+            "action": "Check for duplicate source records or conflicting identifiers and resolve the collision before rerunning the sync.",
+            "rationale": "The signature points to a duplicate, uniqueness, or conflicting-write condition.",
+            "confidence": 0.79,
+        }
+
+    if any(token in haystack for token in ("invalid", "validation", "required", "malformed", "format", "parse", "cannot parse", "type mismatch", "schema", "null")):
+        return {
+            "bucket": "validation_data_shape",
+            "title": "Validation or data-shape issue",
+            "action": "Review the source payload for missing required fields, invalid formats, or schema mismatches before the next sync.",
+            "rationale": "The signature suggests the payload shape or field values do not satisfy validation.",
+            "confidence": 0.77,
+        }
+
+    if any(token in haystack for token in ("auth", "permission", "unauthorized", "forbidden", "token", "credential", "config", "mapping", "disabled")):
+        return {
+            "bucket": "configuration_auth",
+            "title": "Configuration or access problem",
+            "action": "Review integration credentials, permissions, and mapping/configuration settings for the affected entity type.",
+            "rationale": "The signature looks tied to authentication, permissions, or configuration drift.",
+            "confidence": 0.74,
+        }
+
+    return {
+        "bucket": "generic_investigation",
+        "title": "General investigation recommended",
+        "action": "Inspect a sample error in Integration Hub, compare recent changes for the entity type, and confirm whether the issue is isolated to one school or SIS.",
+        "rationale": "The signature is not specific enough for a stronger automatic recommendation.",
+        "confidence": 0.52,
+    }
 
 
 def extract_merge_history_entries(payload) -> list[dict]:
@@ -1830,12 +2442,31 @@ def summarize_recent_merge_activity(merge_entries: list[dict], last_24h: int) ->
     )
 
 
+def summarize_nightly_granular_statuses(merge_entries: list[dict]) -> tuple[int, int]:
+    """Count nightly merges that finished with issues or no data."""
+    nightly_issues = nightly_nodata = 0
+
+    for report in merge_entries:
+        if str(report.get("scheduleType", "")).lower() != "nightly":
+            continue
+
+        status = str(report.get("status", "")).lower()
+        if status == "finishedwithissues":
+            nightly_issues += 1
+        elif status == "nodata":
+            nightly_nodata += 1
+
+    return nightly_issues, nightly_nodata
+
+
 async def fetch_school_health(
     school: str, display_name: str, products: list, snapshot_date: str
 ) -> Optional[dict]:
     """Fetch health data for a single school from the Coursedog API."""
     try:
         sync_errors: list[str] = []
+        merge_error_rows: list[dict] = []
+        merge_errors_count = 0
 
         # Fetch integration health (nightly merge stats + recent failed merges)
         health_data = {}
@@ -1845,20 +2476,19 @@ async def fetch_school_health(
             sync_errors.append(f"{school}: health request failed ({e})")
 
         # Fetch merge errors
-        merge_errors_data = {}
         try:
-            merge_errors_data = await api_get(
-                f"/api/v1/int/{school}/integrations-hub/overview/merge-errors",
-                params={"page": "0", "size": "1"},
-            )
+            merge_error_rows, merge_errors_count = await fetch_all_merge_error_rows(school)
         except Exception as e:
             sync_errors.append(f"{school}: merge errors request failed ({e})")
 
         # Fetch recent merge history to compute realtime/manual stats
         merge_reports: list = []
+        nightly_merge_reports: list = []
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         last_24h = now_ms - (24 * 60 * 60 * 1000)
+        last_48h = now_ms - (48 * 60 * 60 * 1000)
         date_from = datetime.fromtimestamp(last_24h / 1000, tz=timezone.utc).isoformat()
+        nightly_date_from = datetime.fromtimestamp(last_48h / 1000, tz=timezone.utc).isoformat()
         date_to = datetime.now(timezone.utc).isoformat()
         try:
             merge_reports_data = await api_get(
@@ -1874,9 +2504,26 @@ async def fetch_school_health(
         except Exception as e:
             sync_errors.append(f"{school}: merge history request failed ({e})")
 
+        # Fetch nightly merge history across the same 48-hour window used by upstream health.
+        try:
+            nightly_merge_reports_data = await api_get(
+                f"/api/v1/int/{school}/integrations-hub/merge-history",
+                params={
+                    "page": "0",
+                    "size": "100",
+                    "dateFrom": nightly_date_from,
+                    "dateTo": date_to,
+                    "scheduleType": "nightly",
+                },
+            )
+            nightly_merge_reports = extract_merge_history_entries(nightly_merge_reports_data)
+        except Exception as e:
+            sync_errors.append(f"{school}: nightly merge history request failed ({e})")
+
         # Parse health data
         nightly_total = health_data.get("allNightlyMergesCount", 0)
         nightly_success = health_data.get("succeededNightlyMergesCount", 0)
+        nightly_issues, nightly_nodata = summarize_nightly_granular_statuses(nightly_merge_reports)
         recent_failed = health_data.get("recentFailedMerges", [])
 
         # Compute realtime/manual from merge reports
@@ -1884,9 +2531,6 @@ async def fetch_school_health(
             realtime_total, realtime_success, realtime_issues, realtime_nodata,
             manual_total, manual_success, manual_issues, manual_nodata
         ) = summarize_recent_merge_activity(merge_reports, last_24h)
-
-        # Parse merge errors count
-        merge_errors_count = extract_merge_error_count(merge_errors_data)
 
         # Compute nightly merge time from merge reports history
         nightly_merge_time = calculate_nightly_merge_time(merge_reports)
@@ -1902,7 +2546,7 @@ async def fetch_school_health(
         except Exception as e:
             sync_errors.append(f"{school}: user activity request failed ({e})")
 
-        if len(sync_errors) == 4:
+        if len(sync_errors) == 5:
             raise RuntimeError(f"{school}: all upstream requests failed")
 
         sis_platform = None
@@ -1910,6 +2554,14 @@ async def fetch_school_health(
             sis_platform = await fetch_school_sis_platform(school)
         except Exception as e:
             sync_errors.append(f"{school}: integration config request failed ({e})")
+
+        error_groups = build_error_analysis_groups(
+            snapshot_date=snapshot_date,
+            school=school,
+            display_name=display_name,
+            sis_platform=sis_platform,
+            merge_error_rows=merge_error_rows,
+        )
 
         return {
             "snapshotDate": snapshot_date,
@@ -1921,9 +2573,9 @@ async def fetch_school_health(
                 "nightly": {
                     "total": nightly_total,
                     "succeeded": nightly_success,
-                    "failed": nightly_total - nightly_success,
-                    "finishedWithIssues": 0,
-                    "noData": 0,
+                    "failed": max(0, nightly_total - nightly_success - nightly_issues - nightly_nodata),
+                    "finishedWithIssues": nightly_issues,
+                    "noData": nightly_nodata,
                     "mergeTimeMs": nightly_merge_time,
                 },
                 "realtime": {
@@ -1945,6 +2597,7 @@ async def fetch_school_health(
             "mergeErrorsCount": merge_errors_count,
             "activeUsers24h": active_users_24h,
             "createdAt": datetime.now(timezone.utc).isoformat(),
+            "_errorGroups": error_groups,
             "_syncErrors": sync_errors,
         }
     except Exception as e:

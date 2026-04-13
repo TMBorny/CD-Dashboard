@@ -18,13 +18,16 @@ atexit.register(lambda: shutil.rmtree(TEST_DB_DIR, ignore_errors=True))
 import app.routes as routes
 from app.db import get_database_url, get_db, get_default_db_path, init_db
 from app.main import app, create_app
-from app.models import BackfillWorkUnit, SchedulerSettings, SchoolSnapshot, SyncRun
+from app.models import BackfillWorkUnit, ErrorAnalysisGroup, SchedulerSettings, SchoolSnapshot, SyncRun
 from app.security import is_loopback_client, require_internal_auth
 from app.routes import (
     build_snapshot_dates,
+    build_error_analysis_groups,
+    build_resolution_hint,
     fetch_school_health_for_date,
     build_snapshot_from_merge_history,
     derive_sync_run_status,
+    extract_merge_error_rows,
     extract_unique_activity_users,
     extract_merge_history_entries,
     extract_merge_error_count,
@@ -38,6 +41,7 @@ from app.routes import (
     maybe_auto_resume_stalled_backfill,
     maybe_enqueue_scheduled_sync,
     normalize_school_catalog,
+    normalize_error_message,
     prepare_backfill_auto_resume,
     resolve_backfill_date_range,
     serialize_persisted_sync_run,
@@ -315,6 +319,53 @@ class MergeErrorCountTests(unittest.TestCase):
         payload = {"content": [{"id": 1}, {"id": 2}, {"id": 3}]}
         self.assertEqual(extract_merge_error_count(payload), 3)
 
+    def test_extract_merge_error_rows_from_nested_content(self):
+        payload = {"data": {"content": [{"id": "row-1"}, {"id": "row-2"}]}}
+        self.assertEqual(
+            extract_merge_error_rows(payload),
+            [{"id": "row-1"}, {"id": "row-2"}],
+        )
+
+    def test_normalize_error_message_scrubs_volatile_values(self):
+        message = "Course 202505 section 12345678 missing dependency 1cf0d6a2-1111-2222-3333-444444444444"
+        normalized = normalize_error_message(message)
+
+        self.assertIn("<num>", normalized)
+        self.assertIn("<uuid>", normalized)
+        self.assertNotIn("202505", normalized)
+
+    def test_build_error_analysis_groups_clusters_similar_rows(self):
+        rows = [
+            {
+                "entityType": "sections",
+                "errorCode": "missing_course",
+                "message": "Course 202505 missing dependency 123456",
+                "termCode": "202505",
+            },
+            {
+                "entityType": "sections",
+                "errorCode": "missing_course",
+                "message": "Course 202602 missing dependency 987654",
+                "termCode": "202602",
+            },
+        ]
+
+        groups = build_error_analysis_groups(
+            snapshot_date="2026-04-13",
+            school="bar01",
+            display_name="Baruch College",
+            sis_platform="Banner",
+            merge_error_rows=rows,
+        )
+
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["count"], 2)
+        self.assertEqual(groups[0]["termCodes"], ["202505", "202602"])
+
+    def test_build_resolution_hint_detects_missing_reference(self):
+        hint = build_resolution_hint("section missing prerequisite reference", "sections", None)
+        self.assertEqual(hint["bucket"], "missing_reference")
+
     def test_extract_merge_history_entries_from_nested_content(self):
         payload = {"data": {"content": [{"id": "a"}, {"id": "b"}]}}
         self.assertEqual(extract_merge_history_entries(payload), [{"id": "a"}, {"id": "b"}])
@@ -395,6 +446,201 @@ class MergeErrorCountTests(unittest.TestCase):
     def test_extract_sis_platform_prefers_platform_name(self):
         payload = {"sisPlatform": "Banner", "integrationBroker": "Ethos"}
         self.assertEqual(extract_sis_platform(payload), "Banner")
+
+
+class FetchSchoolHealthTests(unittest.IsolatedAsyncioTestCase):
+    async def test_fetch_school_health_keeps_nightly_no_data_out_of_failures(self):
+        now_ms = int(datetime(2026, 4, 13, 12, 0, tzinfo=timezone.utc).timestamp() * 1000)
+
+        async def fake_api_get(path, params=None):
+            if path.endswith("/integrations-hub/overview/health"):
+                return {
+                    "allNightlyMergesCount": 2,
+                    "succeededNightlyMergesCount": 1,
+                    "recentFailedMerges": [],
+                }
+
+            if path.endswith("/integrations-hub/overview/merge-errors"):
+                return {"totalCount": 0}
+
+            if path.endswith("/integrations-hub/merge-history") and params and params.get("scheduleType") == "nightly":
+                return {
+                    "content": [
+                        {"id": "nightly-1", "scheduleType": "nightly", "status": "success"},
+                        {"id": "nightly-2", "scheduleType": "nightly", "status": "noData"},
+                    ]
+                }
+
+            if path.endswith("/integrations-hub/merge-history"):
+                return {
+                    "content": [
+                        {
+                            "id": "rt-1",
+                            "scheduleType": "realtime",
+                            "status": "success",
+                            "timestampEnd": now_ms,
+                        }
+                    ]
+                }
+
+            if path.endswith("/userActivity"):
+                return {"user-a": {"email": "user@example.com"}}
+
+            raise AssertionError(f"Unexpected api_get call: {path} params={params}")
+
+        with patch("app.routes.api_get", side_effect=fake_api_get), patch(
+            "app.routes.fetch_school_sis_platform",
+            return_value="Banner",
+        ):
+            snapshot = await routes.fetch_school_health(
+                school="bar01",
+                display_name="Baruch College",
+                products=["integrations"],
+                snapshot_date="2026-04-13",
+            )
+
+        self.assertIsNotNone(snapshot)
+        self.assertEqual(snapshot["merges"]["nightly"]["total"], 2)
+        self.assertEqual(snapshot["merges"]["nightly"]["succeeded"], 1)
+        self.assertEqual(snapshot["merges"]["nightly"]["noData"], 1)
+        self.assertEqual(snapshot["merges"]["nightly"]["failed"], 0)
+        self.assertEqual(snapshot["merges"]["nightly"]["finishedWithIssues"], 0)
+
+
+class SyncJobErrorAnalysisPersistenceTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        init_db()
+        db = get_db()
+        try:
+            db.query(ErrorAnalysisGroup).filter(ErrorAnalysisGroup.school == "bar01").delete(synchronize_session=False)
+            db.query(SchoolSnapshot).filter(SchoolSnapshot.school == "bar01").delete(synchronize_session=False)
+            db.query(SyncRun).filter(SyncRun.job_id == "test-sync-error-groups").delete(synchronize_session=False)
+            db.commit()
+        finally:
+            db.close()
+
+    def tearDown(self):
+        init_db()
+        db = get_db()
+        try:
+            db.query(ErrorAnalysisGroup).filter(ErrorAnalysisGroup.school == "bar01").delete(synchronize_session=False)
+            db.query(SchoolSnapshot).filter(SchoolSnapshot.school == "bar01").delete(synchronize_session=False)
+            db.query(SyncRun).filter(SyncRun.job_id == "test-sync-error-groups").delete(synchronize_session=False)
+            db.commit()
+        finally:
+            db.close()
+            routes._sync_jobs.pop("test-sync-error-groups", None)
+            routes._active_sync_job_id = None
+
+    async def test_run_sync_job_replaces_same_day_error_groups_on_rerun(self):
+        db = get_db()
+        try:
+            db.add(
+                ErrorAnalysisGroup.from_dict(
+                    {
+                        "snapshotDate": "2026-04-13",
+                        "school": "bar01",
+                        "displayName": "Baruch College",
+                        "sisPlatform": "Banner",
+                        "entityType": "sections",
+                        "errorCode": "old",
+                        "signatureKey": "sig-old",
+                        "normalizedMessage": "old error",
+                        "sampleMessage": "Old error",
+                        "count": 9,
+                        "sampleErrors": [],
+                        "termCodes": [],
+                    }
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        async def fake_list_schools():
+            return {
+                "schools": [
+                    {
+                        "school": "bar01",
+                        "displayName": "Baruch College",
+                        "products": [],
+                    }
+                ]
+            }
+
+        async def fake_fetch_school_health(school, display_name, products, snapshot_date):
+            return {
+                "snapshotDate": snapshot_date,
+                "school": school,
+                "displayName": display_name,
+                "sisPlatform": "Banner",
+                "products": products,
+                "merges": {
+                    "nightly": {"total": 1, "succeeded": 1, "failed": 0, "finishedWithIssues": 0, "noData": 0, "mergeTimeMs": 0},
+                    "realtime": {"total": 0, "succeeded": 0, "failed": 0, "finishedWithIssues": 0, "noData": 0},
+                    "manual": {"total": 0, "succeeded": 0, "failed": 0, "finishedWithIssues": 0, "noData": 0},
+                },
+                "recentFailedMerges": [],
+                "mergeErrorsCount": 1,
+                "activeUsers24h": 2,
+                "_errorGroups": [
+                    {
+                        "snapshotDate": snapshot_date,
+                        "school": school,
+                        "displayName": display_name,
+                        "sisPlatform": "Banner",
+                        "entityType": "courses",
+                        "errorCode": "new",
+                        "signatureKey": "sig-new",
+                        "normalizedMessage": "new error",
+                        "sampleMessage": "New error",
+                        "count": 1,
+                        "sampleErrors": [{"message": "New error"}],
+                        "termCodes": ["202505"],
+                    }
+                ],
+                "_syncErrors": [],
+            }
+
+        routes._sync_jobs["test-sync-error-groups"] = {
+            "jobId": "test-sync-error-groups",
+            "status": "queued",
+            "snapshotDate": "2026-04-13",
+            "schoolsProcessed": 0,
+            "totalSchools": 0,
+            "errors": [],
+            "timing": None,
+            "error": None,
+            "scope": "single-school",
+            "school": "bar01",
+            "startedAt": None,
+            "finishedAt": None,
+        }
+
+        with patch("app.routes.list_schools", side_effect=fake_list_schools), patch(
+            "app.routes.fetch_school_health",
+            side_effect=fake_fetch_school_health,
+        ):
+            await routes.run_sync_job(
+                "test-sync-error-groups",
+                school="bar01",
+                snapshot_date_override="2026-04-13",
+            )
+
+        db = get_db()
+        try:
+            persisted = (
+                db.query(ErrorAnalysisGroup)
+                .filter(
+                    ErrorAnalysisGroup.school == "bar01",
+                    ErrorAnalysisGroup.snapshot_date == "2026-04-13",
+                )
+                .all()
+            )
+            self.assertEqual(len(persisted), 1)
+            self.assertEqual(persisted[0].signature_key, "sig-new")
+        finally:
+            db.close()
 
 
 class SchoolSelectionTests(unittest.TestCase):
@@ -1446,6 +1692,241 @@ class ClientHealthHistoryEndpointTests(unittest.TestCase):
             [snapshot["snapshotDate"] for snapshot in response.json()["snapshots"]],
             ["2026-04-12"],
         )
+
+
+class ErrorAnalysisEndpointTests(unittest.TestCase):
+    @staticmethod
+    async def _async_noop():
+        return None
+
+    def setUp(self):
+        init_db()
+        db = get_db()
+        try:
+            db.query(ErrorAnalysisGroup).filter(
+                ErrorAnalysisGroup.school.in_(["bar01", "foo01", "bar02"])
+            ).delete(synchronize_session=False)
+            db.query(SchoolSnapshot).filter(
+                SchoolSnapshot.school.in_(["bar01", "foo01", "bar02"])
+            ).delete(synchronize_session=False)
+            db.commit()
+        finally:
+            db.close()
+
+    def tearDown(self):
+        init_db()
+        db = get_db()
+        try:
+            db.query(ErrorAnalysisGroup).filter(
+                ErrorAnalysisGroup.school.in_(["bar01", "foo01", "bar02"])
+            ).delete(synchronize_session=False)
+            db.query(SchoolSnapshot).filter(
+                SchoolSnapshot.school.in_(["bar01", "foo01", "bar02"])
+            ).delete(synchronize_session=False)
+            db.commit()
+        finally:
+            db.close()
+
+    def test_error_analysis_returns_empty_state_before_capture(self):
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
+            "app.main.start_scheduled_sync_service",
+            new=self._async_noop,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=self._async_noop,
+        ):
+            with TestClient(app) as client:
+                response = client.get("/api/error-analysis", headers=AUTH_HEADERS)
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["metadata"]["hasCapturedData"])
+        self.assertEqual(payload["signatures"], [])
+
+    def test_error_analysis_aggregates_filters_and_breakdowns(self):
+        init_db()
+        db = get_db()
+        try:
+            db.add_all(
+                [
+                    SchoolSnapshot.from_dict(
+                        {
+                            "snapshotDate": "2026-04-13",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": "Banner",
+                            "products": [],
+                            "merges": {
+                                "nightly": {"total": 1, "succeeded": 1, "failed": 0, "finishedWithIssues": 0, "noData": 0, "mergeTimeMs": 0},
+                                "realtime": {"total": 0, "succeeded": 0, "failed": 0, "finishedWithIssues": 0, "noData": 0},
+                                "manual": {"total": 0, "succeeded": 0, "failed": 0, "finishedWithIssues": 0, "noData": 0},
+                            },
+                            "recentFailedMerges": [],
+                            "mergeErrorsCount": 3,
+                            "activeUsers24h": 2,
+                        }
+                    ),
+                    SchoolSnapshot.from_dict(
+                        {
+                            "snapshotDate": "2026-04-13",
+                            "school": "foo01",
+                            "displayName": "Foo State",
+                            "sisPlatform": "PeopleSoftDirect",
+                            "products": [],
+                            "merges": {
+                                "nightly": {"total": 1, "succeeded": 1, "failed": 0, "finishedWithIssues": 0, "noData": 0, "mergeTimeMs": 0},
+                                "realtime": {"total": 0, "succeeded": 0, "failed": 0, "finishedWithIssues": 0, "noData": 0},
+                                "manual": {"total": 0, "succeeded": 0, "failed": 0, "finishedWithIssues": 0, "noData": 0},
+                            },
+                            "recentFailedMerges": [],
+                            "mergeErrorsCount": 2,
+                            "activeUsers24h": 4,
+                        }
+                    ),
+                    ErrorAnalysisGroup.from_dict(
+                        {
+                            "snapshotDate": "2026-04-12",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": "Banner",
+                            "entityType": "sections",
+                            "errorCode": "missing_course",
+                            "signatureKey": "sig-a",
+                            "normalizedMessage": "course <num> missing dependency <num>",
+                            "sampleMessage": "Course 202505 missing dependency 123456",
+                            "count": 2,
+                            "sampleErrors": [{"message": "Course 202505 missing dependency 123456"}],
+                            "termCodes": ["202505"],
+                        }
+                    ),
+                    ErrorAnalysisGroup.from_dict(
+                        {
+                            "snapshotDate": "2026-04-13",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": "Banner",
+                            "entityType": "sections",
+                            "errorCode": "missing_course",
+                            "signatureKey": "sig-a",
+                            "normalizedMessage": "course <num> missing dependency <num>",
+                            "sampleMessage": "Course 202602 missing dependency 987654",
+                            "count": 1,
+                            "sampleErrors": [{"message": "Course 202602 missing dependency 987654"}],
+                            "termCodes": ["202602"],
+                        }
+                    ),
+                    ErrorAnalysisGroup.from_dict(
+                        {
+                            "snapshotDate": "2026-04-13",
+                            "school": "foo01",
+                            "displayName": "Foo State",
+                            "sisPlatform": "PeopleSoftDirect",
+                            "entityType": "courses",
+                            "errorCode": "duplicate_course",
+                            "signatureKey": "sig-b",
+                            "normalizedMessage": "duplicate course <num>",
+                            "sampleMessage": "Duplicate course 12345",
+                            "count": 4,
+                            "sampleErrors": [{"message": "Duplicate course 12345"}],
+                            "termCodes": ["202505"],
+                        }
+                    ),
+                ]
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
+            "app.main.start_scheduled_sync_service",
+            new=self._async_noop,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=self._async_noop,
+        ):
+            with TestClient(app) as client:
+                response = client.get("/api/error-analysis", headers=AUTH_HEADERS)
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["metadata"]["hasCapturedData"])
+        self.assertEqual(payload["summary"]["totalErrorInstances"], 7)
+        self.assertEqual(payload["summary"]["distinctSignatures"], 2)
+        self.assertEqual(payload["trends"][0]["snapshotDate"], "2026-04-12")
+        self.assertEqual(payload["signatures"][0]["signatureKey"], "sig-b")
+        self.assertEqual(payload["schoolBreakdowns"][0]["key"], "foo01")
+        self.assertEqual(payload["sisBreakdowns"][0]["key"], "PeopleSoftDirect")
+        self.assertEqual(len(payload["filterOptions"]["schools"]), 2)
+
+    def test_error_analysis_filters_by_school_and_sis(self):
+        init_db()
+        db = get_db()
+        try:
+            db.add_all(
+                [
+                    ErrorAnalysisGroup.from_dict(
+                        {
+                            "snapshotDate": "2026-04-13",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": "Banner",
+                            "entityType": "sections",
+                            "errorCode": "missing_course",
+                            "signatureKey": "sig-a",
+                            "normalizedMessage": "course missing dependency",
+                            "sampleMessage": "Course missing dependency",
+                            "count": 2,
+                            "sampleErrors": [],
+                            "termCodes": [],
+                        }
+                    ),
+                    ErrorAnalysisGroup.from_dict(
+                        {
+                            "snapshotDate": "2026-04-13",
+                            "school": "foo01",
+                            "displayName": "Foo State",
+                            "sisPlatform": "PeopleSoftDirect",
+                            "entityType": "courses",
+                            "errorCode": "duplicate_course",
+                            "signatureKey": "sig-b",
+                            "normalizedMessage": "duplicate course",
+                            "sampleMessage": "Duplicate course",
+                            "count": 4,
+                            "sampleErrors": [],
+                            "termCodes": [],
+                        }
+                    ),
+                ]
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
+            "app.main.start_scheduled_sync_service",
+            new=self._async_noop,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=self._async_noop,
+        ):
+            with TestClient(app) as client:
+                school_response = client.get(
+                    "/api/error-analysis",
+                    params={"school": "bar01"},
+                    headers=AUTH_HEADERS,
+                )
+                sis_response = client.get(
+                    "/api/error-analysis",
+                    params={"sisPlatform": "PeopleSoftDirect"},
+                    headers=AUTH_HEADERS,
+                )
+
+        self.assertEqual(school_response.status_code, 200)
+        self.assertEqual(school_response.json()["summary"]["totalErrorInstances"], 2)
+        self.assertEqual(school_response.json()["schoolBreakdowns"][0]["key"], "bar01")
+        self.assertEqual(sis_response.status_code, 200)
+        self.assertEqual(sis_response.json()["summary"]["totalErrorInstances"], 4)
+        self.assertEqual(sis_response.json()["sisBreakdowns"][0]["key"], "PeopleSoftDirect")
 
 
 class SyncRunListEndpointTests(unittest.TestCase):

@@ -217,6 +217,64 @@ class SyncRun(Base):
         }
 
 
+class ErrorAnalysisGroup(Base):
+    """A normalized group of open merge errors captured for one school snapshot."""
+
+    __tablename__ = "error_analysis_groups"
+    __table_args__ = (
+        UniqueConstraint("snapshot_date", "school", "signature_key", name="uq_error_analysis_group"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    snapshot_date = Column(String(10), nullable=False, index=True)
+    school = Column(String(255), nullable=False, index=True)
+    display_name = Column(String(255), nullable=False)
+    sis_platform = Column(String(255), nullable=True, index=True)
+    entity_type = Column(String(255), nullable=True)
+    error_code = Column(String(255), nullable=True)
+    signature_key = Column(String(64), nullable=False, index=True)
+    normalized_message = Column(Text, nullable=False)
+    sample_message = Column(Text, nullable=False)
+    count = Column(Integer, nullable=False, default=0)
+    sample_errors_json = Column(Text, nullable=False, default="[]")
+    term_codes_json = Column(Text, nullable=False, default="[]")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    def to_dict(self) -> dict:
+        return {
+            "snapshotDate": self.snapshot_date,
+            "school": self.school,
+            "displayName": self.display_name,
+            "sisPlatform": self.sis_platform,
+            "entityType": self.entity_type,
+            "errorCode": self.error_code,
+            "signatureKey": self.signature_key,
+            "normalizedMessage": self.normalized_message,
+            "sampleMessage": self.sample_message,
+            "count": self.count,
+            "sampleErrors": json.loads(self.sample_errors_json) if self.sample_errors_json else [],
+            "termCodes": json.loads(self.term_codes_json) if self.term_codes_json else [],
+            "createdAt": serialize_datetime(self.created_at),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ErrorAnalysisGroup":
+        return cls(
+            snapshot_date=data["snapshotDate"],
+            school=data["school"],
+            display_name=data.get("displayName", data["school"]),
+            sis_platform=data.get("sisPlatform"),
+            entity_type=data.get("entityType"),
+            error_code=data.get("errorCode"),
+            signature_key=data["signatureKey"],
+            normalized_message=data.get("normalizedMessage", ""),
+            sample_message=data.get("sampleMessage", data.get("normalizedMessage", "")),
+            count=data.get("count", 0),
+            sample_errors_json=json.dumps(data.get("sampleErrors", [])),
+            term_codes_json=json.dumps(data.get("termCodes", [])),
+        )
+
+
 class BackfillWorkUnit(Base):
     """One resumable work item within a historical backfill job."""
 

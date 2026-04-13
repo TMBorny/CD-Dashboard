@@ -113,6 +113,18 @@ export async function getClientHealthHistory(params: { days?: number; school?: s
   return { data: res.data };
 }
 
+export async function getErrorAnalysis(params: { days?: number; school?: string; sisPlatform?: string }) {
+  const res = await backend.get('/error-analysis', {
+    params: {
+      ...(typeof params.days === 'number' ? { days: params.days } : {}),
+      ...(params.school ? { school: params.school } : {}),
+      ...(params.sisPlatform ? { sisPlatform: params.sisPlatform } : {}),
+    },
+  });
+
+  return { data: res.data };
+}
+
 /**
  * Get active users for a specific school via the local backend.
  */
