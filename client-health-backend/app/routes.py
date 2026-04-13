@@ -18,7 +18,7 @@ from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 
 from app.db import api_get, get_db
-from app.models import BackfillWorkUnit, ExcludedSchool, SchoolSnapshot, SyncRun
+from app.models import BackfillWorkUnit, ExcludedSchool, SchedulerSettings, SchoolSnapshot, SyncRun
 
 router = APIRouter(prefix="/api")
 logger = logging.getLogger(__name__)
@@ -40,8 +40,12 @@ class SchoolExclusionPayload(BaseModel):
 
 
 SCHEDULE_TIMEZONE = ZoneInfo("America/New_York")
-SCHEDULED_SYNC_HOUR = 7
-SCHEDULED_SYNC_MINUTE = 30
+DEFAULT_SCHEDULED_SYNC_TIME = "07:30"
+
+
+class SchedulerSettingsPayload(BaseModel):
+    syncEnabled: bool
+    syncTime: str
 
 
 def normalize_utc_datetime(value: Optional[datetime]) -> Optional[datetime]:
@@ -267,16 +271,16 @@ async def get_client_health():
 
 @router.get("/client-health/history")
 async def get_client_health_history(
-    days: int = Query(default=30, ge=1, le=365),
+    days: Optional[int] = Query(default=None, ge=1),
     school: Optional[str] = Query(default=None),
 ):
     """Get historical snapshots from the database."""
     db = get_db()
     try:
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
-        query = exclude_demo_school_snapshots(db.query(SchoolSnapshot)).filter(
-            SchoolSnapshot.snapshot_date >= cutoff
-        )
+        query = exclude_demo_school_snapshots(db.query(SchoolSnapshot))
+        if days is not None:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+            query = query.filter(SchoolSnapshot.snapshot_date >= cutoff)
         if school:
             query = query.filter(SchoolSnapshot.school == school)
 
@@ -359,6 +363,7 @@ async def get_client_health_sync_runs(
     """Return historical sync run events for background job monitoring."""
     db = get_db()
     try:
+        total_count = db.query(SyncRun).count()
         runs = (
             db.query(SyncRun)
             .order_by(SyncRun.attempted_at.desc())
@@ -366,7 +371,23 @@ async def get_client_health_sync_runs(
             .limit(limit)
             .all()
         )
-        return {"syncRuns": [serialize_persisted_sync_run(r) for r in runs]}
+        return {
+            "syncRuns": [serialize_persisted_sync_run(r) for r in runs],
+            "totalCount": total_count,
+            "limit": limit,
+            "offset": offset,
+        }
+    finally:
+        db.close()
+
+
+@router.get("/client-health/sync-runs/{job_id}")
+async def get_client_health_sync_run(job_id: str):
+    """Return one persisted sync run by job id for the detail page."""
+    db = get_db()
+    try:
+        run = get_sync_run_or_404(db, job_id)
+        return {"syncRun": serialize_persisted_sync_run(run)}
     finally:
         db.close()
 
@@ -460,18 +481,92 @@ def get_new_york_snapshot_date(now: Optional[datetime] = None) -> str:
     return current_new_york_time(now).strftime("%Y-%m-%d")
 
 
-def get_next_scheduled_sync_time(now: Optional[datetime] = None) -> datetime:
-    """Return the next 7:30 AM America/New_York run time."""
+def validate_scheduler_time(sync_time: str) -> str:
+    """Normalize and validate a scheduler time in HH:MM 24-hour format."""
+    normalized = (sync_time or "").strip()
+    try:
+        parsed = datetime.strptime(normalized, "%H:%M")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="syncTime must use HH:MM in 24-hour format") from exc
+    return parsed.strftime("%H:%M")
+
+
+def get_scheduler_settings(db) -> SchedulerSettings:
+    """Return the persisted scheduler settings row, creating defaults when missing."""
+    settings = db.query(SchedulerSettings).order_by(SchedulerSettings.id.asc()).first()
+    if settings:
+        if not settings.sync_time:
+            settings.sync_time = DEFAULT_SCHEDULED_SYNC_TIME
+            settings.updated_at = datetime.now(timezone.utc)
+            db.commit()
+            db.refresh(settings)
+        return settings
+
+    settings = SchedulerSettings(
+        sync_enabled=1,
+        sync_time=DEFAULT_SCHEDULED_SYNC_TIME,
+        updated_at=datetime.now(timezone.utc),
+    )
+    db.add(settings)
+    db.commit()
+    db.refresh(settings)
+    return settings
+
+
+def load_scheduler_settings() -> dict:
+    """Load current scheduler settings into a frontend-friendly dict."""
+    db = get_db()
+    try:
+        return get_scheduler_settings(db).to_dict()
+    finally:
+        db.close()
+
+
+def get_next_scheduled_sync_time(
+    now: Optional[datetime] = None,
+    *,
+    sync_time: str = DEFAULT_SCHEDULED_SYNC_TIME,
+) -> datetime:
+    """Return the next configured America/New_York run time."""
     local_now = current_new_york_time(now)
+    normalized_time = validate_scheduler_time(sync_time)
+    scheduled_hour, scheduled_minute = [int(part) for part in normalized_time.split(":")]
     scheduled = local_now.replace(
-        hour=SCHEDULED_SYNC_HOUR,
-        minute=SCHEDULED_SYNC_MINUTE,
+        hour=scheduled_hour,
+        minute=scheduled_minute,
         second=0,
         microsecond=0,
     )
     if scheduled <= local_now:
         scheduled += timedelta(days=1)
     return scheduled
+
+
+@router.get("/client-health/scheduler-settings")
+async def get_client_health_scheduler_settings():
+    """Return the persisted daily sync scheduler settings."""
+    return load_scheduler_settings()
+
+
+@router.put("/client-health/scheduler-settings")
+async def update_client_health_scheduler_settings(payload: SchedulerSettingsPayload):
+    """Update the daily sync scheduler settings and restart the scheduler loop."""
+    normalized_time = validate_scheduler_time(payload.syncTime)
+    db = get_db()
+    try:
+        settings = get_scheduler_settings(db)
+        settings.sync_enabled = 1 if payload.syncEnabled else 0
+        settings.sync_time = normalized_time
+        settings.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(settings)
+        response = settings.to_dict()
+    finally:
+        db.close()
+
+    await stop_scheduled_sync_service()
+    await start_scheduled_sync_service()
+    return response
 
 
 def get_active_sync_job() -> Optional[dict]:
@@ -889,6 +984,10 @@ def has_successful_snapshot_for_date(snapshot_date: str) -> bool:
 
 async def maybe_enqueue_catchup_sync(now: Optional[datetime] = None) -> Optional[dict]:
     """Queue one startup catch-up sync when today's local snapshot is missing."""
+    scheduler_settings = load_scheduler_settings()
+    if not scheduler_settings["syncEnabled"]:
+        return None
+
     snapshot_date = get_new_york_snapshot_date(now)
     if has_successful_snapshot_for_date(snapshot_date):
         return None
@@ -902,6 +1001,10 @@ async def maybe_enqueue_catchup_sync(now: Optional[datetime] = None) -> Optional
 
 async def maybe_enqueue_scheduled_sync(now: Optional[datetime] = None) -> dict:
     """Queue the daily scheduled latest-only sync for today's New York date."""
+    scheduler_settings = load_scheduler_settings()
+    if not scheduler_settings["syncEnabled"]:
+        raise HTTPException(status_code=409, detail="Daily sync is disabled")
+
     snapshot_date = get_new_york_snapshot_date(now)
     job, _ = enqueue_sync_job(
         scope="scheduled-bulk",
@@ -911,17 +1014,28 @@ async def maybe_enqueue_scheduled_sync(now: Optional[datetime] = None) -> dict:
 
 
 async def run_scheduled_sync_loop(stop_event: asyncio.Event):
-    """Sleep until the next 7:30 AM New York run, then queue a latest-only sync."""
+    """Sleep until the next configured New York run, then queue a latest-only sync."""
     while not stop_event.is_set():
+        scheduler_settings = load_scheduler_settings()
+        if not scheduler_settings["syncEnabled"]:
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=3600)
+                break
+            except asyncio.TimeoutError:
+                continue
+
         now_utc = datetime.now(timezone.utc)
-        next_run = get_next_scheduled_sync_time(now_utc)
+        next_run = get_next_scheduled_sync_time(now_utc, sync_time=scheduler_settings["syncTime"])
         delay_seconds = max(0.0, (next_run.astimezone(timezone.utc) - now_utc).total_seconds())
 
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=delay_seconds)
             break
         except asyncio.TimeoutError:
-            await maybe_enqueue_scheduled_sync()
+            try:
+                await maybe_enqueue_scheduled_sync()
+            except HTTPException:
+                continue
 
 
 async def run_backfill_recovery_loop(stop_event: asyncio.Event):

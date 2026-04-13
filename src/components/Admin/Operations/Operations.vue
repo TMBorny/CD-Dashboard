@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
-import { addSchoolExclusion, getSchools, getSyncStatus, removeSchoolExclusion, triggerHistoryBackfill, triggerSync } from '@/api';
+import { addSchoolExclusion, getSchedulerSettings, getSchools, getSyncStatus, removeSchoolExclusion, triggerHistoryBackfill, triggerSync, updateSchedulerSettings } from '@/api';
+import Badge from '@/components/ui/Badge.vue';
 import type { ExcludedSchoolOption, SchoolOption } from '@/types/clientHealth';
 import { formatSchoolLabel } from '@/utils/schoolNames';
 
@@ -35,10 +36,20 @@ const currentJob = ref<OperationJobStatus | null>(null);
 const queueProgress = ref<{ completed: number; total: number } | null>(null);
 const exclusionError = ref<string | null>(null);
 const exclusionMutationSchool = ref<string | null>(null);
+const schedulerSaveState = ref<'idle' | 'saving' | 'saved'>('idle');
+const schedulerMessage = ref<string | null>(null);
+const schedulerError = ref<string | null>(null);
+const schedulerEnabled = ref(true);
+const schedulerTime = ref('07:30');
 
 const { data, isLoading, error } = useQuery({
   queryKey: ['schools'],
   queryFn: () => getSchools().then((res) => res.data),
+});
+
+const { data: schedulerSettings, isLoading: isLoadingSchedulerSettings } = useQuery({
+  queryKey: ['schedulerSettings'],
+  queryFn: () => getSchedulerSettings().then((res) => res.data),
 });
 
 const schools = computed<SchoolOption[]>(() => data.value?.schools ?? []);
@@ -87,6 +98,30 @@ const manualExcludedSchools = computed(() =>
 const termExcludedSchools = computed(() =>
   excludedSchools.value.filter((school) => school.reason !== 'Manually excluded in Operations')
 );
+const schedulerStatusTone = computed<'emerald' | 'slate'>(() => (schedulerEnabled.value ? 'emerald' : 'slate'));
+const schedulerStatusLabel = computed(() => (schedulerEnabled.value ? 'Enabled' : 'Disabled'));
+const hasSchedulerChanges = computed(() => (
+  schedulerEnabled.value !== (schedulerSettings.value?.syncEnabled ?? true) ||
+  schedulerTime.value !== (schedulerSettings.value?.syncTime ?? '07:30')
+));
+
+watch(
+  schedulerSettings,
+  (value) => {
+    if (!value) return;
+    schedulerEnabled.value = value.syncEnabled;
+    schedulerTime.value = value.syncTime;
+  },
+  { immediate: true }
+);
+
+function getCompactReason(reason?: string | null) {
+  if (!reason) {
+    return null;
+  }
+
+  return reason === 'Manually excluded in Operations' ? 'Manual exclusion' : reason;
+}
 
 function formatTimestamp(value?: string | null) {
   if (!value) {
@@ -113,6 +148,29 @@ function getElapsedSeconds(job: OperationJobStatus) {
 function onToggleAllSchools() {
   if (allSchoolsSelected.value) {
     selectedSchools.value = [];
+  }
+}
+
+async function saveSchedulerConfiguration() {
+  schedulerError.value = null;
+  schedulerMessage.value = null;
+  schedulerSaveState.value = 'saving';
+
+  try {
+    const result = await updateSchedulerSettings({
+      syncEnabled: schedulerEnabled.value,
+      syncTime: schedulerTime.value,
+    });
+    schedulerEnabled.value = result.data.syncEnabled;
+    schedulerTime.value = result.data.syncTime;
+    await queryClient.invalidateQueries({ queryKey: ['schedulerSettings'] });
+    schedulerMessage.value = result.data.syncEnabled
+      ? `Daily sync enabled for ${result.data.syncTime} America/New_York.`
+      : 'Daily sync disabled.';
+    schedulerSaveState.value = 'saved';
+  } catch (e: any) {
+    schedulerError.value = e?.response?.data?.detail || e?.message || 'Failed to save daily sync settings';
+    schedulerSaveState.value = 'idle';
   }
 }
 
@@ -278,7 +336,7 @@ async function unexcludeSchool(school: string) {
 
 <template>
   <div class="w-full bg-slate-50 text-slate-900">
-    <div class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+    <div class="w-full px-4 py-6 sm:px-6 lg:px-8 xl:px-10 2xl:px-12">
       <div class="mb-8 rounded-[28px] border border-slate-200 bg-white/95 p-8 shadow-sm">
         <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -296,7 +354,7 @@ async function unexcludeSchool(school: string) {
         </div>
       </div>
 
-      <div class="grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
+      <div class="grid gap-8 2xl:grid-cols-[minmax(0,1.15fr)_minmax(24rem,0.85fr)]">
         <section class="rounded-[28px] border border-slate-200 bg-white p-8 shadow-sm">
           <div class="flex flex-col gap-6">
             <div>
@@ -306,6 +364,7 @@ async function unexcludeSchool(school: string) {
 
             <label class="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
               <input
+                id="operations-all-schools"
                 v-model="allSchoolsSelected"
                 type="checkbox"
                 class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500"
@@ -340,6 +399,7 @@ async function unexcludeSchool(school: string) {
                 >
                   <div class="flex min-w-0 items-start gap-3">
                     <input
+                      :id="`school-select-${school.school}`"
                       :checked="selectedSchools.includes(school.school)"
                       type="checkbox"
                       class="mt-1 h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500"
@@ -379,22 +439,25 @@ async function unexcludeSchool(school: string) {
                 <p class="text-sm font-medium text-slate-900">{{ excludedSchools.length }} excluded</p>
               </div>
 
-              <div class="mt-4 grid gap-4 lg:grid-cols-2">
+              <div class="mt-4 grid gap-4 2xl:grid-cols-[minmax(0,1.35fr)_minmax(20rem,0.65fr)]">
                 <div>
                   <p class="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">Manual exclusions</p>
-                  <div class="mt-3 space-y-2">
+                  <div class="mt-3 grid gap-2 xl:grid-cols-2 2xl:grid-cols-3">
                     <div
                       v-for="school in manualExcludedSchools"
                       :key="`manual-${school.school}`"
-                      class="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3"
+                      class="flex items-start justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3"
                     >
-                      <div class="min-w-0">
-                        <p class="font-medium text-slate-900">{{ formatSchoolLabel(school.school, school.displayName) }}</p>
-                        <p class="mt-1 text-xs text-slate-500">{{ school.school }} · {{ school.reason }}</p>
+                      <div class="min-w-0 flex-1">
+                        <p class="truncate text-sm font-semibold text-slate-900">{{ formatSchoolLabel(school.school, school.displayName) }}</p>
+                        <p class="mt-1 truncate text-xs text-slate-500">
+                          <span class="font-medium text-slate-600">{{ school.school }}</span>
+                          <span v-if="getCompactReason(school.reason)"> · {{ getCompactReason(school.reason) }}</span>
+                        </p>
                       </div>
                       <button
                         type="button"
-                        class="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        class="shrink-0 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                         :disabled="isRunning || exclusionMutationSchool === school.school"
                         @click="unexcludeSchool(school.school)"
                       >
@@ -410,14 +473,17 @@ async function unexcludeSchool(school: string) {
 
                 <div>
                   <p class="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">Excluded by default rules</p>
-                  <div class="mt-3 max-h-56 space-y-2 overflow-y-auto">
+                  <div class="mt-3 grid max-h-80 gap-2 overflow-y-auto pr-1">
                     <div
                       v-for="school in termExcludedSchools"
                       :key="`rule-${school.school}`"
                       class="rounded-xl border border-slate-200 bg-white px-4 py-3"
                     >
-                      <p class="font-medium text-slate-900">{{ formatSchoolLabel(school.school, school.displayName) }}</p>
-                      <p class="mt-1 text-xs text-slate-500">{{ school.school }} · {{ school.reason }}</p>
+                      <p class="truncate text-sm font-semibold text-slate-900">{{ formatSchoolLabel(school.school, school.displayName) }}</p>
+                      <p class="mt-1 truncate text-xs text-slate-500">
+                        <span class="font-medium text-slate-600">{{ school.school }}</span>
+                        <span v-if="getCompactReason(school.reason)"> · {{ getCompactReason(school.reason) }}</span>
+                      </p>
                     </div>
                     <p v-if="termExcludedSchools.length === 0" class="rounded-xl border border-dashed border-slate-200 px-4 py-5 text-sm text-slate-500">
                       No schools currently match the default exclusion rules.
@@ -436,6 +502,55 @@ async function unexcludeSchool(school: string) {
             <div>
               <h2 class="text-xl font-semibold text-slate-950">Actions</h2>
               <p class="mt-2 text-sm text-slate-500">Sync refreshes the latest snapshot. Backfill writes historical daily snapshots for the selected inclusive range.</p>
+            </div>
+
+            <div class="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+              <div class="flex flex-col gap-5">
+                <div class="flex flex-wrap items-center gap-2">
+                  <h3 class="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Daily sync</h3>
+                  <Badge :tone="schedulerStatusTone" :label="schedulerStatusLabel" />
+                </div>
+                <p class="text-sm text-slate-600">Control the automatic daily sync schedule for the backend service in America/New_York.</p>
+
+                <div v-if="isLoadingSchedulerSettings" class="text-sm text-slate-500">Loading daily sync settings...</div>
+                <div v-else class="grid gap-4 sm:grid-cols-[minmax(0,1fr)_12rem_auto] sm:items-end">
+                  <label class="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                    <input
+                      id="daily-sync-enabled"
+                      v-model="schedulerEnabled"
+                      type="checkbox"
+                      class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500"
+                      :disabled="schedulerSaveState === 'saving' || isRunning"
+                    />
+                    <span class="font-medium text-slate-900">Enable daily sync</span>
+                  </label>
+
+                  <div>
+                    <label for="daily-sync-time" class="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">Time</label>
+                    <input
+                      id="daily-sync-time"
+                      v-model="schedulerTime"
+                      type="time"
+                      step="60"
+                      :disabled="schedulerSaveState === 'saving' || isRunning"
+                      class="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 focus:border-slate-400 focus:outline-none disabled:opacity-50"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    :disabled="schedulerSaveState === 'saving' || isRunning || !hasSchedulerChanges"
+                    class="rounded-full bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    @click="saveSchedulerConfiguration"
+                  >
+                    <span v-if="schedulerSaveState === 'saving'">Saving…</span>
+                    <span v-else>Save</span>
+                  </button>
+                </div>
+              </div>
+
+              <p v-if="schedulerMessage" class="mt-4 text-sm text-slate-600">{{ schedulerMessage }}</p>
+              <p v-if="schedulerError" class="mt-2 text-sm text-rose-500">{{ schedulerError }}</p>
             </div>
 
             <div class="grid gap-4 sm:grid-cols-2">

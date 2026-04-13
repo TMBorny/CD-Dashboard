@@ -94,21 +94,44 @@ async def api_get(path: str, params: Optional[dict] = None) -> dict:
 
 # --- SQLite database ---
 
-DB_PATH = Path(__file__).parent.parent / "client_health.db"
-DATABASE_URL = f"sqlite:///{DB_PATH}"
-
 _engine = None
 _SessionLocal = None
+_current_database_url = None
+
+
+def get_default_db_path() -> Path:
+    return Path(__file__).parent.parent / "client_health.db"
+
+
+def get_database_url() -> str:
+    database_url = os.getenv("CLIENT_HEALTH_DATABASE_URL")
+    if database_url:
+        return database_url
+
+    configured_path = os.getenv("CLIENT_HEALTH_DB_PATH")
+    if configured_path:
+        return f"sqlite:///{Path(configured_path).expanduser()}"
+
+    return f"sqlite:///{get_default_db_path()}"
 
 
 def init_db():
     """Create the SQLite engine, session factory, and tables."""
-    global _engine, _SessionLocal
-    _engine = create_engine(DATABASE_URL, echo=False)
-    _SessionLocal = sessionmaker(bind=_engine)
+    global _engine, _SessionLocal, _current_database_url
+    database_url = get_database_url()
+
+    if _engine is not None and _current_database_url != database_url:
+        _engine.dispose()
+        _engine = None
+        _SessionLocal = None
+
+    if _engine is None:
+        _engine = create_engine(database_url, echo=False)
+        _SessionLocal = sessionmaker(bind=_engine)
+        _current_database_url = database_url
     Base.metadata.create_all(_engine)
     ensure_schema_updates(_engine)
-    print(f"SQLite database initialized at {DB_PATH}")
+    print(f"SQLite database initialized at {database_url}")
 
 
 def ensure_schema_updates(engine) -> None:
@@ -202,6 +225,21 @@ def ensure_schema_updates(engine) -> None:
             connection.execute(text("CREATE INDEX ix_backfill_work_units_school ON backfill_work_units (school)"))
             connection.execute(text("CREATE INDEX ix_backfill_work_units_snapshot_date ON backfill_work_units (snapshot_date)"))
             connection.execute(text("CREATE INDEX ix_backfill_work_units_status ON backfill_work_units (status)"))
+
+    if "scheduler_settings" not in table_names:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE scheduler_settings (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        sync_enabled INTEGER NOT NULL DEFAULT 1,
+                        sync_time VARCHAR(5) NOT NULL DEFAULT '07:30',
+                        updated_at DATETIME NOT NULL
+                    )
+                    """
+                )
+            )
 
 
 def get_db() -> Session:

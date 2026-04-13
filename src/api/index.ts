@@ -84,6 +84,19 @@ export async function getClientHealthSyncMetadata(params?: { school?: string }) 
   return { data: res.data };
 }
 
+export async function getSchedulerSettings() {
+  const res = await backend.get('/client-health/scheduler-settings');
+  return { data: res.data };
+}
+
+export async function updateSchedulerSettings(params: { syncEnabled: boolean; syncTime: string }) {
+  const res = await backend.put('/client-health/scheduler-settings', {
+    syncEnabled: params.syncEnabled,
+    syncTime: params.syncTime,
+  });
+  return { data: res.data };
+}
+
 
 // ---------------------------------------------------------------------------
 // Detail page data — fetched live from Coursedog via direct API
@@ -92,7 +105,7 @@ export async function getClientHealthSyncMetadata(params?: { school?: string }) 
 export async function getClientHealthHistory(params: { days?: number; school?: string }) {
   const res = await backend.get('/client-health/history', {
     params: {
-      days: params.days ?? 30,
+      ...(typeof params.days === 'number' ? { days: params.days } : {}),
       ...(params.school ? { school: params.school } : {}),
     },
   });
@@ -126,6 +139,11 @@ export async function getSyncRuns(params?: { limit?: number; offset?: number }) 
       offset: params?.offset ?? 0,
     },
   });
+  return { data: res.data };
+}
+
+export async function getSyncRun(jobId: string) {
+  const res = await backend.get(`/client-health/sync-runs/${jobId}`);
   return { data: res.data };
 }
 

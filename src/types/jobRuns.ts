@@ -44,6 +44,13 @@ export type JobRun = {
   errorMessage?: string | null;
 };
 
+export type SyncRunsResponse = {
+  syncRuns: JobRun[];
+  totalCount: number;
+  limit: number;
+  offset: number;
+};
+
 export const getJobStatusTone = (status: string) => {
   switch (status.toLowerCase()) {
     case 'completed':

@@ -23,8 +23,8 @@ const { data: healthResponse, isLoading: isLoadingHealth, error: healthError } =
 });
 
 const { data: historyResponse, isLoading: isLoadingHistory, error: historyError } = useQuery({
-  queryKey: ['clientHealthHistory', { days: 30 }],
-  queryFn: () => getClientHealthHistory({ days: 30 }).then((res) => res.data.snapshots),
+  queryKey: ['clientHealthHistory'],
+  queryFn: () => getClientHealthHistory({}).then((res) => res.data.snapshots),
 });
 
 const loading = computed(() => isLoadingHealth.value || isLoadingHistory.value);
@@ -183,6 +183,7 @@ const atRiskSeries = computed(() => {
   filteredHistory.value.forEach((s: ClientHealthSnapshot) => {
     const n = s.merges.nightly;
     const validTotal = n.total - (n.noData || 0);
+    if (validTotal <= 0) return;
     const rate = validTotal > 0 ? ((n.succeeded + (n.finishedWithIssues || 0) * 0.5) / validTotal) * 100 : 0;
     const mergeErrorsCount = s.mergeErrorsCount ?? 0;
     const score = Math.max(0, Math.min(100, rate - Math.min(20, Math.log2(mergeErrorsCount + 1) * 4)));
@@ -232,7 +233,7 @@ const handleRowClick = (school: ClientHealthSnapshot) => {
         <div class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between py-2">
           <div>
             <h2 class="text-lg font-semibold text-slate-950">Trend Analytics</h2>
-            <p class="mt-1 text-sm text-slate-500">30-day historical trends for the selected cohort.</p>
+            <p class="mt-1 text-sm text-slate-500">Historical trends across the full stored snapshot range for the selected cohort.</p>
           </div>
           <div class="flex flex-wrap items-center gap-3">
             <div class="flex items-center gap-2">
@@ -256,7 +257,7 @@ const handleRowClick = (school: ClientHealthSnapshot) => {
           <div class="flex flex-col rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
             <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Fleet Health</p>
             <h3 class="mt-2 text-base font-semibold text-slate-950">Nightly merge outcomes</h3>
-            <p class="mt-1 text-xs text-slate-500">Percentage breakdown normalized across valid schools.</p>
+            <p class="mt-1 text-xs text-slate-500">Each bar shows the share of nightly merges that succeeded, finished with issues, had no data, or failed on that date: bucket total divided by all nightly merges for the selected schools.</p>
             <div class="mt-4 flex-1 min-h-[250px]">
               <VueApexCharts type="bar" :options="nightlyBreakdownOptions" :series="nightlyBreakdownSeries" height="100%" />
             </div>
@@ -283,7 +284,7 @@ const handleRowClick = (school: ClientHealthSnapshot) => {
           <div class="flex flex-col rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
             <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Fleet Risk</p>
             <h3 class="mt-2 text-base font-semibold text-slate-950">Schools at Risk</h3>
-            <p class="mt-1 text-xs text-slate-500">Count of schools with a computed health score below 65.</p>
+            <p class="mt-1 text-xs text-slate-500">Count of schools with a computed health score below 65, excluding schools with no valid nightly merge data on that date.</p>
             <div class="mt-4 flex-1 min-h-[250px]">
               <VueApexCharts type="line" :options="atRiskOptions" :series="atRiskSeries" height="100%" />
             </div>

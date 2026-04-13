@@ -252,3 +252,21 @@ class ExcludedSchool(Base):
             "school": self.school,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
         }
+
+
+class SchedulerSettings(Base):
+    """Persisted scheduler configuration for the daily sync service."""
+
+    __tablename__ = "scheduler_settings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    sync_enabled = Column(Integer, nullable=False, default=1)
+    sync_time = Column(String(5), nullable=False, default="07:30")
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    def to_dict(self) -> dict:
+        return {
+            "syncEnabled": bool(self.sync_enabled),
+            "syncTime": self.sync_time,
+            "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
+        }

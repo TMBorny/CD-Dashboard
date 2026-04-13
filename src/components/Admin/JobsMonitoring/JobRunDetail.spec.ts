@@ -3,21 +3,27 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { ref } from 'vue';
 
 const invalidateQueries = vi.fn().mockResolvedValue(undefined);
-const getSyncRuns = vi.fn();
+const getSyncRun = vi.fn();
 const resumeHistoryBackfill = vi.fn();
 const retryHistoryBackfillFailures = vi.fn();
+const mockUseQuery = vi.fn();
 
 vi.mock('@tanstack/vue-query', () => ({
   useQueryClient: () => ({ invalidateQueries }),
-  useQuery: vi.fn(({ queryFn }) => {
-    const state = ref<{ syncRuns: unknown[] } | null>(null);
-    queryFn().then((value: { syncRuns: unknown[] }) => {
-      state.value = value;
-    });
+  useQuery: mockUseQuery.mockImplementation(({ queryFn }) => {
+    const state = ref<{ syncRun: unknown } | null>(null);
+    const error = ref<unknown>(null);
+    queryFn()
+      .then((value: { syncRun: unknown }) => {
+        state.value = value;
+      })
+      .catch((err: unknown) => {
+        error.value = err;
+      });
     return {
       data: state,
       isLoading: ref(false),
-      error: ref(null),
+      error,
     };
   }),
   useMutation: vi.fn(({ mutationFn, onSuccess }) => ({
@@ -26,14 +32,14 @@ vi.mock('@tanstack/vue-query', () => ({
     error: null,
     mutateAsync: async (value: string) => {
       const result = await mutationFn(value);
-      await onSuccess?.(result);
+      await onSuccess?.(result, value);
       return result;
     },
   })),
 }));
 
 vi.mock('@/api', () => ({
-  getSyncRuns,
+  getSyncRun,
   resumeHistoryBackfill,
   retryHistoryBackfillFailures,
 }));
@@ -41,45 +47,44 @@ vi.mock('@/api', () => ({
 describe('JobRunDetail', () => {
   beforeEach(() => {
     invalidateQueries.mockClear();
-    getSyncRuns.mockReset();
+    getSyncRun.mockReset();
     resumeHistoryBackfill.mockReset();
     retryHistoryBackfillFailures.mockReset();
+    mockUseQuery.mockClear();
   });
 
   it('renders a single run with diagnostics and recovery actions', async () => {
-    getSyncRuns.mockResolvedValue({
+    getSyncRun.mockResolvedValue({
       data: {
-        syncRuns: [
-          {
-            jobId: 'job-123',
-            scope: 'history-backfill-bulk',
-            status: 'completed_with_failures',
-            attemptedAt: '2026-04-12T12:00:00Z',
-            startedAt: '2026-04-12T12:00:05Z',
-            finishedAt: '2026-04-12T12:05:00Z',
-            startDate: '2026-01-01',
-            endDate: '2026-01-03',
-            dateCount: 3,
-            schoolsProcessed: 12,
-            totalSchools: 14,
-            completedUnits: 10,
-            failedUnits: 2,
-            skippedUnits: 2,
-            currentSchool: 'bar01',
-            currentSnapshotDate: '2026-01-03',
-            lastHeartbeatAt: '2026-04-12T12:04:30Z',
-            lastProgressAt: '2026-04-12T12:04:00Z',
-            statusDetail: 'completed_with_failures',
-            failureReason: '2 work units failed after retries',
-            errorMessage: 'sample failure',
-            errors: ['bar01 2026-01-02 failed', 'bcc01 2026-01-03 failed'],
-            failedUnitsSample: [
-              { school: 'bar01', snapshotDate: '2026-01-02', attemptCount: 2, error: 'timeout' },
-            ],
-            checkpointState: { remainingUnits: 0 },
-            timing: { totalSec: 295.0 },
-          },
-        ],
+        syncRun: {
+          jobId: 'job-123',
+          scope: 'history-backfill-bulk',
+          status: 'completed_with_failures',
+          attemptedAt: '2026-04-12T12:00:00Z',
+          startedAt: '2026-04-12T12:00:05Z',
+          finishedAt: '2026-04-12T12:05:00Z',
+          startDate: '2026-01-01',
+          endDate: '2026-01-03',
+          dateCount: 3,
+          schoolsProcessed: 12,
+          totalSchools: 14,
+          completedUnits: 10,
+          failedUnits: 2,
+          skippedUnits: 2,
+          currentSchool: 'bar01',
+          currentSnapshotDate: '2026-01-03',
+          lastHeartbeatAt: '2026-04-12T12:04:30Z',
+          lastProgressAt: '2026-04-12T12:04:00Z',
+          statusDetail: 'completed_with_failures',
+          failureReason: '2 work units failed after retries',
+          errorMessage: 'sample failure',
+          errors: ['bar01 2026-01-02 failed', 'bcc01 2026-01-03 failed'],
+          failedUnitsSample: [
+            { school: 'bar01', snapshotDate: '2026-01-02', attemptCount: 2, error: 'timeout' },
+          ],
+          checkpointState: { remainingUnits: 0 },
+          timing: { totalSec: 295.0 },
+        },
       },
     });
     retryHistoryBackfillFailures.mockResolvedValue({ ok: true });
@@ -119,8 +124,8 @@ describe('JobRunDetail', () => {
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ['syncRuns'] });
   });
 
-  it('shows an empty-state message when the requested run is missing', async () => {
-    getSyncRuns.mockResolvedValue({ data: { syncRuns: [] } });
+  it('shows a not-found message when the requested run returns 404', async () => {
+    getSyncRun.mockRejectedValue({ response: { status: 404 } });
 
     const { default: JobRunDetail } = await import('./JobRunDetail.vue');
     const wrapper = mount(JobRunDetail, {
@@ -137,6 +142,60 @@ describe('JobRunDetail', () => {
 
     await flushPromises();
 
-    expect(wrapper.text()).toContain('This job was not found in the current job history window.');
+    expect(wrapper.text()).toContain('This job could not be found.');
+  });
+
+  it('shows an error message when the request fails for another reason', async () => {
+    getSyncRun.mockRejectedValue(new Error('network down'));
+
+    const { default: JobRunDetail } = await import('./JobRunDetail.vue');
+    const wrapper = mount(JobRunDetail, {
+      props: { jobId: 'missing-job' },
+      global: {
+        stubs: {
+          RouterLink: {
+            props: ['to'],
+            template: '<a :href="typeof to === \'string\' ? to : to.path"><slot /></a>',
+          },
+        },
+      },
+    });
+
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Failed to load job details.');
+  });
+
+  it('keeps showing loaded job details when a background refetch errors', async () => {
+    mockUseQuery.mockImplementationOnce(() => ({
+      data: ref({
+        syncRun: {
+          jobId: 'job-123',
+          scope: 'history-backfill-bulk',
+          status: 'running',
+        },
+      }),
+      isLoading: ref(false),
+      error: ref(new Error('network down')),
+    }));
+
+    const { default: JobRunDetail } = await import('./JobRunDetail.vue');
+    const wrapper = mount(JobRunDetail, {
+      props: { jobId: 'job-123' },
+      global: {
+        stubs: {
+          RouterLink: {
+            props: ['to'],
+            template: '<a :href="typeof to === \'string\' ? to : to.path"><slot /></a>',
+          },
+        },
+      },
+    });
+
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Live updates are temporarily unavailable.');
+    expect(wrapper.text()).toContain('history backfill bulk');
+    expect(wrapper.text()).not.toContain('Failed to load job details.');
   });
 });

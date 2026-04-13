@@ -16,8 +16,8 @@ const integrationHubUrl = computed(() => `${coursedogBaseUrl}/#/int/${school.val
 const mergeReportsUrl = computed(() => `${coursedogBaseUrl}/#/int/${school.value}/merge-history`);
 
 const { data: history, isLoading: isLoadingHistory, error: historyError } = useQuery({
-  queryKey: computed(() => ['clientHealthHistory', school.value, { days: 30 }]),
-  queryFn: () => getClientHealthHistory({ school: school.value, days: 30 }).then((res) => res.data),
+  queryKey: computed(() => ['clientHealthHistory', school.value]),
+  queryFn: () => getClientHealthHistory({ school: school.value }).then((res) => res.data),
   enabled: computed(() => school.value.length > 0),
 });
 
@@ -191,7 +191,7 @@ const activeUsersChartOptions = computed(() => ({
               </a>
             </div>
             <h1 class="mt-3 text-4xl font-semibold tracking-tight text-slate-950 sm:text-5xl">{{ schoolLabel }}</h1>
-            <p class="mt-4 text-base leading-7 text-slate-600">30-day local snapshot history with explicit metric windows and current activity.</p>
+            <p class="mt-4 text-base leading-7 text-slate-600">Full local snapshot history with explicit metric windows and current activity.</p>
             <p class="mt-3 text-sm text-slate-500">Last successful sync: {{ lastSuccessfulSyncLabel }}</p>
             <p class="mt-1 text-sm text-slate-500">Last attempted sync: {{ lastAttemptedSyncLabel }}</p>
             <p v-if="lastAttemptStatusLabel" class="mt-1 text-xs" :class="syncMetadata?.lastAttemptedSync?.status === 'failed' ? 'text-rose-500' : 'text-slate-400'">

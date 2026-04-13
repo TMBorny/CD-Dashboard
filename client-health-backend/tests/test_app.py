@@ -1,5 +1,8 @@
 import unittest
 import os
+import atexit
+import shutil
+import tempfile
 from types import SimpleNamespace
 from unittest.mock import patch
 from datetime import datetime, timezone, timedelta
@@ -7,10 +10,15 @@ from datetime import datetime, timezone, timedelta
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+TEST_DB_DIR = tempfile.mkdtemp(prefix="client-health-backend-tests-")
+TEST_DB_PATH = os.path.join(TEST_DB_DIR, "client_health_test.db")
+os.environ["CLIENT_HEALTH_DB_PATH"] = TEST_DB_PATH
+atexit.register(lambda: shutil.rmtree(TEST_DB_DIR, ignore_errors=True))
+
 import app.routes as routes
-from app.db import get_db, init_db
+from app.db import get_database_url, get_db, get_default_db_path, init_db
 from app.main import app, create_app
-from app.models import BackfillWorkUnit, SchoolSnapshot, SyncRun
+from app.models import BackfillWorkUnit, SchedulerSettings, SchoolSnapshot, SyncRun
 from app.security import is_loopback_client, require_internal_auth
 from app.routes import (
     build_snapshot_dates,
@@ -24,6 +32,7 @@ from app.routes import (
     get_school_exclusion_reason,
     get_new_york_snapshot_date,
     get_next_scheduled_sync_time,
+    get_scheduler_settings,
     is_demo_school,
     maybe_enqueue_catchup_sync,
     maybe_auto_resume_stalled_backfill,
@@ -120,6 +129,14 @@ class SchedulerHelperTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(winter.tzinfo), "America/New_York")
         self.assertEqual(str(summer.tzinfo), "America/New_York")
 
+    def test_get_next_scheduled_sync_time_uses_custom_time(self):
+        scheduled = get_next_scheduled_sync_time(
+            datetime(2026, 4, 12, 12, 0, tzinfo=timezone.utc),
+            sync_time="09:15",
+        )
+
+        self.assertEqual((scheduled.hour, scheduled.minute), (9, 15))
+
     async def test_maybe_enqueue_scheduled_sync_uses_latest_only_scope(self):
         captured = {}
 
@@ -131,7 +148,10 @@ class SchedulerHelperTests(unittest.IsolatedAsyncioTestCase):
                 "snapshotDate": kwargs["snapshot_date_override"],
             }, False
 
-        with patch("app.routes.enqueue_sync_job", side_effect=fake_enqueue_sync_job):
+        with patch("app.routes.load_scheduler_settings", return_value={"syncEnabled": True, "syncTime": "07:30"}), patch(
+            "app.routes.enqueue_sync_job",
+            side_effect=fake_enqueue_sync_job,
+        ):
             job = await maybe_enqueue_scheduled_sync(
                 datetime(2026, 4, 12, 12, 0, tzinfo=timezone.utc)
             )
@@ -142,7 +162,10 @@ class SchedulerHelperTests(unittest.IsolatedAsyncioTestCase):
     async def test_maybe_enqueue_scheduled_sync_respects_duplicate_guard(self):
         active_job = {"jobId": "active-job", "status": "running", "scope": "bulk"}
 
-        with patch("app.routes.enqueue_sync_job", return_value=(active_job, True)) as enqueue_mock:
+        with patch("app.routes.load_scheduler_settings", return_value={"syncEnabled": True, "syncTime": "07:30"}), patch(
+            "app.routes.enqueue_sync_job",
+            return_value=(active_job, True),
+        ) as enqueue_mock:
             job = await maybe_enqueue_scheduled_sync(
                 datetime(2026, 4, 12, 12, 0, tzinfo=timezone.utc)
             )
@@ -161,7 +184,10 @@ class SchedulerHelperTests(unittest.IsolatedAsyncioTestCase):
                 "snapshotDate": kwargs["snapshot_date_override"],
             }, False
 
-        with patch("app.routes.has_successful_snapshot_for_date", return_value=False), patch(
+        with patch("app.routes.load_scheduler_settings", return_value={"syncEnabled": True, "syncTime": "07:30"}), patch(
+            "app.routes.has_successful_snapshot_for_date",
+            return_value=False,
+        ), patch(
             "app.routes.enqueue_sync_job",
             side_effect=fake_enqueue_sync_job,
         ):
@@ -173,7 +199,10 @@ class SchedulerHelperTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured["snapshot_date_override"], "2026-04-12")
 
     async def test_catchup_skips_when_snapshot_exists(self):
-        with patch("app.routes.has_successful_snapshot_for_date", return_value=True), patch(
+        with patch("app.routes.load_scheduler_settings", return_value={"syncEnabled": True, "syncTime": "07:30"}), patch(
+            "app.routes.has_successful_snapshot_for_date",
+            return_value=True,
+        ), patch(
             "app.routes.enqueue_sync_job",
         ) as enqueue_mock:
             job = await maybe_enqueue_catchup_sync(
@@ -203,6 +232,75 @@ class LifespanSchedulerTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(calls, ["start", "stop"])
+
+
+class SchedulerSettingsRouteTests(unittest.TestCase):
+    def setUp(self):
+        init_db()
+        db = get_db()
+        try:
+            db.query(SchedulerSettings).delete(synchronize_session=False)
+            db.commit()
+        finally:
+            db.close()
+
+    def test_scheduler_settings_defaults_are_created(self):
+        db = get_db()
+        try:
+            settings = get_scheduler_settings(db)
+            self.assertTrue(settings.sync_enabled)
+            self.assertEqual(settings.sync_time, "07:30")
+        finally:
+            db.close()
+
+    def test_get_scheduler_settings_route(self):
+        async def fake_start_scheduler():
+            return None
+
+        async def fake_stop_scheduler():
+            return None
+
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
+            "app.main.start_scheduled_sync_service",
+            new=fake_start_scheduler,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=fake_stop_scheduler,
+        ):
+            with TestClient(create_app()) as client:
+                response = client.get("/api/client-health/scheduler-settings", headers=AUTH_HEADERS)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["syncTime"], "07:30")
+        self.assertTrue(response.json()["syncEnabled"])
+
+    def test_update_scheduler_settings_route(self):
+        async def fake_start_scheduler():
+            return None
+
+        async def fake_stop_scheduler():
+            return None
+
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
+            "app.main.start_scheduled_sync_service",
+            new=fake_start_scheduler,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=fake_stop_scheduler,
+        ), patch("app.routes.start_scheduled_sync_service", new=fake_start_scheduler), patch(
+            "app.routes.stop_scheduled_sync_service",
+            new=fake_stop_scheduler,
+        ):
+            with TestClient(create_app()) as client:
+                response = client.put(
+                    "/api/client-health/scheduler-settings",
+                    headers=AUTH_HEADERS,
+                    json={"syncEnabled": False, "syncTime": "09:15"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["syncTime"], "09:15")
+        self.assertFalse(response.json()["syncEnabled"])
 
 
 class MergeErrorCountTests(unittest.TestCase):
@@ -1099,6 +1197,348 @@ class ApiSecurityTests(unittest.TestCase):
     @staticmethod
     async def _async_noop():
         return None
+
+
+class ClientHealthHistoryEndpointTests(unittest.TestCase):
+    @staticmethod
+    async def _async_noop():
+        return None
+
+    def setUp(self):
+        init_db()
+        db = get_db()
+        try:
+            db.query(SchoolSnapshot).filter(SchoolSnapshot.school == "bar01").delete(
+                synchronize_session=False
+            )
+            db.commit()
+        finally:
+            db.close()
+
+    def test_history_endpoint_returns_full_snapshot_history_when_days_omitted(self):
+        init_db()
+        db = get_db()
+        try:
+            db.add_all(
+                [
+                    SchoolSnapshot.from_dict(
+                        {
+                            "snapshotDate": "2026-01-15",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": "Banner",
+                            "products": [],
+                            "merges": {
+                                "nightly": {
+                                    "total": 1,
+                                    "succeeded": 1,
+                                    "failed": 0,
+                                    "finishedWithIssues": 0,
+                                    "noData": 0,
+                                    "mergeTimeMs": 0,
+                                },
+                                "realtime": {
+                                    "total": 0,
+                                    "succeeded": 0,
+                                    "failed": 0,
+                                    "finishedWithIssues": 0,
+                                    "noData": 0,
+                                },
+                                "manual": {
+                                    "total": 0,
+                                    "succeeded": 0,
+                                    "failed": 0,
+                                    "finishedWithIssues": 0,
+                                    "noData": 0,
+                                },
+                            },
+                            "recentFailedMerges": [],
+                            "mergeErrorsCount": 1,
+                            "activeUsers24h": 2,
+                        }
+                    ),
+                    SchoolSnapshot.from_dict(
+                        {
+                            "snapshotDate": "2026-04-12",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": "Banner",
+                            "products": [],
+                            "merges": {
+                                "nightly": {
+                                    "total": 1,
+                                    "succeeded": 1,
+                                    "failed": 0,
+                                    "finishedWithIssues": 0,
+                                    "noData": 0,
+                                    "mergeTimeMs": 0,
+                                },
+                                "realtime": {
+                                    "total": 0,
+                                    "succeeded": 0,
+                                    "failed": 0,
+                                    "finishedWithIssues": 0,
+                                    "noData": 0,
+                                },
+                                "manual": {
+                                    "total": 0,
+                                    "succeeded": 0,
+                                    "failed": 0,
+                                    "finishedWithIssues": 0,
+                                    "noData": 0,
+                                },
+                            },
+                            "recentFailedMerges": [],
+                            "mergeErrorsCount": 0,
+                            "activeUsers24h": 3,
+                        }
+                    ),
+                ]
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
+            "app.main.start_scheduled_sync_service",
+            new=self._async_noop,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=self._async_noop,
+        ):
+            with TestClient(app) as client:
+                response = client.get("/api/client-health/history", headers=AUTH_HEADERS)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [snapshot["snapshotDate"] for snapshot in response.json()["snapshots"]],
+            ["2026-01-15", "2026-04-12"],
+        )
+
+    def test_history_endpoint_still_supports_explicit_day_windows(self):
+        init_db()
+        db = get_db()
+        try:
+            db.add_all(
+                [
+                    SchoolSnapshot.from_dict(
+                        {
+                            "snapshotDate": "2026-04-01",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": "Banner",
+                            "products": [],
+                            "merges": {
+                                "nightly": {
+                                    "total": 1,
+                                    "succeeded": 1,
+                                    "failed": 0,
+                                    "finishedWithIssues": 0,
+                                    "noData": 0,
+                                    "mergeTimeMs": 0,
+                                },
+                                "realtime": {
+                                    "total": 0,
+                                    "succeeded": 0,
+                                    "failed": 0,
+                                    "finishedWithIssues": 0,
+                                    "noData": 0,
+                                },
+                                "manual": {
+                                    "total": 0,
+                                    "succeeded": 0,
+                                    "failed": 0,
+                                    "finishedWithIssues": 0,
+                                    "noData": 0,
+                                },
+                            },
+                            "recentFailedMerges": [],
+                            "mergeErrorsCount": 1,
+                            "activeUsers24h": 2,
+                        }
+                    ),
+                    SchoolSnapshot.from_dict(
+                        {
+                            "snapshotDate": "2026-04-12",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": "Banner",
+                            "products": [],
+                            "merges": {
+                                "nightly": {
+                                    "total": 1,
+                                    "succeeded": 1,
+                                    "failed": 0,
+                                    "finishedWithIssues": 0,
+                                    "noData": 0,
+                                    "mergeTimeMs": 0,
+                                },
+                                "realtime": {
+                                    "total": 0,
+                                    "succeeded": 0,
+                                    "failed": 0,
+                                    "finishedWithIssues": 0,
+                                    "noData": 0,
+                                },
+                                "manual": {
+                                    "total": 0,
+                                    "succeeded": 0,
+                                    "failed": 0,
+                                    "finishedWithIssues": 0,
+                                    "noData": 0,
+                                },
+                            },
+                            "recentFailedMerges": [],
+                            "mergeErrorsCount": 0,
+                            "activeUsers24h": 3,
+                        }
+                    ),
+                ]
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
+            "app.main.start_scheduled_sync_service",
+            new=self._async_noop,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=self._async_noop,
+        ):
+            with TestClient(app) as client:
+                response = client.get(
+                    "/api/client-health/history",
+                    params={"days": 7},
+                    headers=AUTH_HEADERS,
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [snapshot["snapshotDate"] for snapshot in response.json()["snapshots"]],
+            ["2026-04-12"],
+        )
+
+
+class SyncRunListEndpointTests(unittest.TestCase):
+    @staticmethod
+    async def _async_noop():
+        return None
+
+    def setUp(self):
+        init_db()
+        db = get_db()
+        try:
+            db.query(SyncRun).filter(SyncRun.job_id.like("test-sync-run-%")).delete(synchronize_session=False)
+            db.commit()
+        finally:
+            db.close()
+
+    def test_sync_run_list_returns_pagination_metadata(self):
+        init_db()
+        db = get_db()
+        try:
+            db.add_all([
+                SyncRun(
+                    job_id="test-sync-run-1",
+                    scope="history-backfill-bulk",
+                    status="completed",
+                    attempted_at=datetime(2026, 4, 12, 12, 0, tzinfo=timezone.utc),
+                ),
+                SyncRun(
+                    job_id="test-sync-run-2",
+                    scope="bulk",
+                    status="running",
+                    attempted_at=datetime(2026, 4, 12, 13, 0, tzinfo=timezone.utc),
+                ),
+                SyncRun(
+                    job_id="test-sync-run-3",
+                    scope="bulk",
+                    status="failed",
+                    attempted_at=datetime(2026, 4, 12, 14, 0, tzinfo=timezone.utc),
+                ),
+            ])
+            db.commit()
+        finally:
+            db.close()
+
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
+            "app.main.start_scheduled_sync_service",
+            new=self._async_noop,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=self._async_noop,
+        ):
+            with TestClient(app) as client:
+                response = client.get("/api/client-health/sync-runs", params={"limit": 2, "offset": 1}, headers=AUTH_HEADERS)
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["totalCount"], 3)
+        self.assertEqual(payload["limit"], 2)
+        self.assertEqual(payload["offset"], 1)
+        self.assertEqual([run["jobId"] for run in payload["syncRuns"]], ["test-sync-run-2", "test-sync-run-1"])
+
+    def test_tests_use_isolated_database_path(self):
+        self.assertEqual(get_database_url(), f"sqlite:///{TEST_DB_PATH}")
+        self.assertNotEqual(TEST_DB_PATH, str(get_default_db_path()))
+
+
+class SyncRunDetailEndpointTests(unittest.TestCase):
+    @staticmethod
+    async def _async_noop():
+        return None
+
+    def setUp(self):
+        init_db()
+        db = get_db()
+        try:
+            db.query(SyncRun).filter(SyncRun.job_id.like("job-detail-%")).delete(synchronize_session=False)
+            db.commit()
+        finally:
+            db.close()
+
+    def test_sync_run_detail_returns_one_persisted_run(self):
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
+            "app.main.start_scheduled_sync_service",
+            new=self._async_noop,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=self._async_noop,
+        ):
+            init_db()
+            db = get_db()
+            try:
+                db.add(
+                    SyncRun(
+                        job_id="job-detail-1",
+                        scope="history-backfill-bulk",
+                        status="completed",
+                        attempted_at=datetime(2026, 4, 12, 12, 0, tzinfo=timezone.utc),
+                    )
+                )
+                db.commit()
+            finally:
+                db.close()
+
+            with TestClient(app) as client:
+                response = client.get("/api/client-health/sync-runs/job-detail-1", headers=AUTH_HEADERS)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["syncRun"]["jobId"], "job-detail-1")
+
+    def test_sync_run_detail_returns_404_for_missing_job(self):
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
+            "app.main.start_scheduled_sync_service",
+            new=self._async_noop,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=self._async_noop,
+        ):
+            with TestClient(app) as client:
+                response = client.get("/api/client-health/sync-runs/missing-job", headers=AUTH_HEADERS)
+
+        self.assertEqual(response.status_code, 404)
 
 
 if __name__ == "__main__":
