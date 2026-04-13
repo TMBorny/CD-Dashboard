@@ -565,14 +565,27 @@ def build_stalled_backfill_reason(
             f"last progress {_format_elapsed_for_reason(progress_age)} ago"
         )
 
-    recent_error = sync_run.error_message
+    # Only surface a "last error" that is an actual failure, not an
+    # auto-resume recovery note (which starts with "Auto-resume triggered").
+    # Including recovery notes here causes compounding verbose stall reasons
+    # where each stall embeds the previous auto-resume message verbatim.
+    def _is_recovery_note(msg: str) -> bool:
+        return isinstance(msg, str) and msg.startswith("Auto-resume triggered")
+
+    recent_error: Optional[str] = None
+    if sync_run.error_message and not _is_recovery_note(sync_run.error_message):
+        recent_error = sync_run.error_message
     if not recent_error and sync_run.errors_json:
         try:
             parsed_errors = json.loads(sync_run.errors_json)
-            if isinstance(parsed_errors, list) and parsed_errors:
-                recent_error = parsed_errors[-1]
+            if isinstance(parsed_errors, list):
+                # Walk from the end, skipping recovery notes
+                for entry in reversed(parsed_errors):
+                    if not _is_recovery_note(entry):
+                        recent_error = entry
+                        break
         except json.JSONDecodeError:
-            recent_error = None
+            pass
 
     if recent_error:
         fragments.append(f"last error: {recent_error}")
@@ -765,8 +778,13 @@ def prepare_backfill_auto_resume(job: dict, stalled_reason: str, *, now: Optiona
     recovery_note = (
         f"Auto-resume triggered at {reference_now.isoformat()} after stall: {stalled_reason}"
     )
+    # Record the event in the errors log (non-fatal) but do NOT write into
+    # failureReason — that field is reserved for terminal failures.  Clearing
+    # it here ensures a previously-failed job that is now recovering doesn't
+    # keep showing a stale failure reason while it is actively running.
     append_job_error(job, recovery_note)
-    job["failureReason"] = f"Recovering from stall: {stalled_reason}"
+    job["recoveryNote"] = recovery_note
+    job["failureReason"] = None
     job["statusDetail"] = "auto_resuming"
     job["finishedAt"] = None
     job["error"] = None
