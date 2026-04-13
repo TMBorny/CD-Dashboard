@@ -19,11 +19,14 @@ type OperationJobStatus = {
 };
 
 const queryClient = useQueryClient();
+const defaultEndDate = new Date();
+const defaultStartDate = new Date(defaultEndDate);
+defaultStartDate.setDate(defaultStartDate.getDate() - 13);
 const allSchoolsSelected = ref(true);
 const selectedSchools = ref<string[]>([]);
 const schoolSearch = ref('');
-const startDate = ref('2026-01-01');
-const endDate = ref(new Date().toISOString().slice(0, 10));
+const startDate = ref(defaultStartDate.toISOString().slice(0, 10));
+const endDate = ref(defaultEndDate.toISOString().slice(0, 10));
 const activeMode = ref<OperationMode | null>(null);
 const statusMessage = ref<string | null>(null);
 const operationError = ref<string | null>(null);

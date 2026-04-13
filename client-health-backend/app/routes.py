@@ -26,10 +26,12 @@ _sync_jobs: dict[str, dict] = {}
 _active_sync_job_id: Optional[str] = None
 _scheduled_sync_task: Optional[asyncio.Task] = None
 _scheduled_sync_stop_event: Optional[asyncio.Event] = None
+_backfill_recovery_task: Optional[asyncio.Task] = None
 _last_job_trigger_monotonic: float = 0.0
 EXCLUDED_SCHOOL_TERMS = ("demo", "test", "sandbox", "baseline")
 JOB_TRIGGER_COOLDOWN_SECONDS = 15
 BACKFILL_STALL_THRESHOLD_SECONDS = 10 * 60
+BACKFILL_AUTO_RESUME_POLL_SECONDS = 60
 FAILED_UNITS_SAMPLE_LIMIT = 10
 
 
@@ -49,6 +51,14 @@ def normalize_utc_datetime(value: Optional[datetime]) -> Optional[datetime]:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def snapshot_has_measured_merge_errors(snapshot_date: str, created_at: Optional[datetime]) -> bool:
+    """Return True when the snapshot was captured on the same New York calendar day."""
+    normalized_created_at = normalize_utc_datetime(created_at)
+    if normalized_created_at is None:
+        return False
+    return normalized_created_at.astimezone(SCHEDULE_TIMEZONE).strftime("%Y-%m-%d") == snapshot_date
 
 
 def enforce_job_trigger_cooldown(action: str) -> None:
@@ -271,7 +281,14 @@ async def get_client_health_history(
             query = query.filter(SchoolSnapshot.school == school)
 
         snapshots = query.order_by(SchoolSnapshot.snapshot_date).all()
-        return {"snapshots": [s.to_dict() for s in snapshots]}
+        serialized_snapshots: list[dict] = []
+        for snapshot in snapshots:
+            payload = snapshot.to_dict()
+            if not snapshot_has_measured_merge_errors(snapshot.snapshot_date, snapshot.created_at):
+                payload["mergeErrorsCount"] = None
+            serialized_snapshots.append(payload)
+
+        return {"snapshots": serialized_snapshots}
     finally:
         db.close()
 
@@ -505,6 +522,69 @@ def derive_sync_run_status(
     return status, None
 
 
+def _format_elapsed_for_reason(age_seconds: float) -> str:
+    """Render elapsed time for operator-facing failure reasons."""
+    rounded = max(0, int(round(age_seconds)))
+    if rounded < 60:
+        return f"{rounded}s"
+    minutes, seconds = divmod(rounded, 60)
+    if minutes < 60:
+        return f"{minutes}m" if seconds == 0 else f"{minutes}m {seconds}s"
+    hours, remaining_minutes = divmod(minutes, 60)
+    return f"{hours}h" if remaining_minutes == 0 else f"{hours}h {remaining_minutes}m"
+
+
+def build_stalled_backfill_reason(
+    sync_run: SyncRun,
+    *,
+    now: Optional[datetime] = None,
+) -> str:
+    """Build the best-effort reason string for a stalled backfill run."""
+    reference_now = now or datetime.now(timezone.utc)
+    fragments: list[str] = []
+
+    heartbeat_at = normalize_utc_datetime(sync_run.last_heartbeat_at)
+    if heartbeat_at:
+        heartbeat_age = (reference_now - heartbeat_at).total_seconds()
+        fragments.append(
+            f"No heartbeat for {_format_elapsed_for_reason(heartbeat_age)}"
+        )
+    else:
+        fragments.append("Backfill stopped reporting heartbeats")
+
+    if sync_run.current_school or sync_run.current_snapshot_date:
+        unit_target = sync_run.current_school or "unknown school"
+        if sync_run.current_snapshot_date:
+            unit_target = f"{unit_target} on {sync_run.current_snapshot_date}"
+        fragments.append(f"while processing {unit_target}")
+
+    progress_at = normalize_utc_datetime(sync_run.last_progress_at)
+    if progress_at:
+        progress_age = (reference_now - progress_at).total_seconds()
+        fragments.append(
+            f"last progress {_format_elapsed_for_reason(progress_age)} ago"
+        )
+
+    recent_error = sync_run.error_message
+    if not recent_error and sync_run.errors_json:
+        try:
+            parsed_errors = json.loads(sync_run.errors_json)
+            if isinstance(parsed_errors, list) and parsed_errors:
+                recent_error = parsed_errors[-1]
+        except json.JSONDecodeError:
+            recent_error = None
+
+    if recent_error:
+        fragments.append(f"last error: {recent_error}")
+
+    return "; ".join(fragments)
+
+
+def append_job_error(job: dict, message: str) -> None:
+    """Append a bounded operator-facing issue entry to a job payload."""
+    job["errors"] = [*(job.get("errors") or []), message][-20:]
+
+
 def serialize_persisted_sync_run(sync_run: SyncRun) -> dict:
     """Serialize a DB-backed sync run with derived operator-facing status fields."""
     payload = sync_run.to_dict()
@@ -518,6 +598,8 @@ def serialize_persisted_sync_run(sync_run: SyncRun) -> dict:
     payload["status"] = derived_status
     if derived_detail and not payload.get("statusDetail"):
         payload["statusDetail"] = derived_detail
+    if derived_status == "stalled" and not payload.get("failureReason"):
+        payload["failureReason"] = build_stalled_backfill_reason(sync_run)
     if sync_run.last_heartbeat_at:
         payload["stallThresholdSeconds"] = BACKFILL_STALL_THRESHOLD_SECONDS
     return payload
@@ -588,7 +670,7 @@ def get_sync_run_or_404(db, job_id: str) -> SyncRun:
 
 def build_backfill_job_from_sync_run(sync_run: SyncRun) -> dict:
     """Rehydrate an in-memory job payload from the persisted sync-run row."""
-    return create_backfill_job_payload(
+    job = create_backfill_job_payload(
         job_id=sync_run.job_id,
         school=sync_run.school,
         start_date=sync_run.start_date or "",
@@ -596,6 +678,49 @@ def build_backfill_job_from_sync_run(sync_run: SyncRun) -> dict:
         date_count=sync_run.date_count or 0,
         scope=sync_run.scope,
     )
+    job.update(
+        {
+            "status": sync_run.status,
+            "snapshotDate": sync_run.snapshot_date,
+            "schoolsProcessed": sync_run.schools_processed or 0,
+            "totalSchools": sync_run.total_schools or 0,
+            "startedAt": sync_run.started_at.isoformat() if sync_run.started_at else None,
+            "finishedAt": sync_run.finished_at.isoformat() if sync_run.finished_at else None,
+            "lastHeartbeatAt": (
+                sync_run.last_heartbeat_at.isoformat() if sync_run.last_heartbeat_at else None
+            ),
+            "lastProgressAt": (
+                sync_run.last_progress_at.isoformat() if sync_run.last_progress_at else None
+            ),
+            "currentSchool": sync_run.current_school,
+            "currentSnapshotDate": sync_run.current_snapshot_date,
+            "completedUnits": sync_run.completed_units or 0,
+            "failedUnits": sync_run.failed_units or 0,
+            "skippedUnits": sync_run.skipped_units or 0,
+            "statusDetail": sync_run.status_detail,
+            "failureReason": sync_run.failure_reason,
+            "failedUnitsSample": json.loads(sync_run.failed_units_sample_json)
+            if sync_run.failed_units_sample_json
+            else [],
+            "checkpointState": json.loads(sync_run.checkpoint_state_json)
+            if sync_run.checkpoint_state_json
+            else None,
+            "errors": json.loads(sync_run.errors_json) if sync_run.errors_json else [],
+            "timing": json.loads(sync_run.timing_json) if sync_run.timing_json else None,
+            "error": sync_run.error_message,
+        }
+    )
+    return job
+
+
+def summarize_backfill_work_unit_statuses(db, job_id: str) -> dict[str, int]:
+    """Return cumulative work-unit counts for a backfill job."""
+    counts = {"pending": 0, "running": 0, "completed": 0, "failed": 0, "skipped": 0}
+    units = db.query(BackfillWorkUnit).filter(BackfillWorkUnit.job_id == job_id).all()
+    for unit in units:
+        if unit.status in counts:
+            counts[unit.status] += 1
+    return counts
 
 
 async def restart_backfill_job(job_id: str, mode: str) -> dict:
@@ -632,6 +757,62 @@ async def restart_backfill_job(job_id: str, mode: str) -> dict:
         return serialize_sync_job(job)
     finally:
         db.close()
+
+
+def prepare_backfill_auto_resume(job: dict, stalled_reason: str, *, now: Optional[datetime] = None) -> str:
+    """Annotate a stalled backfill job before automatically resuming it."""
+    reference_now = now or datetime.now(timezone.utc)
+    recovery_note = (
+        f"Auto-resume triggered at {reference_now.isoformat()} after stall: {stalled_reason}"
+    )
+    append_job_error(job, recovery_note)
+    job["failureReason"] = f"Recovering from stall: {stalled_reason}"
+    job["statusDetail"] = "auto_resuming"
+    job["finishedAt"] = None
+    job["error"] = None
+    return recovery_note
+
+
+async def maybe_auto_resume_stalled_backfill(now: Optional[datetime] = None) -> Optional[dict]:
+    """Restart one stalled backfill when the worker is otherwise idle."""
+    if get_active_sync_job():
+        return None
+
+    reference_now = now or datetime.now(timezone.utc)
+    db = get_db()
+    try:
+        candidates = (
+            db.query(SyncRun)
+            .filter(SyncRun.status == "running")
+            .order_by(SyncRun.attempted_at.desc())
+            .all()
+        )
+        for sync_run in candidates:
+            derived_status, _ = derive_sync_run_status(
+                sync_run.status,
+                scope=sync_run.scope,
+                finished_at=sync_run.finished_at,
+                last_heartbeat_at=sync_run.last_heartbeat_at,
+                failed_units=sync_run.failed_units or 0,
+            )
+            if derived_status != "stalled":
+                continue
+
+            stalled_reason = build_stalled_backfill_reason(sync_run, now=reference_now)
+            job = build_backfill_job_from_sync_run(sync_run)
+            recovery_note = prepare_backfill_auto_resume(job, stalled_reason, now=reference_now)
+            start_backfill_job_task(job, mode="resume")
+            persist_job_state(job["jobId"])
+            logger.warning(
+                "Auto-resuming stalled backfill job_id=%s reason=%s",
+                job["jobId"],
+                stalled_reason,
+            )
+            return {"jobId": job["jobId"], "note": recovery_note}
+    finally:
+        db.close()
+
+    return None
 
 
 def enqueue_sync_job(
@@ -725,9 +906,27 @@ async def run_scheduled_sync_loop(stop_event: asyncio.Event):
             await maybe_enqueue_scheduled_sync()
 
 
+async def run_backfill_recovery_loop(stop_event: asyncio.Event):
+    """Periodically resume stalled backfills when no other job is active."""
+    while not stop_event.is_set():
+        try:
+            await maybe_auto_resume_stalled_backfill()
+        except Exception:
+            logger.exception("Automatic stalled-backfill recovery failed")
+
+        try:
+            await asyncio.wait_for(
+                stop_event.wait(),
+                timeout=BACKFILL_AUTO_RESUME_POLL_SECONDS,
+            )
+            break
+        except asyncio.TimeoutError:
+            continue
+
+
 async def start_scheduled_sync_service():
     """Start the daily scheduler and queue a same-day catch-up when needed."""
-    global _scheduled_sync_stop_event, _scheduled_sync_task
+    global _scheduled_sync_stop_event, _scheduled_sync_task, _backfill_recovery_task
 
     if _scheduled_sync_task and not _scheduled_sync_task.done():
         return
@@ -735,20 +934,26 @@ async def start_scheduled_sync_service():
     _scheduled_sync_stop_event = asyncio.Event()
     await maybe_enqueue_catchup_sync()
     _scheduled_sync_task = asyncio.create_task(run_scheduled_sync_loop(_scheduled_sync_stop_event))
+    _backfill_recovery_task = asyncio.create_task(
+        run_backfill_recovery_loop(_scheduled_sync_stop_event)
+    )
 
 
 async def stop_scheduled_sync_service():
     """Stop the daily scheduler task cleanly."""
-    global _scheduled_sync_stop_event, _scheduled_sync_task
+    global _scheduled_sync_stop_event, _scheduled_sync_task, _backfill_recovery_task
 
     if _scheduled_sync_stop_event:
         _scheduled_sync_stop_event.set()
 
     if _scheduled_sync_task:
         await asyncio.gather(_scheduled_sync_task, return_exceptions=True)
+    if _backfill_recovery_task:
+        await asyncio.gather(_backfill_recovery_task, return_exceptions=True)
 
     _scheduled_sync_stop_event = None
     _scheduled_sync_task = None
+    _backfill_recovery_task = None
 
 
 def select_schools_for_sync(schools: list[dict], school: Optional[str]) -> list[dict]:
@@ -990,7 +1195,7 @@ def update_backfill_job_state(
         job["schoolsProcessed"] = job["completedUnits"] + job["failedUnits"] + job["skippedUnits"]
 
     if error_message:
-        job["errors"] = [*(job.get("errors") or []), error_message][-20:]
+        append_job_error(job, error_message)
 
     if failed_unit:
         job["failedUnitsSample"] = append_failed_unit_sample(
@@ -1115,7 +1320,7 @@ def resolve_backfill_date_range(start_date: str, end_date: Optional[str]) -> tup
     normalized_end = (
         parse_snapshot_date(end_date, "endDate")
         if end_date
-        else datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        else get_new_york_snapshot_date()
     )
 
     if normalized_start > normalized_end:
@@ -1448,10 +1653,9 @@ def build_snapshot_from_merge_history(
                 "noData": manual_nodata,
             },
         },
-        # Historical approximation: the current-state merge-errors overview endpoint
-        # does not expose per-day counts, so use failed merge history entries per day.
         "recentFailedMerges": failed_entries[:10],
-        "mergeErrorsCount": len(failed_entries),
+        # Historical backfills do not have a trustworthy per-day open merge error total.
+        "mergeErrorsCount": None,
         "activeUsers24h": active_users_24h,
         "createdAt": datetime.now(timezone.utc).isoformat(),
     }
@@ -1623,7 +1827,7 @@ async def fetch_school_health_for_date(
     school: str, display_name: str, products: list, snapshot_date: str
 ) -> dict:
     """Fetch one day's historical health data for a school."""
-    today_snapshot_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today_snapshot_date = get_new_york_snapshot_date()
     if snapshot_date == today_snapshot_date:
         return await fetch_school_health(
             school=school,
@@ -1651,6 +1855,8 @@ async def fetch_school_health_for_date(
         merge_entries = extract_merge_history_entries(merge_history_data)
     except Exception as e:
         sync_errors.append(f"{school} {snapshot_date}: merge history request failed ({e})")
+    if not merge_entries and sync_errors:
+        raise RuntimeError("; ".join(sync_errors))
 
     active_users_24h = 0
     try:
@@ -1663,7 +1869,15 @@ async def fetch_school_health_for_date(
         )
         active_users_24h = len(extract_unique_activity_users(activity_data))
     except Exception as e:
+        # Non-fatal: log the failure and continue with active_users_24h=0
+        # so a bad activity endpoint doesn't abort the whole work unit.
         sync_errors.append(f"{school} {snapshot_date}: user activity request failed ({e})")
+        logger.warning(
+            "Backfill activity fetch failed school=%s snapshot_date=%s error=%s",
+            school,
+            snapshot_date,
+            e,
+        )
 
     sis_platform = None
     try:
@@ -1730,6 +1944,7 @@ async def run_history_backfill_job(
         snapshot_dates = build_snapshot_dates(start_date, end_date)
         total_work_units = len(schools) * len(snapshot_dates)
         job["totalSchools"] = total_work_units
+        job["schoolsProcessed"] = job.get("completedUnits", 0) + job.get("failedUnits", 0) + job.get("skippedUnits", 0)
         job["statusDetail"] = "running"
         db = get_db()
         try:
@@ -1742,6 +1957,19 @@ async def run_history_backfill_job(
             db.commit()
         finally:
             db.close()
+
+        db = get_db()
+        try:
+            status_counts = summarize_backfill_work_unit_statuses(db, job_id)
+        finally:
+            db.close()
+        job["completedUnits"] = status_counts["completed"]
+        job["failedUnits"] = status_counts["failed"]
+        job["skippedUnits"] = status_counts["skipped"]
+        job["schoolsProcessed"] = (
+            job["completedUnits"] + job["failedUnits"] + job["skippedUnits"]
+        )
+        job["totalSchools"] = sum(status_counts.values())
         persist_job_state(job_id)
 
         db = get_db()
@@ -1749,7 +1977,7 @@ async def run_history_backfill_job(
             work_units = get_backfill_work_units(db, job_id, {"pending"})
         finally:
             db.close()
-        job["totalSchools"] = len(work_units)
+        job["schoolsProcessed"] = job.get("completedUnits", 0) + job.get("failedUnits", 0) + job.get("skippedUnits", 0)
         persist_job_state(job_id)
 
         for unit in work_units:
@@ -1863,7 +2091,7 @@ async def run_history_backfill_job(
                 "statusDetail": "completed_with_failures" if job.get("failedUnits", 0) else "completed",
                 "snapshotDate": snapshot_dates[-1],
                 "schoolsProcessed": job.get("completedUnits", 0) + job.get("failedUnits", 0) + job.get("skippedUnits", 0),
-                "totalSchools": len(work_units),
+                "totalSchools": job.get("totalSchools", total_work_units),
                 "timing": {
                     "listSchoolsSec": round(list_time - start_time, 2),
                     "fetchHealthSec": round(fetch_time - list_time, 2),
@@ -1875,6 +2103,8 @@ async def run_history_backfill_job(
         )
         if job.get("failedUnits", 0):
             job["failureReason"] = f"{job['failedUnits']} work unit(s) failed"
+        else:
+            job["failureReason"] = None
         update_backfill_job_state(job, checkpoint_status=job["statusDetail"])
         persist_job_state(job_id)
         logger.info(
@@ -1886,17 +2116,31 @@ async def run_history_backfill_job(
             len(work_units),
         )
     except Exception as e:
+        finished_at = datetime.now(timezone.utc)
         job.update(
             {
                 "status": "failed",
                 "statusDetail": "failed",
                 "failureReason": str(e),
                 "error": str(e),
-                "finishedAt": datetime.now(timezone.utc).isoformat(),
+                "finishedAt": finished_at.isoformat(),
             }
         )
         update_backfill_job_state(job, checkpoint_status="failed")
         persist_job_state(job_id)
+        # Also mark the SyncRun DB record as failed so it isn't left in 'running'.
+        db = get_db()
+        try:
+            sync_run = db.query(SyncRun).filter(SyncRun.job_id == job_id).first()
+            if sync_run:
+                sync_run.status = "failed"
+                sync_run.finished_at = finished_at
+                sync_run.error_message = str(e)
+                db.commit()
+        except Exception as db_err:
+            logger.warning("Failed to update SyncRun on job failure job_id=%s: %s", job_id, db_err)
+        finally:
+            db.close()
         logger.exception("Backfill job failed job_id=%s mode=%s error=%s", job_id, mode, e)
     finally:
         if _active_sync_job_id == job_id:

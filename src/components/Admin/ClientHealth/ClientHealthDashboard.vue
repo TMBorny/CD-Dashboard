@@ -139,8 +139,13 @@ const chartDates = computed(() => nightlyBreakdownDates.value);
 
 // Open merge errors over time
 const mergeErrorsSeries = computed(() => {
-  const entries = aggregateByDate((s) => s.mergeErrorsCount);
-  return [{ name: 'Open Merge Errors', data: entries.map(([, v]) => v) }];
+  const byDate = new Map<string, number | null>();
+  chartDates.value.forEach((date) => byDate.set(date, null));
+  filteredHistory.value.forEach((snapshot: ClientHealthSnapshot) => {
+    if (snapshot.mergeErrorsCount == null) return;
+    byDate.set(snapshot.snapshotDate, (byDate.get(snapshot.snapshotDate) ?? 0) + snapshot.mergeErrorsCount);
+  });
+  return [{ name: 'Open Merge Errors', data: chartDates.value.map((date) => byDate.get(date) ?? null) }];
 });
 const mergeErrorsOptions = computed(() => ({
   ...useChartOptions({
@@ -179,7 +184,8 @@ const atRiskSeries = computed(() => {
     const n = s.merges.nightly;
     const validTotal = n.total - (n.noData || 0);
     const rate = validTotal > 0 ? ((n.succeeded + (n.finishedWithIssues || 0) * 0.5) / validTotal) * 100 : 0;
-    const score = Math.max(0, Math.min(100, rate - Math.min(20, Math.log2(s.mergeErrorsCount + 1) * 4)));
+    const mergeErrorsCount = s.mergeErrorsCount ?? 0;
+    const score = Math.max(0, Math.min(100, rate - Math.min(20, Math.log2(mergeErrorsCount + 1) * 4)));
     if (score < 65) byDate.set(s.snapshotDate, (byDate.get(s.snapshotDate) ?? 0) + 1);
   });
   return [{ name: 'Schools at Risk', data: chartDates.value.map((d) => byDate.get(d) ?? 0) }];
@@ -259,7 +265,7 @@ const handleRowClick = (school: ClientHealthSnapshot) => {
           <div class="flex flex-col rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
             <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Errors</p>
             <h3 class="mt-2 text-base font-semibold text-slate-950">Open Merge Errors</h3>
-            <p class="mt-1 text-xs text-slate-500">Total open errors captured at each sync, across filtered scope.</p>
+            <p class="mt-1 text-xs text-slate-500">Uses only directly measured open-error counts; days without a recorded count are left blank.</p>
             <div class="mt-4 flex-1 min-h-[250px]">
               <VueApexCharts type="line" :options="mergeErrorsOptions" :series="mergeErrorsSeries" height="100%" />
             </div>

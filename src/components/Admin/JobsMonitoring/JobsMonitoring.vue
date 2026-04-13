@@ -1,44 +1,21 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { RouterLink } from 'vue-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
 import { getSyncRuns, resumeHistoryBackfill, retryHistoryBackfillFailures } from '@/api';
 import Badge from '@/components/ui/Badge.vue';
-
-type SyncRun = {
-  jobId: string;
-  school?: string | null;
-  scope: string;
-  status: string;
-  snapshotDate?: string | null;
-  schoolsProcessed?: number;
-  totalSchools?: number;
-  attemptedAt?: string | null;
-  startedAt?: string | null;
-  finishedAt?: string | null;
-  startDate?: string | null;
-  endDate?: string | null;
-  dateCount?: number | null;
-  lastHeartbeatAt?: string | null;
-  lastProgressAt?: string | null;
-  currentSchool?: string | null;
-  currentSnapshotDate?: string | null;
-  completedUnits?: number;
-  failedUnits?: number;
-  skippedUnits?: number;
-  statusDetail?: string | null;
-  failureReason?: string | null;
-  failedUnitsSample?: Array<{ school?: string; snapshotDate?: string; attemptCount?: number; error?: string }>;
-  checkpointState?: {
-    currentSchool?: string | null;
-    currentSnapshotDate?: string | null;
-    remainingUnits?: number;
-  } | null;
-  stallThresholdSeconds?: number;
-  errors?: string[];
-  errorCount?: number;
-  timing?: { totalSec?: number } | null;
-  errorMessage?: string | null;
-};
+import {
+  canResumeJob,
+  canRetryFailuresForJob,
+  formatBackfillRange,
+  formatDateTime,
+  formatJobProgress,
+  formatJobRuntime,
+  formatJobScope,
+  formatRelativeAge,
+  getJobStatusTone,
+  type JobRun,
+} from '@/types/jobRuns';
 
 const queryClient = useQueryClient();
 
@@ -68,57 +45,15 @@ const mutationError = computed(() => {
   return resumeError?.response?.data?.detail || retryError?.response?.data?.detail || resumeError?.message || retryError?.message || null;
 });
 
-const getStatusTone = (status: string) => {
-  switch (status.toLowerCase()) {
-    case 'completed': return 'emerald';
-    case 'completed_with_failures': return 'amber';
-    case 'running': return 'slate';
-    case 'stalled': return 'amber';
-    case 'failed': return 'rose';
-    default: return 'amber';
-  }
-};
-
-const formatScope = (scope: string) => scope.replaceAll('-', ' ');
-
-const formatRuntime = (run: SyncRun) => {
-  if (run.timing?.totalSec != null) return `${run.timing.totalSec.toFixed(1)}s`;
-  if (!run.finishedAt || !run.startedAt) return null;
-  const runtimeMs = new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime();
-  return `${(runtimeMs / 1000).toFixed(1)}s`;
-};
-
-const formatProgress = (run: SyncRun) => {
-  if (!run.totalSchools) return null;
-  return `${run.schoolsProcessed ?? 0} / ${run.totalSchools}`;
-};
-
-const formatBackfillRange = (run: SyncRun) => {
-  if (!run.startDate) return null;
-  const end = run.endDate ?? run.startDate;
-  const span = run.dateCount ? ` (${run.dateCount} day${run.dateCount === 1 ? '' : 's'})` : '';
-  return `${run.startDate} to ${end}${span}`;
-};
-
-const formatDateTime = (value?: string | null) => value ? new Date(value).toLocaleString() : 'Unknown';
-const formatRelativeAge = (value?: string | null) => {
-  if (!value) return 'Unknown';
-  const ageSeconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
-  if (ageSeconds < 60) return `${ageSeconds}s ago`;
-  if (ageSeconds < 3600) return `${Math.round(ageSeconds / 60)}m ago`;
-  return `${Math.round(ageSeconds / 3600)}h ago`;
-};
-const canResume = (run: SyncRun) => run.scope.includes('backfill') && ['stalled', 'failed'].includes(run.status);
-const canRetryFailures = (run: SyncRun) => run.scope.includes('backfill') && run.status === 'completed_with_failures' && (run.failedUnits ?? 0) > 0;
 const activeResumeJobId = computed(() => resumeMutation.variables as unknown as string | undefined);
 const activeRetryJobId = computed(() => retryFailuresMutation.variables as unknown as string | undefined);
-const runActionPending = (run: SyncRun) =>
+const runActionPending = (run: JobRun) =>
   (resumeMutation.isPending && activeResumeJobId.value === run.jobId)
   || (retryFailuresMutation.isPending && activeRetryJobId.value === run.jobId);
-const triggerResume = async (run: SyncRun) => {
+const triggerResume = async (run: JobRun) => {
   await resumeMutation.mutateAsync(run.jobId);
 };
-const triggerRetryFailures = async (run: SyncRun) => {
+const triggerRetryFailures = async (run: JobRun) => {
   await retryFailuresMutation.mutateAsync(run.jobId);
 };
 
@@ -138,11 +73,12 @@ const descriptorPopoverClass = 'pointer-events-none absolute left-1/2 top-full z
 
     <div v-if="isLoading" class="text-sm text-slate-500">Loading jobs...</div>
     <div v-else-if="error" class="text-sm text-rose-500">Failed to load job history.</div>
-    <div v-if="mutationError" class="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-      {{ mutationError }}
-    </div>
-    
-    <div v-else class="rounded-[24px] border border-slate-200 bg-white p-3 shadow-sm">
+    <div v-else class="space-y-4">
+      <div v-if="mutationError" class="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+        {{ mutationError }}
+      </div>
+
+      <div class="rounded-[24px] border border-slate-200 bg-white p-3 shadow-sm">
       <table class="w-full border-separate border-spacing-y-3 text-left text-sm">
         <thead class="text-xs uppercase tracking-[0.1em] text-slate-500">
           <tr>
@@ -204,7 +140,7 @@ const descriptorPopoverClass = 'pointer-events-none absolute left-1/2 top-full z
         </thead>
         <tbody>
           <tr
-            v-for="run in (data?.syncRuns as SyncRun[])"
+            v-for="run in (data?.syncRuns as JobRun[])"
             :key="run.jobId"
             class="group transition"
           >
@@ -213,20 +149,20 @@ const descriptorPopoverClass = 'pointer-events-none absolute left-1/2 top-full z
               <div class="mt-1 text-xs text-slate-500">{{ formatDateTime(run.attemptedAt) }}</div>
             </td>
             <td class="border-y border-slate-200 bg-slate-50/70 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300 group-hover:bg-white">
-              <div class="font-medium text-slate-900 capitalize">{{ formatScope(run.scope) }}</div>
+              <div class="font-medium text-slate-900 capitalize">{{ formatJobScope(run.scope) }}</div>
               <div v-if="run.school" class="mt-1 text-xs text-slate-500">Target: {{ run.school }}</div>
             </td>
             <td class="border-y border-slate-200 bg-slate-50/70 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300 group-hover:bg-white">
-              <Badge :tone="getStatusTone(run.status)">{{ run.status }}</Badge>
-              <div v-if="formatRuntime(run)" class="mt-2 text-xs text-slate-500">
-                {{ formatRuntime(run) }}
+              <Badge :tone="getJobStatusTone(run.status)">{{ run.status }}</Badge>
+              <div v-if="formatJobRuntime(run)" class="mt-2 text-xs text-slate-500">
+                {{ formatJobRuntime(run) }}
               </div>
               <div v-if="run.statusDetail" class="mt-2 text-xs text-slate-500">
                 {{ run.statusDetail.replaceAll('_', ' ') }}
               </div>
             </td>
             <td class="border-y border-slate-200 bg-slate-50/70 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300 group-hover:bg-white">
-              <div v-if="formatProgress(run)" class="font-medium text-slate-900" :title="run.scope.includes('backfill') ? 'Completed snapshots out of total school-day snapshots in this backfill' : 'Completed schools out of total schools in this sync'">{{ formatProgress(run) }}</div>
+              <div v-if="formatJobProgress(run)" class="font-medium text-slate-900" :title="run.scope.includes('backfill') ? 'Completed snapshots out of total school-day snapshots in this backfill' : 'Completed schools out of total schools in this sync'">{{ formatJobProgress(run) }}</div>
               <div v-else class="text-xs text-slate-400">No progress data</div>
               <div v-if="run.startedAt" class="mt-2 text-xs text-slate-500">
                 Started {{ formatDateTime(run.startedAt) }}
@@ -254,6 +190,12 @@ const descriptorPopoverClass = 'pointer-events-none absolute left-1/2 top-full z
               </div>
             </td>
             <td class="rounded-r-3xl border-y border-r border-slate-200 bg-slate-50/70 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300 group-hover:bg-white">
+              <RouterLink
+                :to="`/admin/jobs/${run.jobId}`"
+                class="mb-3 inline-flex items-center rounded-full border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-100"
+              >
+                View details
+              </RouterLink>
               <div v-if="run.errorCount" class="mb-2 text-xs text-slate-600" title="Count of warnings and errors captured during execution">
                 {{ run.errorCount }} captured issue{{ run.errorCount === 1 ? '' : 's' }}
               </div>
@@ -274,9 +216,9 @@ const descriptorPopoverClass = 'pointer-events-none absolute left-1/2 top-full z
                   <div v-if="sample.error" class="mt-1 break-words">{{ sample.error }}</div>
                 </div>
               </div>
-              <div v-if="canResume(run) || canRetryFailures(run)" class="mt-3 flex flex-wrap gap-2">
+              <div v-if="canResumeJob(run) || canRetryFailuresForJob(run)" class="mt-3 flex flex-wrap gap-2">
                 <button
-                  v-if="canResume(run)"
+                  v-if="canResumeJob(run)"
                   class="rounded-full border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                   :disabled="runActionPending(run)"
                   @click="triggerResume(run)"
@@ -284,7 +226,7 @@ const descriptorPopoverClass = 'pointer-events-none absolute left-1/2 top-full z
                   {{ runActionPending(run) ? 'Working…' : 'Resume' }}
                 </button>
                 <button
-                  v-if="canRetryFailures(run)"
+                  v-if="canRetryFailuresForJob(run)"
                   class="rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800 transition hover:border-amber-400 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
                   :disabled="runActionPending(run)"
                   @click="triggerRetryFailures(run)"
@@ -299,6 +241,7 @@ const descriptorPopoverClass = 'pointer-events-none absolute left-1/2 top-full z
           </tr>
         </tbody>
       </table>
+      </div>
     </div>
   </div>
 </template>
