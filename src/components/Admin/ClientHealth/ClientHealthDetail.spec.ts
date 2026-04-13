@@ -84,6 +84,7 @@ describe('ClientHealthDetail', () => {
       },
     });
 
+    expect(wrapper.text()).toContain('Times shown in');
     expect(wrapper.text()).not.toContain('Sync This School');
     expect(wrapper.text()).not.toContain('Backfill From');
     expect(wrapper.find('#backfill-start-date').exists()).toBe(false);

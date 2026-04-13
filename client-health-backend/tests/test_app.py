@@ -465,6 +465,34 @@ class BackfillTrackingTests(unittest.TestCase):
 
         self.assertEqual(payload["status"], "completed_with_failures")
 
+    def test_serialize_persisted_sync_run_treats_naive_sqlite_timestamps_as_utc(self):
+        sync_run = SyncRun(
+            job_id="test-backfill-naive-time",
+            scope="history-backfill-bulk",
+            status="completed",
+            attempted_at=datetime(2026, 4, 13, 11, 30),
+            started_at=datetime(2026, 4, 13, 11, 30),
+            finished_at=datetime(2026, 4, 13, 11, 31, 22, 14631),
+        )
+
+        payload = serialize_persisted_sync_run(sync_run)
+
+        self.assertEqual(payload["attemptedAt"], "2026-04-13T11:30:00+00:00")
+        self.assertEqual(payload["startedAt"], "2026-04-13T11:30:00+00:00")
+        self.assertEqual(payload["finishedAt"], "2026-04-13T11:31:22.014631+00:00")
+
+    def test_school_snapshot_to_dict_treats_naive_sqlite_timestamps_as_utc(self):
+        snapshot = SchoolSnapshot(
+            snapshot_date="2026-04-13",
+            school="bar01",
+            display_name="Baruch College",
+            created_at=datetime(2026, 4, 13, 11, 30),
+        )
+
+        payload = snapshot.to_dict()
+
+        self.assertEqual(payload["createdAt"], "2026-04-13T11:30:00+00:00")
+
     def test_serialize_persisted_sync_run_adds_reason_for_stalled_backfill(self):
         now = datetime(2026, 4, 13, 16, 0, tzinfo=timezone.utc)
         sync_run = SyncRun(

@@ -2,12 +2,26 @@
 
 import json
 from datetime import datetime, timezone
+from typing import Optional
 from sqlalchemy import Column, String, Integer, Text, DateTime, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase
 
 
 class Base(DeclarativeBase):
     pass
+
+
+def serialize_datetime(value: Optional[datetime]) -> Optional[str]:
+    """Serialize persisted datetimes as explicit UTC timestamps.
+
+    SQLite drops tzinfo for DateTime columns, so naive values coming back out of the
+    database should be treated as UTC instead of local wall time.
+    """
+    if value is None:
+        return None
+
+    normalized = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+    return normalized.isoformat()
 
 
 class SchoolSnapshot(Base):
@@ -91,7 +105,7 @@ class SchoolSnapshot(Base):
             else [],
             "mergeErrorsCount": self.merge_errors_count,
             "activeUsers24h": self.active_users_24h,
-            "createdAt": self.created_at.isoformat() if self.created_at else None,
+            "createdAt": serialize_datetime(self.created_at),
         }
 
     @classmethod
@@ -179,14 +193,14 @@ class SyncRun(Base):
             "snapshotDate": self.snapshot_date,
             "schoolsProcessed": self.schools_processed,
             "totalSchools": self.total_schools,
-            "attemptedAt": self.attempted_at.isoformat() if self.attempted_at else None,
-            "startedAt": self.started_at.isoformat() if self.started_at else None,
-            "finishedAt": self.finished_at.isoformat() if self.finished_at else None,
+            "attemptedAt": serialize_datetime(self.attempted_at),
+            "startedAt": serialize_datetime(self.started_at),
+            "finishedAt": serialize_datetime(self.finished_at),
             "startDate": self.start_date,
             "endDate": self.end_date,
             "dateCount": self.date_count,
-            "lastHeartbeatAt": self.last_heartbeat_at.isoformat() if self.last_heartbeat_at else None,
-            "lastProgressAt": self.last_progress_at.isoformat() if self.last_progress_at else None,
+            "lastHeartbeatAt": serialize_datetime(self.last_heartbeat_at),
+            "lastProgressAt": serialize_datetime(self.last_progress_at),
             "currentSchool": self.current_school,
             "currentSnapshotDate": self.current_snapshot_date,
             "completedUnits": self.completed_units,
@@ -233,8 +247,8 @@ class BackfillWorkUnit(Base):
             "status": self.status,
             "attemptCount": self.attempt_count,
             "lastError": self.last_error,
-            "lastAttemptedAt": self.last_attempted_at.isoformat() if self.last_attempted_at else None,
-            "completedAt": self.completed_at.isoformat() if self.completed_at else None,
+            "lastAttemptedAt": serialize_datetime(self.last_attempted_at),
+            "completedAt": serialize_datetime(self.completed_at),
         }
 
 
@@ -250,7 +264,7 @@ class ExcludedSchool(Base):
     def to_dict(self) -> dict:
         return {
             "school": self.school,
-            "createdAt": self.created_at.isoformat() if self.created_at else None,
+            "createdAt": serialize_datetime(self.created_at),
         }
 
 
@@ -268,5 +282,5 @@ class SchedulerSettings(Base):
         return {
             "syncEnabled": bool(self.sync_enabled),
             "syncTime": self.sync_time,
-            "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
+            "updatedAt": serialize_datetime(self.updated_at),
         }

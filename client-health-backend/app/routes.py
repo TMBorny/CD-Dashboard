@@ -18,7 +18,7 @@ from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 
 from app.db import api_get, get_db
-from app.models import BackfillWorkUnit, ExcludedSchool, SchedulerSettings, SchoolSnapshot, SyncRun
+from app.models import BackfillWorkUnit, ExcludedSchool, SchedulerSettings, SchoolSnapshot, SyncRun, serialize_datetime
 
 router = APIRouter(prefix="/api")
 logger = logging.getLogger(__name__)
@@ -347,7 +347,7 @@ async def get_client_health_sync_metadata(school: Optional[str] = Query(default=
             "lastSuccessfulSync": {
                 "school": latest_success.school,
                 "snapshotDate": latest_success.snapshot_date,
-                "createdAt": latest_success.created_at.isoformat() if latest_success.created_at else None,
+                "createdAt": serialize_datetime(latest_success.created_at),
             }
             if latest_success
             else None,
@@ -792,14 +792,10 @@ def build_backfill_job_from_sync_run(sync_run: SyncRun) -> dict:
             "snapshotDate": sync_run.snapshot_date,
             "schoolsProcessed": sync_run.schools_processed or 0,
             "totalSchools": sync_run.total_schools or 0,
-            "startedAt": sync_run.started_at.isoformat() if sync_run.started_at else None,
-            "finishedAt": sync_run.finished_at.isoformat() if sync_run.finished_at else None,
-            "lastHeartbeatAt": (
-                sync_run.last_heartbeat_at.isoformat() if sync_run.last_heartbeat_at else None
-            ),
-            "lastProgressAt": (
-                sync_run.last_progress_at.isoformat() if sync_run.last_progress_at else None
-            ),
+            "startedAt": serialize_datetime(sync_run.started_at),
+            "finishedAt": serialize_datetime(sync_run.finished_at),
+            "lastHeartbeatAt": serialize_datetime(sync_run.last_heartbeat_at),
+            "lastProgressAt": serialize_datetime(sync_run.last_progress_at),
             "currentSchool": sync_run.current_school,
             "currentSnapshotDate": sync_run.current_snapshot_date,
             "completedUnits": sync_run.completed_units or 0,

@@ -17,6 +17,7 @@ import {
   type JobRun,
   type SyncRunsResponse,
 } from '@/types/jobRuns';
+import { getLocalTimeZoneLabel } from '@/utils/dateTime';
 
 const queryClient = useQueryClient();
 const PAGE_SIZE = 25;
@@ -83,6 +84,7 @@ const goToNextPage = () => {
 const descriptorClass = 'group relative inline-flex items-center gap-2';
 const descriptorButtonClass = 'flex h-5 w-5 items-center justify-center rounded-full border border-slate-300 bg-white text-[11px] font-semibold text-slate-500 transition hover:border-slate-400 hover:text-slate-700';
 const descriptorPopoverClass = 'pointer-events-none absolute left-1/2 top-full z-20 mt-2 hidden w-64 -translate-x-1/2 rounded-2xl border border-slate-200 bg-white p-3 text-[11px] leading-5 text-slate-600 shadow-lg group-hover:block';
+const localTimeZoneLabel = getLocalTimeZoneLabel();
 </script>
 
 <template>
@@ -91,6 +93,7 @@ const descriptorPopoverClass = 'pointer-events-none absolute left-1/2 top-full z
       <div>
         <h1 class="text-2xl font-semibold tracking-tight text-slate-950">Background Jobs</h1>
         <p class="mt-1 text-sm text-slate-500">Monitor bulk school syncs and historical backfill queue status.</p>
+        <p class="mt-2 text-xs text-slate-400">Times shown in {{ localTimeZoneLabel }}.</p>
       </div>
     </div>
 
@@ -132,10 +135,10 @@ const descriptorPopoverClass = 'pointer-events-none absolute left-1/2 top-full z
           <tr>
             <th class="px-6 py-4 font-semibold text-slate-600">
               <div :class="descriptorClass">
-                <span>ID / Date</span>
-                <button class="cursor-help" :class="descriptorButtonClass" aria-label="Job identity and creation time">?</button>
+                <span>ID / Local Time</span>
+                <button class="cursor-help" :class="descriptorButtonClass" aria-label="Job identity and local creation time">?</button>
                 <div :class="descriptorPopoverClass">
-                  Shows the background job id plus the time the run was first recorded by the backend.
+                  Shows the background job id plus the time the run was first recorded by the backend, displayed in your local timezone.
                 </div>
               </div>
             </th>
@@ -231,10 +234,12 @@ const descriptorPopoverClass = 'pointer-events-none absolute left-1/2 top-full z
                 Current: {{ run.currentSchool ?? 'Unknown school' }}<span v-if="run.currentSnapshotDate"> on {{ run.currentSnapshotDate }}</span>
               </div>
               <div v-if="run.lastHeartbeatAt" class="mt-2 text-xs text-slate-500">
-                Heartbeat: {{ formatRelativeAge(run.lastHeartbeatAt) }}
+                <div>Heartbeat: {{ formatRelativeAge(run.lastHeartbeatAt) }}</div>
+                <div class="mt-1 text-slate-400">{{ formatDateTime(run.lastHeartbeatAt) }}</div>
               </div>
               <div v-if="run.lastProgressAt" class="mt-1 text-xs text-slate-500">
-                Last progress: {{ formatRelativeAge(run.lastProgressAt) }}
+                <div>Last progress: {{ formatRelativeAge(run.lastProgressAt) }}</div>
+                <div class="mt-1 text-slate-400">{{ formatDateTime(run.lastProgressAt) }}</div>
               </div>
             </td>
             <td class="rounded-r-3xl border-y border-r border-slate-200 bg-slate-50/70 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300 group-hover:bg-white">

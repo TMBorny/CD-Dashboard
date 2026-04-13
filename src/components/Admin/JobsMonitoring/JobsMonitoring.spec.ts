@@ -104,6 +104,7 @@ describe('JobsMonitoring', () => {
 
     expect(wrapper.text()).toContain('Showing 1-25 of 30 jobs.');
     expect(wrapper.text()).toContain('Page 1 of 2');
+    expect(wrapper.text()).toContain('Times shown in');
     expect(getSyncRuns).toHaveBeenCalledWith({ limit: 25, offset: 0 });
 
     const nextButton = wrapper
@@ -149,6 +150,7 @@ describe('JobsMonitoring', () => {
     expect(wrapper.text()).toContain('Live updates are temporarily unavailable.');
     expect(wrapper.text()).toContain('Showing 1-1 of 1 job.');
     expect(wrapper.text()).toContain('job-123...');
+    expect(wrapper.text()).toContain('Times shown in');
     expect(wrapper.text()).not.toContain('Failed to load job history.');
   });
 });

@@ -7,6 +7,7 @@ import type { FailedMerge } from '@/types/clientHealth';
 import VueApexCharts from 'vue3-apexcharts';
 import Card from '@/components/ui/Card.vue';
 import { useChartOptions, useStackedBarChartOptions } from '@/composables/useChartOptions';
+import { formatLocalDateTime, getLocalTimeZoneLabel } from '@/utils/dateTime';
 import { formatSchoolLabel } from '@/utils/schoolNames';
 
 const route = useRoute();
@@ -14,6 +15,7 @@ const school = computed(() => String(route.params.school ?? ''));
 const coursedogBaseUrl = (import.meta.env.VITE_COURSEDOG_PRD_URL?.trim() || 'https://app.coursedog.com').replace(/\/+$/, '');
 const integrationHubUrl = computed(() => `${coursedogBaseUrl}/#/int/${school.value}`);
 const mergeReportsUrl = computed(() => `${coursedogBaseUrl}/#/int/${school.value}/merge-history`);
+const localTimeZoneLabel = getLocalTimeZoneLabel();
 
 const { data: history, isLoading: isLoadingHistory, error: historyError } = useQuery({
   queryKey: computed(() => ['clientHealthHistory', school.value]),
@@ -44,17 +46,21 @@ const schoolLabel = computed(() => formatSchoolLabel(school.value, latestSnapsho
 const lastSuccessfulSyncLabel = computed(() => {
   const createdAt = syncMetadata.value?.lastSuccessfulSync?.createdAt;
   if (!createdAt) return 'No successful sync yet';
-  return new Date(createdAt).toLocaleString();
+  return formatLocalDateTime(createdAt);
 });
 const lastAttemptedSyncLabel = computed(() => {
   const attemptedAt = syncMetadata.value?.lastAttemptedSync?.attemptedAt;
   if (!attemptedAt) return 'No attempted sync yet';
-  return new Date(attemptedAt).toLocaleString();
+  return formatLocalDateTime(attemptedAt);
 });
 const lastAttemptStatusLabel = computed(() => {
   const status = syncMetadata.value?.lastAttemptedSync?.status;
   if (!status) return null;
   return status.charAt(0).toUpperCase() + status.slice(1);
+});
+const latestSnapshotCapturedAtLabel = computed(() => {
+  const createdAt = latestSnapshot.value?.createdAt;
+  return createdAt ? formatLocalDateTime(createdAt) : null;
 });
 
 const nightlySuccessChartSeries = computed(() => {
@@ -192,12 +198,14 @@ const activeUsersChartOptions = computed(() => ({
             </div>
             <h1 class="mt-3 text-4xl font-semibold tracking-tight text-slate-950 sm:text-5xl">{{ schoolLabel }}</h1>
             <p class="mt-4 text-base leading-7 text-slate-600">Full local snapshot history with explicit metric windows and current activity.</p>
+            <p class="mt-3 text-xs text-slate-400">Times shown in {{ localTimeZoneLabel }}.</p>
             <p class="mt-3 text-sm text-slate-500">Last successful sync: {{ lastSuccessfulSyncLabel }}</p>
             <p class="mt-1 text-sm text-slate-500">Last attempted sync: {{ lastAttemptedSyncLabel }}</p>
             <p v-if="lastAttemptStatusLabel" class="mt-1 text-xs" :class="syncMetadata?.lastAttemptedSync?.status === 'failed' ? 'text-rose-500' : 'text-slate-400'">
               Last attempt status: {{ lastAttemptStatusLabel }}
             </p>
             <p v-if="latestSnapshot?.snapshotDate" class="mt-1 text-xs text-slate-400">Latest successful snapshot date: {{ latestSnapshot.snapshotDate }}</p>
+            <p v-if="latestSnapshotCapturedAtLabel" class="mt-1 text-xs text-slate-400">Latest snapshot captured locally: {{ latestSnapshotCapturedAtLabel }}</p>
             <p v-if="snapshotCount === 1" class="mt-2 text-xs text-amber-600">Only one local snapshot is available right now, so the charts will show a single point instead of a trend line.</p>
             <p class="mt-2 max-w-2xl text-xs text-slate-500">Nightly success uses Coursedog's upstream 48-hour health window. Realtime success and active users use the last 24 hours. Open merge errors are shown only for days where that count was captured directly during a local sync.</p>
           </div>
@@ -257,7 +265,7 @@ const activeUsersChartOptions = computed(() => ({
                 <span v-if="merge.type" class="text-xs text-slate-500">Type: {{ merge.type }}</span>
                 <span v-if="merge.scheduleType" class="text-xs text-slate-500 capitalize">{{ merge.scheduleType }} merge</span>
                 <span v-if="merge.timestampEnd" class="text-xs text-slate-400">
-                  {{ new Date(merge.timestampEnd).toLocaleString() }}
+                  {{ formatLocalDateTime(merge.timestampEnd) }}
                 </span>
               </div>
             </div>

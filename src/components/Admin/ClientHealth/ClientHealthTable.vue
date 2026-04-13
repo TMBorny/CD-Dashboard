@@ -390,9 +390,6 @@ const getRowTone = (school: ClientHealthSnapshot) => {
               <div class="text-lg font-semibold leading-none text-slate-950">
                 {{ nightlyRate(school) === null ? 'N/A' : `${nightlyRate(school)!.toFixed(0)}%` }}
               </div>
-              <div class="mt-2 text-xs text-slate-500">
-                {{ nightlyRate(school) === null ? 'No valid nightly merges in the upstream window' : 'Upstream 48h window' }}
-              </div>
             </td>
             <td :class="['whitespace-nowrap border-y border-slate-200 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300', getRowTone(school)]">
               <div class="text-lg font-semibold leading-none text-slate-950">{{ school.merges.nightly.succeeded }} / {{ school.merges.nightly.total }}</div>

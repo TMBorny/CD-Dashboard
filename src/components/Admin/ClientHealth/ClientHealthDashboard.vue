@@ -209,7 +209,6 @@ const handleRowClick = (school: ClientHealthSnapshot) => {
           <div>
             <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Client Health</p>
             <h1 class="mt-3 text-4xl font-semibold tracking-tight text-slate-950 sm:text-5xl">Client Health Dashboard</h1>
-            <p class="mt-4 max-w-3xl text-base leading-7 text-slate-600">Track nightly success from the upstream 48-hour health window, realtime success and active users from the last 24 hours, and current open merge errors from the latest local sync.</p>
           </div>
           <div class="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-sm text-slate-600">
             <p v-if="data?.snapshotDate" class="text-xs text-slate-400">
