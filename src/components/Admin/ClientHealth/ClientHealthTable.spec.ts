@@ -36,6 +36,8 @@ describe('ClientHealthTable', () => {
     });
 
     expect(wrapper.text()).toContain('1 Halted');
+    expect(wrapper.text()).toContain('Merge Halts');
+    expect(wrapper.text()).toContain('Threshold hit');
     expect(wrapper.text()).toContain('50%');
   });
 });
