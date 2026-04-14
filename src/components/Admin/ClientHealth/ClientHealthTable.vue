@@ -13,7 +13,7 @@ const emit = defineEmits<{
   rowClick: [school: ClientHealthSnapshot];
 }>();
 
-const sortBy = ref<'displayName' | 'sisPlatform' | 'nightlySuccess' | 'nightlyTotals' | 'nightlyDuration' | 'realtimeSuccess' | 'realtimeTotals' | 'mergeErrors' | 'activeUsers' | 'health'>('health');
+const sortBy = ref<'displayName' | 'sisPlatform' | 'nightlySuccess' | 'nightlyTotals' | 'nightlyHalts' | 'nightlyDuration' | 'realtimeSuccess' | 'realtimeTotals' | 'mergeErrors' | 'activeUsers' | 'health'>('health');
 const sortOrder = ref<'asc' | 'desc'>('desc');
 const searchQuery = ref('');
 
@@ -22,6 +22,7 @@ const sortLabels: Record<typeof sortBy.value, string> = {
   sisPlatform: 'SIS',
   nightlySuccess: 'Nightly %',
   nightlyTotals: 'Nightly Totals',
+  nightlyHalts: 'Merge Halts',
   nightlyDuration: 'Nightly Duration',
   realtimeSuccess: 'Realtime %',
   realtimeTotals: 'Realtime Totals',
@@ -120,6 +121,8 @@ const sortedSchools = computed(() => {
     const realtimeB = realtimeRate(b) ?? 0;
     const realtimeTotalA = a.merges.realtime.total;
     const realtimeTotalB = b.merges.realtime.total;
+    const nightlyHaltsA = a.merges.nightly.halted ?? 0;
+    const nightlyHaltsB = b.merges.nightly.halted ?? 0;
     const healthA = getHealthScoreValue(a);
     const healthB = getHealthScoreValue(b);
     const durationA = a.merges.nightly.mergeTimeMs ?? 0;
@@ -140,6 +143,10 @@ const sortedSchools = computed(() => {
       case 'nightlyTotals':
         aVal = nightlyTotalA;
         bVal = nightlyTotalB;
+        break;
+      case 'nightlyHalts':
+        aVal = nightlyHaltsA;
+        bVal = nightlyHaltsB;
         break;
       case 'nightlyDuration':
         aVal = durationA;
@@ -322,6 +329,11 @@ const getRowTone = (school: ClientHealthSnapshot) => {
               </button>
             </th>
             <th scope="col" class="sticky top-0 z-20 bg-slate-50 px-6 py-4 font-semibold shadow-[inset_0_-1px_0_0_rgba(226,232,240,1)]">
+              <button @click="handleSort('nightlyHalts')" class="flex items-center gap-2 hover:text-slate-950 transition">
+                Merge Halts <span v-if="sortBy === 'nightlyHalts'" class="text-slate-900">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
+              </button>
+            </th>
+            <th scope="col" class="sticky top-0 z-20 bg-slate-50 px-6 py-4 font-semibold shadow-[inset_0_-1px_0_0_rgba(226,232,240,1)]">
               <button @click="handleSort('nightlyDuration')" class="flex items-center gap-2 hover:text-slate-950 transition">
                 Nightly Duration <span v-if="sortBy === 'nightlyDuration'" class="text-slate-900">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
               </button>
@@ -353,7 +365,7 @@ const getRowTone = (school: ClientHealthSnapshot) => {
         </thead>
         <tbody>
           <tr v-if="sortedSchools.length === 0">
-            <td colspan="11" class="px-6 py-10 text-center text-sm text-slate-400">
+            <td colspan="12" class="px-6 py-10 text-center text-sm text-slate-400">
               No schools match <span class="font-semibold text-slate-600">"{{ searchQuery }}"</span>.
             </td>
           </tr>
@@ -397,6 +409,12 @@ const getRowTone = (school: ClientHealthSnapshot) => {
                 <div v-if="school.merges.nightly.finishedWithIssues > 0" class="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-700" title="Finished With Issues">{{ school.merges.nightly.finishedWithIssues }} Issues</div>
                 <div v-if="school.merges.nightly.noData > 0" class="rounded-full bg-slate-200/80 px-2 py-1 text-[11px] font-semibold text-slate-600" title="No Data">{{ school.merges.nightly.noData }} No Data</div>
                 <div v-if="school.merges.nightly.halted > 0" class="rounded-full bg-yellow-100 px-2 py-1 text-[11px] font-semibold text-yellow-800" title="Halted: Change Threshold Exceeded">{{ school.merges.nightly.halted }} Halted</div>
+              </div>
+            </td>
+            <td :class="['whitespace-nowrap border-y border-slate-200 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300', getRowTone(school)]">
+              <div class="text-lg font-semibold leading-none text-slate-950">{{ school.merges.nightly.halted || 0 }}</div>
+              <div v-if="school.merges.nightly.halted > 0" class="mt-3 rounded-full bg-yellow-100 px-2 py-1 text-[11px] font-semibold text-yellow-800" title="Halted: Change Threshold Exceeded">
+                Threshold hit
               </div>
             </td>
             <td :class="['whitespace-nowrap border-y border-slate-200 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300', getRowTone(school)]">
