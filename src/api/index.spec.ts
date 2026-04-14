@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const post = vi.fn();
 const get = vi.fn();
 const del = vi.fn();
-const create = vi.fn(() => ({ post, get, delete: del }));
+const put = vi.fn();
+const create = vi.fn(() => ({ post, get, put, delete: del }));
 
 vi.mock('axios', () => ({
   default: {
@@ -16,6 +17,7 @@ describe('client health api helpers', () => {
     post.mockReset();
     get.mockReset();
     del.mockReset();
+    put.mockReset();
     create.mockClear();
     vi.resetModules();
     vi.unstubAllEnvs();
@@ -111,5 +113,60 @@ describe('client health api helpers', () => {
     await retryHistoryBackfillFailures('bulk-1');
 
     expect(post).toHaveBeenCalledWith('/client-health/history/backfill/bulk-1/retry-failures');
+  });
+
+  it('fetches paged sync runs', async () => {
+    get.mockResolvedValue({ data: { syncRuns: [], totalCount: 0, limit: 25, offset: 25 } });
+    const { getSyncRuns } = await import('./index');
+
+    await getSyncRuns({ limit: 25, offset: 25 });
+
+    expect(get).toHaveBeenCalledWith('/client-health/sync-runs', {
+      params: {
+        limit: 25,
+        offset: 25,
+      },
+    });
+  });
+
+  it('fetches scheduler settings', async () => {
+    get.mockResolvedValue({ data: { syncEnabled: true, syncTime: '07:30' } });
+    const { getSchedulerSettings } = await import('./index');
+
+    await getSchedulerSettings();
+
+    expect(get).toHaveBeenCalledWith('/client-health/scheduler-settings');
+  });
+
+  it('updates scheduler settings', async () => {
+    put.mockResolvedValue({ data: { syncEnabled: false, syncTime: '09:15' } });
+    const { updateSchedulerSettings } = await import('./index');
+
+    await updateSchedulerSettings({ syncEnabled: false, syncTime: '09:15' });
+
+    expect(put).toHaveBeenCalledWith('/client-health/scheduler-settings', {
+      syncEnabled: false,
+      syncTime: '09:15',
+    });
+  });
+
+  it('fetches full client health history when no day window is provided', async () => {
+    get.mockResolvedValue({ data: { snapshots: [] } });
+    const { getClientHealthHistory } = await import('./index');
+
+    await getClientHealthHistory({});
+
+    expect(get).toHaveBeenCalledWith('/client-health/history', {
+      params: {},
+    });
+  });
+
+  it('fetches a single sync run by job id', async () => {
+    get.mockResolvedValue({ data: { syncRun: { jobId: 'bulk-1' } } });
+    const { getSyncRun } = await import('./index');
+
+    await getSyncRun('bulk-1');
+
+    expect(get).toHaveBeenCalledWith('/client-health/sync-runs/bulk-1');
   });
 });

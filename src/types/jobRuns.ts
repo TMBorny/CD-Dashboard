@@ -1,3 +1,5 @@
+import { formatLocalDateTime } from '@/utils/dateTime';
+
 export type JobRun = {
   jobId: string;
   school?: string | null;
@@ -44,6 +46,13 @@ export type JobRun = {
   errorMessage?: string | null;
 };
 
+export type SyncRunsResponse = {
+  syncRuns: JobRun[];
+  totalCount: number;
+  limit: number;
+  offset: number;
+};
+
 export const getJobStatusTone = (status: string) => {
   switch (status.toLowerCase()) {
     case 'completed':
@@ -82,7 +91,7 @@ export const formatBackfillRange = (run: JobRun) => {
   return `${run.startDate} to ${end}${span}`;
 };
 
-export const formatDateTime = (value?: string | null) => (value ? new Date(value).toLocaleString() : 'Unknown');
+export const formatDateTime = (value?: string | null) => formatLocalDateTime(value, 'Unknown');
 
 export const formatRelativeAge = (value?: string | null) => {
   if (!value) return 'Unknown';

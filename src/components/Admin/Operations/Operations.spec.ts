@@ -5,6 +5,8 @@ import { ref } from 'vue';
 const invalidateQueries = vi.fn().mockResolvedValue(undefined);
 const getSyncStatus = vi.fn();
 const getSchools = vi.fn();
+const getSchedulerSettings = vi.fn();
+const updateSchedulerSettings = vi.fn();
 const addSchoolExclusion = vi.fn();
 const removeSchoolExclusion = vi.fn();
 const triggerHistoryBackfill = vi.fn();
@@ -30,17 +32,30 @@ vi.mock('@tanstack/vue-query', () => ({
       };
     }
 
+    if (queryKey[0] === 'schedulerSettings') {
+      return {
+        data: ref({
+          syncEnabled: true,
+          syncTime: '07:30',
+        }),
+        isLoading: ref(false),
+        error: ref(null),
+      };
+    }
+
     return queryFn ? queryFn() : { data: ref(null), isLoading: ref(false), error: ref(null) };
   }),
 }));
 
 vi.mock('@/api', () => ({
   addSchoolExclusion,
+  getSchedulerSettings,
   getSchools,
   getSyncStatus,
   removeSchoolExclusion,
   triggerHistoryBackfill,
   triggerSync,
+  updateSchedulerSettings,
 }));
 
 describe('Operations', () => {
@@ -50,6 +65,8 @@ describe('Operations', () => {
     getSyncStatus.mockReset();
     addSchoolExclusion.mockReset();
     removeSchoolExclusion.mockReset();
+    getSchedulerSettings.mockReset();
+    updateSchedulerSettings.mockReset();
     triggerHistoryBackfill.mockReset();
     triggerSync.mockReset();
   });
@@ -137,10 +154,9 @@ describe('Operations', () => {
     const { default: Operations } = await import('./Operations.vue');
     const wrapper = mount(Operations);
 
-    await wrapper.get('input[type="checkbox"]').setValue(false);
-    const schoolBoxes = wrapper.findAll('input[type="checkbox"]');
-    await schoolBoxes[1].setValue(true);
-    await schoolBoxes[2].setValue(true);
+    await wrapper.get('#operations-all-schools').setValue(false);
+    await wrapper.get('#school-select-bar01').setValue(true);
+    await wrapper.get('#school-select-bcc01').setValue(true);
 
     const syncButton = wrapper
       .findAll('button')
@@ -190,5 +206,37 @@ describe('Operations', () => {
       startDate: '2026-01-01',
       endDate: '2026-01-07',
     });
+  });
+
+  it('saves daily sync scheduler settings', async () => {
+    updateSchedulerSettings.mockResolvedValue({
+      data: {
+        syncEnabled: false,
+        syncTime: '09:15',
+      },
+    });
+
+    const { default: Operations } = await import('./Operations.vue');
+    const wrapper = mount(Operations);
+
+    const schedulerToggle = wrapper.get('#daily-sync-enabled');
+    (schedulerToggle.element as HTMLInputElement).checked = false;
+    await schedulerToggle.trigger('change');
+    await wrapper.get('#daily-sync-time').setValue('09:15');
+
+    const saveButton = wrapper
+      .findAll('button')
+      .find((candidate) => candidate.text().includes('Save'));
+
+    expect(saveButton).toBeTruthy();
+    await saveButton!.trigger('click');
+    await flushPromises();
+
+    expect(updateSchedulerSettings).toHaveBeenCalledWith({
+      syncEnabled: false,
+      syncTime: '09:15',
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ['schedulerSettings'] });
+    expect(wrapper.text()).toContain('Daily sync disabled.');
   });
 });

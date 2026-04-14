@@ -4,7 +4,7 @@ interface Props {
   subtitle?: string;
   bgClass?: string;
 }
-const props = withDefaults(defineProps<Props>(), {
+withDefaults(defineProps<Props>(), {
   bgClass: 'bg-white',
 });
 </script>

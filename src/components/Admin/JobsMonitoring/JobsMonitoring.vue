@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { RouterLink } from 'vue-router';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
 import { getSyncRuns, resumeHistoryBackfill, retryHistoryBackfillFailures } from '@/api';
 import Badge from '@/components/ui/Badge.vue';
 import {
@@ -15,15 +15,29 @@ import {
   formatRelativeAge,
   getJobStatusTone,
   type JobRun,
+  type SyncRunsResponse,
 } from '@/types/jobRuns';
+import { getLocalTimeZoneLabel } from '@/utils/dateTime';
 
 const queryClient = useQueryClient();
+const PAGE_SIZE = 25;
+const currentPage = ref(0);
+const currentOffset = computed(() => currentPage.value * PAGE_SIZE);
 
 const { data, isLoading, error } = useQuery({
-  queryKey: ['syncRuns'],
-  queryFn: () => getSyncRuns({ limit: 50 }).then((res) => res.data),
+  queryKey: computed(() => ['syncRuns', { limit: PAGE_SIZE, offset: currentOffset.value }]),
+  queryFn: () => getSyncRuns({ limit: PAGE_SIZE, offset: currentOffset.value }).then((res) => res.data as SyncRunsResponse),
   refetchInterval: 5000,
+  placeholderData: keepPreviousData,
 });
+
+const hasSyncRunsData = computed(() => Array.isArray(data.value?.syncRuns) && data.value.syncRuns.length > 0);
+const totalCount = computed(() => data.value?.totalCount ?? 0);
+const pageCount = computed(() => Math.max(1, Math.ceil(totalCount.value / PAGE_SIZE)));
+const showingFrom = computed(() => (totalCount.value === 0 ? 0 : currentOffset.value + 1));
+const showingTo = computed(() => Math.min(currentOffset.value + (data.value?.syncRuns?.length ?? 0), totalCount.value));
+const canGoBack = computed(() => currentPage.value > 0);
+const canGoForward = computed(() => currentPage.value + 1 < pageCount.value);
 
 const resumeMutation = useMutation({
   mutationFn: (jobId: string) => resumeHistoryBackfill(jobId),
@@ -57,9 +71,20 @@ const triggerRetryFailures = async (run: JobRun) => {
   await retryFailuresMutation.mutateAsync(run.jobId);
 };
 
+const goToPreviousPage = () => {
+  if (!canGoBack.value) return;
+  currentPage.value -= 1;
+};
+
+const goToNextPage = () => {
+  if (!canGoForward.value) return;
+  currentPage.value += 1;
+};
+
 const descriptorClass = 'group relative inline-flex items-center gap-2';
 const descriptorButtonClass = 'flex h-5 w-5 items-center justify-center rounded-full border border-slate-300 bg-white text-[11px] font-semibold text-slate-500 transition hover:border-slate-400 hover:text-slate-700';
 const descriptorPopoverClass = 'pointer-events-none absolute left-1/2 top-full z-20 mt-2 hidden w-64 -translate-x-1/2 rounded-2xl border border-slate-200 bg-white p-3 text-[11px] leading-5 text-slate-600 shadow-lg group-hover:block';
+const localTimeZoneLabel = getLocalTimeZoneLabel();
 </script>
 
 <template>
@@ -68,14 +93,40 @@ const descriptorPopoverClass = 'pointer-events-none absolute left-1/2 top-full z
       <div>
         <h1 class="text-2xl font-semibold tracking-tight text-slate-950">Background Jobs</h1>
         <p class="mt-1 text-sm text-slate-500">Monitor bulk school syncs and historical backfill queue status.</p>
+        <p class="mt-2 text-xs text-slate-400">Times shown in {{ localTimeZoneLabel }}.</p>
       </div>
     </div>
 
     <div v-if="isLoading" class="text-sm text-slate-500">Loading jobs...</div>
-    <div v-else-if="error" class="text-sm text-rose-500">Failed to load job history.</div>
+    <div v-else-if="error && !hasSyncRunsData" class="text-sm text-rose-500">Failed to load job history.</div>
     <div v-else class="space-y-4">
+      <div v-if="error" class="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        Live updates are temporarily unavailable. Showing the most recent job history we already loaded.
+      </div>
       <div v-if="mutationError" class="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
         {{ mutationError }}
+      </div>
+      <div class="flex flex-wrap items-center justify-between gap-3 px-1 text-sm text-slate-500">
+        <p>
+          Showing {{ showingFrom }}-{{ showingTo }} of {{ totalCount }} job{{ totalCount === 1 ? '' : 's' }}.
+        </p>
+        <div class="flex items-center gap-2">
+          <button
+            class="rounded-full border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            :disabled="!canGoBack"
+            @click="goToPreviousPage"
+          >
+            Previous
+          </button>
+          <span class="text-xs font-medium text-slate-500">Page {{ currentPage + 1 }} of {{ pageCount }}</span>
+          <button
+            class="rounded-full border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            :disabled="!canGoForward"
+            @click="goToNextPage"
+          >
+            Next
+          </button>
+        </div>
       </div>
 
       <div class="rounded-[24px] border border-slate-200 bg-white p-3 shadow-sm">
@@ -84,10 +135,10 @@ const descriptorPopoverClass = 'pointer-events-none absolute left-1/2 top-full z
           <tr>
             <th class="px-6 py-4 font-semibold text-slate-600">
               <div :class="descriptorClass">
-                <span>ID / Date</span>
-                <button class="cursor-help" :class="descriptorButtonClass" aria-label="Job identity and creation time">?</button>
+                <span>ID / Local Time</span>
+                <button class="cursor-help" :class="descriptorButtonClass" aria-label="Job identity and local creation time">?</button>
                 <div :class="descriptorPopoverClass">
-                  Shows the background job id plus the time the run was first recorded by the backend.
+                  Shows the background job id plus the time the run was first recorded by the backend, displayed in your local timezone.
                 </div>
               </div>
             </th>
@@ -183,10 +234,12 @@ const descriptorPopoverClass = 'pointer-events-none absolute left-1/2 top-full z
                 Current: {{ run.currentSchool ?? 'Unknown school' }}<span v-if="run.currentSnapshotDate"> on {{ run.currentSnapshotDate }}</span>
               </div>
               <div v-if="run.lastHeartbeatAt" class="mt-2 text-xs text-slate-500">
-                Heartbeat: {{ formatRelativeAge(run.lastHeartbeatAt) }}
+                <div>Heartbeat: {{ formatRelativeAge(run.lastHeartbeatAt) }}</div>
+                <div class="mt-1 text-slate-400">{{ formatDateTime(run.lastHeartbeatAt) }}</div>
               </div>
               <div v-if="run.lastProgressAt" class="mt-1 text-xs text-slate-500">
-                Last progress: {{ formatRelativeAge(run.lastProgressAt) }}
+                <div>Last progress: {{ formatRelativeAge(run.lastProgressAt) }}</div>
+                <div class="mt-1 text-slate-400">{{ formatDateTime(run.lastProgressAt) }}</div>
               </div>
             </td>
             <td class="rounded-r-3xl border-y border-r border-slate-200 bg-slate-50/70 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300 group-hover:bg-white">

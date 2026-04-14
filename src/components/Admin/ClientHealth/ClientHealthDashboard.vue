@@ -23,8 +23,8 @@ const { data: healthResponse, isLoading: isLoadingHealth, error: healthError } =
 });
 
 const { data: historyResponse, isLoading: isLoadingHistory, error: historyError } = useQuery({
-  queryKey: ['clientHealthHistory', { days: 30 }],
-  queryFn: () => getClientHealthHistory({ days: 30 }).then((res) => res.data.snapshots),
+  queryKey: ['clientHealthHistory'],
+  queryFn: () => getClientHealthHistory({}).then((res) => res.data.snapshots),
 });
 
 const loading = computed(() => isLoadingHealth.value || isLoadingHistory.value);
@@ -78,15 +78,16 @@ const filteredHistory = computed(() => {
 // Using percentages so days with different numbers of schools contributing
 // are directly comparable (4/10 had 508 schools, other days have ~7-11).
 const nightlyBreakdownSeries = computed(() => {
-  const byDate = new Map<string, { succeeded: number; issues: number; noData: number; failed: number; total: number }>();
+  const byDate = new Map<string, { succeeded: number; issues: number; noData: number; halted: number; failed: number; total: number }>();
   filteredHistory.value.forEach((s: ClientHealthSnapshot) => {
     const d = s.snapshotDate;
-    const existing = byDate.get(d) ?? { succeeded: 0, issues: 0, noData: 0, failed: 0, total: 0 };
+    const existing = byDate.get(d) ?? { succeeded: 0, issues: 0, noData: 0, halted: 0, failed: 0, total: 0 };
     const n = s.merges.nightly;
     byDate.set(d, {
       succeeded: existing.succeeded + n.succeeded,
       issues:    existing.issues    + (n.finishedWithIssues || 0),
       noData:    existing.noData    + (n.noData || 0),
+      halted:    existing.halted    + (n.halted || 0),
       failed:    existing.failed    + n.failed,
       total:     existing.total     + n.total,
     });
@@ -97,6 +98,7 @@ const nightlyBreakdownSeries = computed(() => {
     { name: 'Success',            data: sortedDates.map((d) => pct(byDate.get(d)!.succeeded, byDate.get(d)!.total)) },
     { name: 'Finished w/ Issues', data: sortedDates.map((d) => pct(byDate.get(d)!.issues,    byDate.get(d)!.total)) },
     { name: 'No Data',            data: sortedDates.map((d) => pct(byDate.get(d)!.noData,    byDate.get(d)!.total)) },
+    { name: 'Halted',             data: sortedDates.map((d) => pct(byDate.get(d)!.halted,    byDate.get(d)!.total)) },
     { name: 'Failed',             data: sortedDates.map((d) => pct(byDate.get(d)!.failed,    byDate.get(d)!.total)) },
   ];
 });
@@ -110,7 +112,7 @@ const nightlyBreakdownDates = computed(() => {
 const nightlyBreakdownOptions = computed(() => ({
   ...useStackedBarChartOptions({
     categories: nightlyBreakdownDates.value,
-    colors: ['#10b981', '#f59e0b', '#94a3b8', '#ef4444'],
+    colors: ['#10b981', '#f59e0b', '#94a3b8', '#a16207', '#ef4444'],
   }),
   yaxis: {
     min: 0,
@@ -183,6 +185,7 @@ const atRiskSeries = computed(() => {
   filteredHistory.value.forEach((s: ClientHealthSnapshot) => {
     const n = s.merges.nightly;
     const validTotal = n.total - (n.noData || 0);
+    if (validTotal <= 0) return;
     const rate = validTotal > 0 ? ((n.succeeded + (n.finishedWithIssues || 0) * 0.5) / validTotal) * 100 : 0;
     const mergeErrorsCount = s.mergeErrorsCount ?? 0;
     const score = Math.max(0, Math.min(100, rate - Math.min(20, Math.log2(mergeErrorsCount + 1) * 4)));
@@ -208,7 +211,6 @@ const handleRowClick = (school: ClientHealthSnapshot) => {
           <div>
             <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Client Health</p>
             <h1 class="mt-3 text-4xl font-semibold tracking-tight text-slate-950 sm:text-5xl">Client Health Dashboard</h1>
-            <p class="mt-4 max-w-3xl text-base leading-7 text-slate-600">Track nightly success from the upstream 48-hour health window, realtime success and active users from the last 24 hours, and current open merge errors from the latest local sync.</p>
           </div>
           <div class="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-sm text-slate-600">
             <p v-if="data?.snapshotDate" class="text-xs text-slate-400">
@@ -232,7 +234,7 @@ const handleRowClick = (school: ClientHealthSnapshot) => {
         <div class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between py-2">
           <div>
             <h2 class="text-lg font-semibold text-slate-950">Trend Analytics</h2>
-            <p class="mt-1 text-sm text-slate-500">30-day historical trends for the selected cohort.</p>
+            <p class="mt-1 text-sm text-slate-500">Historical trends across the full stored snapshot range for the selected cohort.</p>
           </div>
           <div class="flex flex-wrap items-center gap-3">
             <div class="flex items-center gap-2">
@@ -256,7 +258,7 @@ const handleRowClick = (school: ClientHealthSnapshot) => {
           <div class="flex flex-col rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
             <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Fleet Health</p>
             <h3 class="mt-2 text-base font-semibold text-slate-950">Nightly merge outcomes</h3>
-            <p class="mt-1 text-xs text-slate-500">Percentage breakdown normalized across valid schools.</p>
+            <p class="mt-1 text-xs text-slate-500">Each bar shows the share of nightly merges that succeeded, finished with issues, had no data, were halted by change threshold, or failed on that date: bucket total divided by all nightly merges for the selected schools.</p>
             <div class="mt-4 flex-1 min-h-[250px]">
               <VueApexCharts type="bar" :options="nightlyBreakdownOptions" :series="nightlyBreakdownSeries" height="100%" />
             </div>
@@ -274,7 +276,7 @@ const handleRowClick = (school: ClientHealthSnapshot) => {
           <div class="flex flex-col rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
             <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Engagement</p>
             <h3 class="mt-2 text-base font-semibold text-slate-950">Active Users (24h)</h3>
-            <p class="mt-1 text-xs text-slate-500">Distinct active users per snapshot day.</p>
+            <p class="mt-1 text-xs text-slate-500">Daily Active Sessions per snapshot day.</p>
             <div class="mt-4 flex-1 min-h-[250px]">
               <VueApexCharts type="line" :options="activeUsersOptions" :series="activeUsersSeries" height="100%" />
             </div>
@@ -283,7 +285,7 @@ const handleRowClick = (school: ClientHealthSnapshot) => {
           <div class="flex flex-col rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
             <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Fleet Risk</p>
             <h3 class="mt-2 text-base font-semibold text-slate-950">Schools at Risk</h3>
-            <p class="mt-1 text-xs text-slate-500">Count of schools with a computed health score below 65.</p>
+            <p class="mt-1 text-xs text-slate-500">Count of schools with a computed health score below 65, excluding schools with no valid nightly merge data on that date.</p>
             <div class="mt-4 flex-1 min-h-[250px]">
               <VueApexCharts type="line" :options="atRiskOptions" :series="atRiskSeries" height="100%" />
             </div>

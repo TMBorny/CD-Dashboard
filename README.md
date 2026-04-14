@@ -74,6 +74,7 @@ Commonly used values:
 - `BACKEND_URL`: frontend proxy target in development. Defaults to `http://localhost:8000`.
 - `VITE_INTERNAL_API_KEY` and `INTERNAL_API_KEY`: shared secret used to authenticate frontend-to-backend requests. Use the same random value in both files.
 - `VITE_ALLOWED_ORIGINS` and `ALLOWED_ORIGINS`: comma-separated browser origins allowed to access the backend if it is reached directly.
+- `CLIENT_HEALTH_DB_PATH` or `CLIENT_HEALTH_DATABASE_URL`: backend SQLite location. Defaults to `client-health-backend/client_health.db`, but tests should point this at an isolated file.
 - `COURSEDOG_BASE_URL` or `VITE_COURSEDOG_PRD_URL`: Coursedog base URL. Defaults to `https://app.coursedog.com`.
 - `COURSEDOG_EMAIL` or `VITE_COURSEDOG_EMAIL`: login email for Coursedog API access.
 - `COURSEDOG_PASSWORD` or `VITE_COURSEDOG_PASSWORD`: login password for Coursedog API access.
@@ -117,6 +118,14 @@ npm run dev
 
 The frontend runs on `http://localhost:5173` and proxies `/backend/*` requests to the backend.
 
+## Frontend Maintenance Commands
+
+```bash
+npm test
+npm run lint
+npm run build
+```
+
 ## Security Notes
 
 - Treat the backend as an internal privileged service even on a private network.
@@ -130,6 +139,7 @@ Frontend:
 
 ```bash
 npm test
+npm run lint
 ```
 
 Backend:
@@ -179,9 +189,11 @@ Because the SQLite DB is an active working artifact, snapshot counts may be unev
 
 - `src/`: Vue frontend
 - `client-health-backend/`: FastAPI backend, DB models, tests, and local SQLite DB
+- `client-health-backend/scripts/`: backend-focused operational and debugging utilities
+- `scripts/`: repository utilities and one-off local data helpers
+- `docs/`: reference notes and project analysis documents
 - `public/`: static frontend assets
-- `analysis_results.md`: earlier project assessment; useful historical context, but parts are now outdated
-- `coursedog-api-endpoints.md`: notes on upstream Coursedog endpoints and possible future enhancements
+- `.env.example` and `client-health-backend/.env.example`: canonical env setup templates
 
 ## Current State of the Project
 
@@ -198,6 +210,18 @@ The biggest remaining work is operational rather than structural:
 - clarifying database ownership/commit policy
 - improving docs and developer onboarding
 - reducing frontend bundle size if needed
+
+## Reproducibility Notes
+
+- Recreate Python dependencies with Poetry instead of committing a virtualenv:
+
+```bash
+cd client-health-backend
+poetry install
+```
+
+- The backend SQLite database and local `.env` files are intentionally untracked local artifacts.
+- Support utilities under `scripts/` and `client-health-backend/scripts/` are optional helpers and are not required to run the app.
 
 ## Contributing
 

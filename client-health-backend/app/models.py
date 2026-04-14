@@ -2,12 +2,26 @@
 
 import json
 from datetime import datetime, timezone
+from typing import Optional
 from sqlalchemy import Column, String, Integer, Text, DateTime, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase
 
 
 class Base(DeclarativeBase):
     pass
+
+
+def serialize_datetime(value: Optional[datetime]) -> Optional[str]:
+    """Serialize persisted datetimes as explicit UTC timestamps.
+
+    SQLite drops tzinfo for DateTime columns, so naive values coming back out of the
+    database should be treated as UTC instead of local wall time.
+    """
+    if value is None:
+        return None
+
+    normalized = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+    return normalized.isoformat()
 
 
 class SchoolSnapshot(Base):
@@ -31,6 +45,7 @@ class SchoolSnapshot(Base):
     nightly_failed = Column(Integer, default=0)
     nightly_issues = Column(Integer, default=0)
     nightly_no_data = Column(Integer, default=0)
+    nightly_halted = Column(Integer, default=0)
     nightly_merge_time_ms = Column(Integer, default=0)
 
     # Realtime merge stats
@@ -69,6 +84,7 @@ class SchoolSnapshot(Base):
                     "failed": self.nightly_failed,
                     "finishedWithIssues": self.nightly_issues,
                     "noData": self.nightly_no_data,
+                    "halted": self.nightly_halted,
                     "mergeTimeMs": self.nightly_merge_time_ms,
                 },
                 "realtime": {
@@ -91,7 +107,7 @@ class SchoolSnapshot(Base):
             else [],
             "mergeErrorsCount": self.merge_errors_count,
             "activeUsers24h": self.active_users_24h,
-            "createdAt": self.created_at.isoformat() if self.created_at else None,
+            "createdAt": serialize_datetime(self.created_at),
         }
 
     @classmethod
@@ -113,6 +129,7 @@ class SchoolSnapshot(Base):
             nightly_failed=nightly.get("failed", 0),
             nightly_issues=nightly.get("finishedWithIssues", 0),
             nightly_no_data=nightly.get("noData", 0),
+            nightly_halted=nightly.get("halted", 0),
             nightly_merge_time_ms=nightly.get("mergeTimeMs", 0),
             realtime_total=realtime.get("total", 0),
             realtime_succeeded=realtime.get("succeeded", 0),
@@ -179,14 +196,14 @@ class SyncRun(Base):
             "snapshotDate": self.snapshot_date,
             "schoolsProcessed": self.schools_processed,
             "totalSchools": self.total_schools,
-            "attemptedAt": self.attempted_at.isoformat() if self.attempted_at else None,
-            "startedAt": self.started_at.isoformat() if self.started_at else None,
-            "finishedAt": self.finished_at.isoformat() if self.finished_at else None,
+            "attemptedAt": serialize_datetime(self.attempted_at),
+            "startedAt": serialize_datetime(self.started_at),
+            "finishedAt": serialize_datetime(self.finished_at),
             "startDate": self.start_date,
             "endDate": self.end_date,
             "dateCount": self.date_count,
-            "lastHeartbeatAt": self.last_heartbeat_at.isoformat() if self.last_heartbeat_at else None,
-            "lastProgressAt": self.last_progress_at.isoformat() if self.last_progress_at else None,
+            "lastHeartbeatAt": serialize_datetime(self.last_heartbeat_at),
+            "lastProgressAt": serialize_datetime(self.last_progress_at),
             "currentSchool": self.current_school,
             "currentSnapshotDate": self.current_snapshot_date,
             "completedUnits": self.completed_units,
@@ -201,6 +218,139 @@ class SyncRun(Base):
             "timing": timing,
             "errorMessage": self.error_message,
         }
+
+
+class ErrorAnalysisGroup(Base):
+    """A normalized group of open merge errors captured for one school snapshot."""
+
+    __tablename__ = "error_analysis_groups"
+    __table_args__ = (
+        UniqueConstraint("snapshot_date", "school", "signature_key", name="uq_error_analysis_group"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    snapshot_date = Column(String(10), nullable=False, index=True)
+    school = Column(String(255), nullable=False, index=True)
+    display_name = Column(String(255), nullable=False)
+    sis_platform = Column(String(255), nullable=True, index=True)
+    entity_type = Column(String(255), nullable=True)
+    error_code = Column(String(255), nullable=True)
+    signature_key = Column(String(64), nullable=False, index=True)
+    normalized_message = Column(Text, nullable=False)
+    sample_message = Column(Text, nullable=False)
+    count = Column(Integer, nullable=False, default=0)
+    sample_errors_json = Column(Text, nullable=False, default="[]")
+    term_codes_json = Column(Text, nullable=False, default="[]")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    def to_dict(self) -> dict:
+        return {
+            "snapshotDate": self.snapshot_date,
+            "school": self.school,
+            "displayName": self.display_name,
+            "sisPlatform": self.sis_platform,
+            "entityType": self.entity_type,
+            "errorCode": self.error_code,
+            "signatureKey": self.signature_key,
+            "normalizedMessage": self.normalized_message,
+            "sampleMessage": self.sample_message,
+            "count": self.count,
+            "sampleErrors": json.loads(self.sample_errors_json) if self.sample_errors_json else [],
+            "termCodes": json.loads(self.term_codes_json) if self.term_codes_json else [],
+            "createdAt": serialize_datetime(self.created_at),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ErrorAnalysisGroup":
+        return cls(
+            snapshot_date=data["snapshotDate"],
+            school=data["school"],
+            display_name=data.get("displayName", data["school"]),
+            sis_platform=data.get("sisPlatform"),
+            entity_type=data.get("entityType"),
+            error_code=data.get("errorCode"),
+            signature_key=data["signatureKey"],
+            normalized_message=data.get("normalizedMessage", ""),
+            sample_message=data.get("sampleMessage", data.get("normalizedMessage", "")),
+            count=data.get("count", 0),
+            sample_errors_json=json.dumps(data.get("sampleErrors", [])),
+            term_codes_json=json.dumps(data.get("termCodes", [])),
+        )
+
+
+class ErrorAnalysisDetail(Base):
+    """One captured individual merge error row for detailed search and export."""
+
+    __tablename__ = "error_analysis_details"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    snapshot_date = Column(String(10), nullable=False, index=True)
+    school = Column(String(255), nullable=False, index=True)
+    display_name = Column(String(255), nullable=False)
+    sis_platform = Column(String(255), nullable=True, index=True)
+    entity_type = Column(String(255), nullable=True, index=True)
+    error_code = Column(String(255), nullable=True, index=True)
+    signature_key = Column(String(64), nullable=False, index=True)
+    signature_label = Column(Text, nullable=False)
+    normalized_message = Column(Text, nullable=False)
+    full_error_text = Column(Text, nullable=False)
+    entity_display_name = Column(String(255), nullable=True)
+    merge_report_id = Column(String(255), nullable=True, index=True)
+    schedule_type = Column(String(255), nullable=True)
+    term_codes_json = Column(Text, nullable=False, default="[]")
+    raw_error_json = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "snapshotDate": self.snapshot_date,
+            "school": self.school,
+            "displayName": self.display_name,
+            "sisPlatform": self.sis_platform,
+            "entityType": self.entity_type,
+            "errorCode": self.error_code,
+            "signatureKey": self.signature_key,
+            "signatureLabel": self.signature_label,
+            "normalizedMessage": self.normalized_message,
+            "fullErrorText": self.full_error_text,
+            "entityDisplayName": self.entity_display_name,
+            "mergeReport": (
+                {
+                    "school": self.school,
+                    "mergeReportId": self.merge_report_id,
+                    "scheduleType": self.schedule_type,
+                    "entityDisplayName": self.entity_display_name,
+                    "snapshotDate": self.snapshot_date,
+                }
+                if self.merge_report_id
+                else None
+            ),
+            "termCodes": json.loads(self.term_codes_json) if self.term_codes_json else [],
+            "rawError": json.loads(self.raw_error_json) if self.raw_error_json else None,
+            "createdAt": serialize_datetime(self.created_at),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ErrorAnalysisDetail":
+        merge_report = data.get("mergeReport") or {}
+        return cls(
+            snapshot_date=data["snapshotDate"],
+            school=data["school"],
+            display_name=data.get("displayName", data["school"]),
+            sis_platform=data.get("sisPlatform"),
+            entity_type=data.get("entityType"),
+            error_code=data.get("errorCode"),
+            signature_key=data["signatureKey"],
+            signature_label=data.get("signatureLabel", ""),
+            normalized_message=data.get("normalizedMessage", ""),
+            full_error_text=data.get("fullErrorText", ""),
+            entity_display_name=data.get("entityDisplayName"),
+            merge_report_id=merge_report.get("mergeReportId"),
+            schedule_type=merge_report.get("scheduleType"),
+            term_codes_json=json.dumps(data.get("termCodes", [])),
+            raw_error_json=json.dumps(data.get("rawError")),
+        )
 
 
 class BackfillWorkUnit(Base):
@@ -233,8 +383,8 @@ class BackfillWorkUnit(Base):
             "status": self.status,
             "attemptCount": self.attempt_count,
             "lastError": self.last_error,
-            "lastAttemptedAt": self.last_attempted_at.isoformat() if self.last_attempted_at else None,
-            "completedAt": self.completed_at.isoformat() if self.completed_at else None,
+            "lastAttemptedAt": serialize_datetime(self.last_attempted_at),
+            "completedAt": serialize_datetime(self.completed_at),
         }
 
 
@@ -250,5 +400,23 @@ class ExcludedSchool(Base):
     def to_dict(self) -> dict:
         return {
             "school": self.school,
-            "createdAt": self.created_at.isoformat() if self.created_at else None,
+            "createdAt": serialize_datetime(self.created_at),
+        }
+
+
+class SchedulerSettings(Base):
+    """Persisted scheduler configuration for the daily sync service."""
+
+    __tablename__ = "scheduler_settings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    sync_enabled = Column(Integer, nullable=False, default=1)
+    sync_time = Column(String(5), nullable=False, default="07:30")
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    def to_dict(self) -> dict:
+        return {
+            "syncEnabled": bool(self.sync_enabled),
+            "syncTime": self.sync_time,
+            "updatedAt": serialize_datetime(self.updated_at),
         }

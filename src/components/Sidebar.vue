@@ -13,6 +13,12 @@ const navItems = [
     name: 'AdminClientHealth',
   },
   {
+    label: 'Error Analysis',
+    path: '/admin/error-analysis',
+    icon: '🚨',
+    name: 'AdminErrorAnalysis',
+  },
+  {
     label: 'Job Monitoring',
     path: '/admin/jobs',
     icon: '⚙️',

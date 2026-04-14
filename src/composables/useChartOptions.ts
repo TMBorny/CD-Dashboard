@@ -8,11 +8,61 @@ function formatChartValue(value: number): string {
   return value.toFixed(1).replace(/\.0$/, '');
 }
 
+function usesDateCategories(categories: string[]): boolean {
+  return categories.length > 0 && categories.every((category) => /^\d{4}-\d{2}-\d{2}$/.test(category));
+}
+
+function getAdaptiveTickAmount(categoryCount: number): number | undefined {
+  if (categoryCount <= 1) return categoryCount || undefined;
+  if (categoryCount <= 7) return categoryCount;
+  if (categoryCount <= 21) return 7;
+  if (categoryCount <= 90) return 8;
+  return 10;
+}
+
+function buildXAxis(categories: string[]): ApexOptions['xaxis'] {
+  const isDateAxis = usesDateCategories(categories);
+
+  return {
+    categories,
+    type: isDateAxis ? 'datetime' : 'category',
+    tickAmount: isDateAxis ? getAdaptiveTickAmount(categories.length) : undefined,
+    axisBorder: { show: false },
+    axisTicks: { show: false },
+    labels: {
+      style: { colors: '#64748b', fontSize: '12px' },
+      hideOverlappingLabels: true,
+      showDuplicates: false,
+      datetimeUTC: false,
+      trim: !isDateAxis,
+      rotate: isDateAxis ? 0 : -45,
+    },
+  };
+}
+
 export function useChartOptions(opts: { categories?: string[]; colors?: string[] } = {}): ApexOptions {
+  const categories = opts.categories || [];
+
   return {
     chart: {
       type: 'line',
-      toolbar: { show: true },
+      toolbar: {
+        show: true,
+        tools: {
+          download: true,
+          selection: true,
+          zoom: true,
+          zoomin: true,
+          zoomout: true,
+          pan: true,
+          reset: true,
+        },
+      },
+      zoom: {
+        enabled: true,
+        type: 'x',
+        autoScaleYaxis: true,
+      },
       fontFamily: 'Inter, ui-sans-serif, system-ui',
     },
     markers: {
@@ -36,12 +86,7 @@ export function useChartOptions(opts: { categories?: string[]; colors?: string[]
         stops: [20, 100, 100, 100],
       },
     },
-    xaxis: {
-      categories: opts.categories || [],
-      axisBorder: { show: false },
-      axisTicks: { show: false },
-      labels: { style: { colors: '#64748b', fontSize: '12px' } },
-    },
+    xaxis: buildXAxis(categories),
     yaxis: {
       labels: {
         style: { colors: '#64748b', fontSize: '12px' },
@@ -54,7 +99,7 @@ export function useChartOptions(opts: { categories?: string[]; colors?: string[]
     },
     tooltip: {
       theme: 'light',
-      x: { format: 'yyyy-MM-dd' },
+      x: { format: 'MMM d, yyyy' },
       y: {
         formatter: (value: number | undefined) =>
           typeof value === 'number' ? formatChartValue(value) : '',
@@ -77,11 +122,29 @@ export function useChartOptions(opts: { categories?: string[]; colors?: string[]
 }
 
 export function useStackedBarChartOptions(opts: { categories?: string[]; colors?: string[] } = {}): ApexOptions {
+  const categories = opts.categories || [];
+
   return {
     chart: {
       type: 'bar',
       stacked: true,
-      toolbar: { show: true },
+      toolbar: {
+        show: true,
+        tools: {
+          download: true,
+          selection: true,
+          zoom: true,
+          zoomin: true,
+          zoomout: true,
+          pan: true,
+          reset: true,
+        },
+      },
+      zoom: {
+        enabled: true,
+        type: 'x',
+        autoScaleYaxis: true,
+      },
       fontFamily: 'Inter, ui-sans-serif, system-ui',
     },
     colors: opts.colors || ['#10b981', '#f59e0b', '#64748b', '#ef4444'], // Success, Issues, No Data, Failed by default
@@ -91,12 +154,7 @@ export function useStackedBarChartOptions(opts: { categories?: string[]; colors?
         columnWidth: '50%',
       },
     },
-    xaxis: {
-      categories: opts.categories || [],
-      axisBorder: { show: false },
-      axisTicks: { show: false },
-      labels: { style: { colors: '#64748b', fontSize: '12px' } },
-    },
+    xaxis: buildXAxis(categories),
     yaxis: {
       labels: {
         style: { colors: '#64748b', fontSize: '12px' },
@@ -109,6 +167,7 @@ export function useStackedBarChartOptions(opts: { categories?: string[]; colors?
     },
     tooltip: {
       theme: 'light',
+      x: { format: 'MMM d, yyyy' },
       y: {
         formatter: (value: number | undefined) =>
           typeof value === 'number' ? formatChartValue(value) : '',

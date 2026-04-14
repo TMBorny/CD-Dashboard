@@ -278,21 +278,21 @@ const getRowTone = (school: ClientHealthSnapshot) => {
       </div>
     </div>
 
-    <div class="overflow-x-auto w-full">
-      <table class="w-full border-separate border-spacing-y-3 px-3 text-left text-sm text-slate-600">
+    <div class="w-full max-h-[70vh] overflow-auto">
+      <table class="client-health-table relative min-w-max w-full border-separate border-spacing-y-3 px-3 text-left text-sm text-slate-600">
         <thead class="bg-slate-50 border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
           <tr>
-            <th scope="col" class="px-6 py-4 font-semibold">
+            <th scope="col" class="sticky top-0 z-20 bg-slate-50 px-6 py-4 font-semibold shadow-[inset_0_-1px_0_0_rgba(226,232,240,1)]">
               <button @click="handleSort('displayName')" class="flex items-center gap-2 hover:text-slate-950 transition">
                 School <span v-if="sortBy === 'displayName'" class="text-slate-900">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
               </button>
             </th>
-            <th scope="col" class="px-6 py-4 font-semibold">
+            <th scope="col" class="sticky top-0 z-20 bg-slate-50 px-6 py-4 font-semibold shadow-[inset_0_-1px_0_0_rgba(226,232,240,1)]">
               <button @click="handleSort('sisPlatform')" class="flex items-center gap-2 hover:text-slate-950 transition">
                 SIS <span v-if="sortBy === 'sisPlatform'" class="text-slate-900">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
               </button>
             </th>
-            <th scope="col" class="px-6 py-4 font-semibold">
+            <th scope="col" class="sticky top-0 z-20 bg-slate-50 px-6 py-4 font-semibold shadow-[inset_0_-1px_0_0_rgba(226,232,240,1)]">
               <div class="flex items-start gap-2">
                 <button @click="handleSort('health')" class="flex items-center gap-2 hover:text-slate-950 transition">
                   Status <span v-if="sortBy === 'health'" class="text-slate-900">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
@@ -311,42 +311,42 @@ const getRowTone = (school: ClientHealthSnapshot) => {
                 </div>
               </div>
             </th>
-            <th scope="col" class="px-6 py-4 font-semibold">
+            <th scope="col" class="sticky top-0 z-20 bg-slate-50 px-6 py-4 font-semibold shadow-[inset_0_-1px_0_0_rgba(226,232,240,1)]">
               <button @click="handleSort('nightlySuccess')" class="flex items-center gap-2 hover:text-slate-950 transition">
                 Nightly % <span v-if="sortBy === 'nightlySuccess'" class="text-slate-900">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
               </button>
             </th>
-            <th scope="col" class="px-6 py-4 font-semibold">
+            <th scope="col" class="sticky top-0 z-20 bg-slate-50 px-6 py-4 font-semibold shadow-[inset_0_-1px_0_0_rgba(226,232,240,1)]">
               <button @click="handleSort('nightlyTotals')" class="flex items-center gap-2 hover:text-slate-950 transition">
                 Nightly Totals <span v-if="sortBy === 'nightlyTotals'" class="text-slate-900">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
               </button>
             </th>
-            <th scope="col" class="px-6 py-4 font-semibold">
+            <th scope="col" class="sticky top-0 z-20 bg-slate-50 px-6 py-4 font-semibold shadow-[inset_0_-1px_0_0_rgba(226,232,240,1)]">
               <button @click="handleSort('nightlyDuration')" class="flex items-center gap-2 hover:text-slate-950 transition">
                 Nightly Duration <span v-if="sortBy === 'nightlyDuration'" class="text-slate-900">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
               </button>
             </th>
-            <th scope="col" class="px-6 py-4 font-semibold">
+            <th scope="col" class="sticky top-0 z-20 bg-slate-50 px-6 py-4 font-semibold shadow-[inset_0_-1px_0_0_rgba(226,232,240,1)]">
               <button @click="handleSort('realtimeSuccess')" class="flex items-center gap-2 hover:text-slate-950 transition">
                 Realtime % <span v-if="sortBy === 'realtimeSuccess'" class="text-slate-900">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
               </button>
             </th>
-            <th scope="col" class="px-6 py-4 font-semibold">
+            <th scope="col" class="sticky top-0 z-20 bg-slate-50 px-6 py-4 font-semibold shadow-[inset_0_-1px_0_0_rgba(226,232,240,1)]">
               <button @click="handleSort('realtimeTotals')" class="flex items-center gap-2 hover:text-slate-950 transition">
                 Realtime Totals <span v-if="sortBy === 'realtimeTotals'" class="text-slate-900">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
               </button>
             </th>
-            <th scope="col" class="px-6 py-4 font-semibold">
+            <th scope="col" class="sticky top-0 z-20 bg-slate-50 px-6 py-4 font-semibold shadow-[inset_0_-1px_0_0_rgba(226,232,240,1)]">
               <button @click="handleSort('mergeErrors')" class="flex items-center gap-2 hover:text-slate-950 transition">
                 Open Errors <span v-if="sortBy === 'mergeErrors'" class="text-slate-900">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
               </button>
             </th>
-            <th scope="col" class="px-6 py-4 font-semibold">
+            <th scope="col" class="sticky top-0 z-20 bg-slate-50 px-6 py-4 font-semibold shadow-[inset_0_-1px_0_0_rgba(226,232,240,1)]">
               <button @click="handleSort('activeUsers')" class="flex items-center gap-2 hover:text-slate-950 transition">
                 Active Users (24h) <span v-if="sortBy === 'activeUsers'" class="text-slate-900">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
               </button>
             </th>
-            <th scope="col" class="px-6 py-4 text-right font-semibold">
+            <th scope="col" class="sticky top-0 z-20 bg-slate-50 px-6 py-4 text-right font-semibold shadow-[inset_0_-1px_0_0_rgba(226,232,240,1)]">
               Actions
             </th>
           </tr>
@@ -390,15 +390,13 @@ const getRowTone = (school: ClientHealthSnapshot) => {
               <div class="text-lg font-semibold leading-none text-slate-950">
                 {{ nightlyRate(school) === null ? 'N/A' : `${nightlyRate(school)!.toFixed(0)}%` }}
               </div>
-              <div class="mt-2 text-xs text-slate-500">
-                {{ nightlyRate(school) === null ? 'No valid nightly merges in the upstream window' : 'Upstream 48h window' }}
-              </div>
             </td>
             <td :class="['whitespace-nowrap border-y border-slate-200 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300', getRowTone(school)]">
               <div class="text-lg font-semibold leading-none text-slate-950">{{ school.merges.nightly.succeeded }} / {{ school.merges.nightly.total }}</div>
               <div class="mt-3 flex flex-wrap gap-2">
                 <div v-if="school.merges.nightly.finishedWithIssues > 0" class="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-700" title="Finished With Issues">{{ school.merges.nightly.finishedWithIssues }} Issues</div>
                 <div v-if="school.merges.nightly.noData > 0" class="rounded-full bg-slate-200/80 px-2 py-1 text-[11px] font-semibold text-slate-600" title="No Data">{{ school.merges.nightly.noData }} No Data</div>
+                <div v-if="school.merges.nightly.halted > 0" class="rounded-full bg-yellow-100 px-2 py-1 text-[11px] font-semibold text-yellow-800" title="Halted: Change Threshold Exceeded">{{ school.merges.nightly.halted }} Halted</div>
               </div>
             </td>
             <td :class="['whitespace-nowrap border-y border-slate-200 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300', getRowTone(school)]">
@@ -437,3 +435,13 @@ const getRowTone = (school: ClientHealthSnapshot) => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.client-health-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: #f8fafc;
+  box-shadow: inset 0 -1px 0 rgba(226, 232, 240, 1);
+}
+</style>

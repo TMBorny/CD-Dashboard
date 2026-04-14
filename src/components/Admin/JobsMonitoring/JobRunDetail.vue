@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 import { RouterLink } from 'vue-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
-import { getSyncRuns, resumeHistoryBackfill, retryHistoryBackfillFailures } from '@/api';
+import { getSyncRun, resumeHistoryBackfill, retryHistoryBackfillFailures } from '@/api';
 import Badge from '@/components/ui/Badge.vue';
 import Card from '@/components/ui/Card.vue';
 import {
@@ -31,27 +31,32 @@ const props = defineProps<{
 const queryClient = useQueryClient();
 
 const { data, isLoading, error } = useQuery({
-  queryKey: ['syncRuns'],
-  queryFn: () => getSyncRuns({ limit: 200 }).then((res) => res.data),
+  queryKey: ['syncRun', props.jobId],
+  queryFn: () => getSyncRun(props.jobId).then((res) => res.data),
   refetchInterval: 5000,
 });
 
-const run = computed<JobRun | null>(() => {
-  const runs = (data.value?.syncRuns ?? []) as JobRun[];
-  return runs.find((candidate) => candidate.jobId === props.jobId) ?? null;
+const hasSyncRunData = computed(() => Boolean(data.value?.syncRun));
+const isNotFoundError = computed(() => {
+  const queryError = error.value as { response?: { status?: number } } | null;
+  return queryError?.response?.status === 404;
 });
+
+const run = computed<JobRun | null>(() => (data.value?.syncRun as JobRun | undefined) ?? null);
 
 const resumeMutation = useMutation({
   mutationFn: (jobId: string) => resumeHistoryBackfill(jobId),
-  onSuccess: async () => {
+  onSuccess: async (_result, jobId) => {
     await queryClient.invalidateQueries({ queryKey: ['syncRuns'] });
+    await queryClient.invalidateQueries({ queryKey: ['syncRun', jobId] });
   },
 });
 
 const retryFailuresMutation = useMutation({
   mutationFn: (jobId: string) => retryHistoryBackfillFailures(jobId),
-  onSuccess: async () => {
+  onSuccess: async (_result, jobId) => {
     await queryClient.invalidateQueries({ queryKey: ['syncRuns'] });
+    await queryClient.invalidateQueries({ queryKey: ['syncRun', jobId] });
   },
 });
 
@@ -131,11 +136,17 @@ const triggerRetryFailures = async () => {
     </div>
 
     <div v-if="isLoading" class="text-sm text-slate-500">Loading job details...</div>
-    <div v-else-if="error" class="text-sm text-rose-500">Failed to load job details.</div>
+    <div v-else-if="isNotFoundError && !hasSyncRunData" class="rounded-[28px] border border-slate-200 bg-white p-8 text-sm text-slate-500 shadow-sm">
+      This job could not be found.
+    </div>
+    <div v-else-if="error && !hasSyncRunData" class="text-sm text-rose-500">Failed to load job details.</div>
     <div v-else-if="!run" class="rounded-[28px] border border-slate-200 bg-white p-8 text-sm text-slate-500 shadow-sm">
-      This job was not found in the current job history window.
+      This job could not be found.
     </div>
     <template v-else>
+      <div v-if="error" class="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        Live updates are temporarily unavailable. Showing the most recent job details we already loaded.
+      </div>
       <div v-if="mutationError" class="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
         {{ mutationError }}
       </div>

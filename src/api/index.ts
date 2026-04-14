@@ -84,6 +84,19 @@ export async function getClientHealthSyncMetadata(params?: { school?: string }) 
   return { data: res.data };
 }
 
+export async function getSchedulerSettings() {
+  const res = await backend.get('/client-health/scheduler-settings');
+  return { data: res.data };
+}
+
+export async function updateSchedulerSettings(params: { syncEnabled: boolean; syncTime: string }) {
+  const res = await backend.put('/client-health/scheduler-settings', {
+    syncEnabled: params.syncEnabled,
+    syncTime: params.syncTime,
+  });
+  return { data: res.data };
+}
+
 
 // ---------------------------------------------------------------------------
 // Detail page data — fetched live from Coursedog via direct API
@@ -92,12 +105,89 @@ export async function getClientHealthSyncMetadata(params?: { school?: string }) 
 export async function getClientHealthHistory(params: { days?: number; school?: string }) {
   const res = await backend.get('/client-health/history', {
     params: {
-      days: params.days ?? 30,
+      ...(typeof params.days === 'number' ? { days: params.days } : {}),
       ...(params.school ? { school: params.school } : {}),
     },
   });
 
   return { data: res.data };
+}
+
+export async function getErrorAnalysis(params: { days?: number; school?: string; sisPlatform?: string }) {
+  const res = await backend.get('/error-analysis', {
+    params: {
+      ...(typeof params.days === 'number' ? { days: params.days } : {}),
+      ...(params.school ? { school: params.school } : {}),
+      ...(params.sisPlatform ? { sisPlatform: params.sisPlatform } : {}),
+    },
+  });
+
+  return { data: res.data };
+}
+
+export async function downloadErrorAnalysisExport(params: { days?: number; school?: string; sisPlatform?: string }) {
+  const res = await backend.get('/error-analysis/export', {
+    params: {
+      ...(typeof params.days === 'number' ? { days: params.days } : {}),
+      ...(params.school ? { school: params.school } : {}),
+      ...(params.sisPlatform ? { sisPlatform: params.sisPlatform } : {}),
+    },
+    responseType: 'blob',
+  });
+
+  return {
+    blob: res.data as Blob,
+    filename: res.headers['content-disposition']
+      ?.match(/filename="?(.*?)"?$/)?.[1] || 'error-analysis-export.json',
+  };
+}
+
+export async function getErrorAnalysisErrors(params: {
+  days?: number;
+  school?: string;
+  sisPlatform?: string;
+  q?: string;
+  sortBy?: string;
+  sortDir?: 'asc' | 'desc';
+  page?: number;
+  pageSize?: number;
+}) {
+  const res = await backend.get('/error-analysis/errors', {
+    params: {
+      ...(typeof params.days === 'number' ? { days: params.days } : {}),
+      ...(params.school ? { school: params.school } : {}),
+      ...(params.sisPlatform ? { sisPlatform: params.sisPlatform } : {}),
+      ...(params.q ? { q: params.q } : {}),
+      ...(params.sortBy ? { sortBy: params.sortBy } : {}),
+      ...(params.sortDir ? { sortDir: params.sortDir } : {}),
+      ...(params.page ? { page: params.page } : {}),
+      ...(params.pageSize ? { pageSize: params.pageSize } : {}),
+    },
+  });
+  return { data: res.data };
+}
+
+export async function downloadErrorAnalysisDetailedExport(params: {
+  days?: number;
+  school?: string;
+  sisPlatform?: string;
+  q?: string;
+}) {
+  const res = await backend.get('/error-analysis/export', {
+    params: {
+      ...(typeof params.days === 'number' ? { days: params.days } : {}),
+      ...(params.school ? { school: params.school } : {}),
+      ...(params.sisPlatform ? { sisPlatform: params.sisPlatform } : {}),
+      ...(params.q ? { q: params.q } : {}),
+      view: 'all-errors',
+    },
+    responseType: 'blob',
+  });
+  return {
+    blob: res.data as Blob,
+    filename: res.headers['content-disposition']
+      ?.match(/filename="?(.*?)"?$/)?.[1] || 'error-analysis-all-errors.json',
+  };
 }
 
 /**
@@ -126,6 +216,11 @@ export async function getSyncRuns(params?: { limit?: number; offset?: number }) 
       offset: params?.offset ?? 0,
     },
   });
+  return { data: res.data };
+}
+
+export async function getSyncRun(jobId: string) {
+  const res = await backend.get(`/client-health/sync-runs/${jobId}`);
   return { data: res.data };
 }
 

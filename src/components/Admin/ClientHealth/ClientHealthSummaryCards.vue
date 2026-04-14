@@ -16,14 +16,18 @@ const calcSplits = (schools: ClientHealthSnapshot[], type: 'nightly' | 'realtime
   // Optional chaining in case older DB rows don't have these properties yet
   const issues = schools.reduce((sum, s) => sum + (s.merges[type].finishedWithIssues || 0), 0);
   const noData = schools.reduce((sum, s) => sum + (s.merges[type].noData || 0), 0);
+  const halted = type === 'nightly'
+    ? schools.reduce((sum, s) => sum + (s.merges.nightly.halted || 0), 0)
+    : 0;
   const failed = schools.reduce((sum, s) => sum + s.merges[type].failed, 0);
   
-  if (total === 0) return { succeeded: 0, issues: 0, noData: 0, failed: 0 };
+  if (total === 0) return { succeeded: 0, issues: 0, noData: 0, halted: 0, failed: 0 };
   
   return {
     succeeded: (succeeded / total) * 100,
     issues: (issues / total) * 100,
     noData: (noData / total) * 100,
+    halted: (halted / total) * 100,
     failed: (failed / total) * 100,
   };
 };
@@ -51,11 +55,13 @@ const totalActiveUsers = computed(() => props.schools.reduce((sum, s) => sum + s
         <div :style="{ width: `${nightlySplits.succeeded}%` }" class="bg-emerald-500"></div>
         <div :style="{ width: `${nightlySplits.issues}%` }" class="bg-amber-400"></div>
         <div :style="{ width: `${nightlySplits.noData}%` }" class="bg-slate-400"></div>
+        <div :style="{ width: `${nightlySplits.halted}%` }" class="bg-yellow-700"></div>
       </div>
       <p class="mt-2 text-[10px] text-slate-500 flex gap-2">
         <span class="text-emerald-600">■ Success</span>
         <span class="text-amber-500">■ Issues</span>
         <span class="text-slate-500">■ No Data</span>
+        <span class="text-yellow-700">■ Halted</span>
         <span class="text-rose-600">■ Fail</span>
       </p>
     </Card>
