@@ -6,6 +6,10 @@ import type { ErrorAnalysisResponse } from '@/types/errorAnalysis';
 const queryData = ref<ErrorAnalysisResponse | null>(null);
 const queryLoading = ref(false);
 const queryError = ref<Error | null>(null);
+const downloadErrorAnalysisExportMock = vi.fn().mockResolvedValue({
+  blob: new Blob(['{"ok":true}'], { type: 'application/json' }),
+  filename: 'error-analysis-export.json',
+});
 
 vi.mock('@tanstack/vue-query', () => ({
   useQuery: vi.fn(() => ({
@@ -17,6 +21,7 @@ vi.mock('@tanstack/vue-query', () => ({
 
 vi.mock('@/api', () => ({
   getErrorAnalysis: vi.fn().mockResolvedValue({ data: {} }),
+  downloadErrorAnalysisExport: downloadErrorAnalysisExportMock,
 }));
 
 vi.mock('vue3-apexcharts', () => ({
@@ -250,6 +255,9 @@ describe('ErrorAnalysisDashboard', () => {
     queryLoading.value = false;
     queryError.value = null;
     queryData.value = buildResponse();
+    downloadErrorAnalysisExportMock.mockClear();
+    window.URL.createObjectURL = vi.fn(() => 'blob:download-url');
+    window.URL.revokeObjectURL = vi.fn();
   });
 
   it('renders the empty state before any detailed capture exists', async () => {
@@ -380,5 +388,33 @@ describe('ErrorAnalysisDashboard', () => {
 
     const schoolOptions = wrapper.get('[data-testid="school-filter"]').findAll('option').map((option) => option.text());
     expect(schoolOptions).toEqual(['All schools', 'Foo State (foo01)']);
+  });
+
+  it('downloads an export using the current filters', async () => {
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    const { default: ErrorAnalysisDashboard } = await import('./ErrorAnalysisDashboard.vue');
+    const wrapper = mount(ErrorAnalysisDashboard, {
+      global: {
+        stubs: {
+          RouterLink: RouterLinkStub,
+          VueApexCharts: { template: '<div class="chart-stub" />' },
+        },
+      },
+    });
+
+    await wrapper.get('[data-testid="sis-filter"]').setValue('PeopleSoftDirect');
+    await wrapper.get('[data-testid="school-filter"]').setValue('foo01');
+    await wrapper.get('[data-testid="error-analysis-export"]').trigger('click');
+
+    expect(downloadErrorAnalysisExportMock).toHaveBeenCalledWith({
+      days: 7,
+      school: 'foo01',
+      sisPlatform: 'PeopleSoftDirect',
+    });
+    expect(window.URL.createObjectURL).toHaveBeenCalled();
+    expect(clickSpy).toHaveBeenCalled();
+
+    clickSpy.mockRestore();
   });
 });

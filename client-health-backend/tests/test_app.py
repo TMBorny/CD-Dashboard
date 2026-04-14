@@ -1,6 +1,7 @@
 import unittest
 import os
 import atexit
+import json
 import shutil
 import tempfile
 from types import SimpleNamespace
@@ -12,7 +13,9 @@ from fastapi.testclient import TestClient
 
 TEST_DB_DIR = tempfile.mkdtemp(prefix="client-health-backend-tests-")
 TEST_DB_PATH = os.path.join(TEST_DB_DIR, "client_health_test.db")
+TEST_ERROR_EXPORT_PATH = os.path.join(TEST_DB_DIR, "error_analysis_export.json")
 os.environ["CLIENT_HEALTH_DB_PATH"] = TEST_DB_PATH
+os.environ["CLIENT_HEALTH_ERROR_EXPORT_PATH"] = TEST_ERROR_EXPORT_PATH
 atexit.register(lambda: shutil.rmtree(TEST_DB_DIR, ignore_errors=True))
 
 import app.routes as routes
@@ -53,6 +56,7 @@ from app.routes import (
     split_school_catalog,
     summarize_nightly_outcomes,
     summarize_recent_merge_activity,
+    write_error_analysis_export,
 )
 
 TEST_INTERNAL_API_KEY = "test-internal-key"
@@ -432,6 +436,51 @@ class MergeErrorCountTests(unittest.TestCase):
         self.assertIn("room is not defined as a classroom", groups[0]["normalizedMessage"])
         self.assertEqual(groups[0]["errorCode"], "SetMeetingTimes")
 
+    def test_write_error_analysis_export_persists_all_group_metadata(self):
+        if os.path.exists(TEST_ERROR_EXPORT_PATH):
+            os.remove(TEST_ERROR_EXPORT_PATH)
+
+        init_db()
+        db = get_db()
+        try:
+            db.query(ErrorAnalysisGroup).delete(synchronize_session=False)
+            db.add(
+                ErrorAnalysisGroup.from_dict(
+                    {
+                        "snapshotDate": "2026-04-13",
+                        "school": "bar01",
+                        "displayName": "Baruch College",
+                        "sisPlatform": "Banner",
+                        "entityType": "sections",
+                        "errorCode": "missing_course",
+                        "signatureKey": "sig-a",
+                        "normalizedMessage": "course <num> missing dependency <num>",
+                        "sampleMessage": "Course 202602 missing dependency 987654",
+                        "count": 3,
+                        "sampleErrors": [{"message": "Course 202602 missing dependency 987654"}],
+                        "termCodes": ["202602"],
+                    }
+                )
+            )
+            db.commit()
+
+            export_path = write_error_analysis_export(db)
+        finally:
+            db.close()
+
+        self.assertEqual(str(export_path), TEST_ERROR_EXPORT_PATH)
+        self.assertTrue(os.path.exists(TEST_ERROR_EXPORT_PATH))
+
+        with open(TEST_ERROR_EXPORT_PATH, "r", encoding="utf-8") as exported_file:
+            payload = json.load(exported_file)
+
+        self.assertEqual(payload["totalGroups"], 1)
+        self.assertEqual(payload["totalErrorInstances"], 3)
+        self.assertEqual(payload["groups"][0]["school"], "bar01")
+        self.assertEqual(payload["groups"][0]["sisPlatform"], "Banner")
+        self.assertEqual(payload["groups"][0]["signatureKey"], "sig-a")
+        self.assertEqual(payload["groups"][0]["sampleErrors"][0]["message"], "Course 202602 missing dependency 987654")
+
     def test_extract_merge_history_entries_from_nested_content(self):
         payload = {"data": {"content": [{"id": "a"}, {"id": "b"}]}}
         self.assertEqual(extract_merge_history_entries(payload), [{"id": "a"}, {"id": "b"}])
@@ -667,6 +716,9 @@ class SyncJobErrorAnalysisPersistenceTests(unittest.IsolatedAsyncioTestCase):
             routes._active_sync_job_id = None
 
     async def test_run_sync_job_replaces_same_day_error_groups_on_rerun(self):
+        if os.path.exists(TEST_ERROR_EXPORT_PATH):
+            os.remove(TEST_ERROR_EXPORT_PATH)
+
         db = get_db()
         try:
             db.add(
@@ -773,6 +825,12 @@ class SyncJobErrorAnalysisPersistenceTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(len(persisted), 1)
             self.assertEqual(persisted[0].signature_key, "sig-new")
+            with open(TEST_ERROR_EXPORT_PATH, "r", encoding="utf-8") as exported_file:
+                payload = json.load(exported_file)
+            self.assertEqual(payload["totalGroups"], 1)
+            self.assertEqual(payload["groups"][0]["signatureKey"], "sig-new")
+            self.assertEqual(payload["groups"][0]["school"], "bar01")
+            self.assertEqual(payload["groups"][0]["sisPlatform"], "Banner")
         finally:
             db.close()
 
@@ -2156,6 +2214,74 @@ class ErrorAnalysisEndpointTests(unittest.TestCase):
         self.assertEqual(sis_response.status_code, 200)
         self.assertEqual(sis_response.json()["summary"]["totalErrorInstances"], 4)
         self.assertEqual(sis_response.json()["sisBreakdowns"][0]["key"], "PeopleSoftDirect")
+
+    def test_error_analysis_export_downloads_filtered_groups(self):
+        init_db()
+        db = get_db()
+        try:
+            db.add_all(
+                [
+                    ErrorAnalysisGroup.from_dict(
+                        {
+                            "snapshotDate": "2026-04-13",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": "Banner",
+                            "entityType": "sections",
+                            "errorCode": "missing_course",
+                            "signatureKey": "sig-a",
+                            "normalizedMessage": "course missing dependency",
+                            "sampleMessage": "Course missing dependency",
+                            "count": 2,
+                            "sampleErrors": [{"message": "Course missing dependency"}],
+                            "termCodes": ["202505"],
+                        }
+                    ),
+                    ErrorAnalysisGroup.from_dict(
+                        {
+                            "snapshotDate": "2026-04-13",
+                            "school": "foo01",
+                            "displayName": "Foo State",
+                            "sisPlatform": "PeopleSoftDirect",
+                            "entityType": "courses",
+                            "errorCode": "duplicate_course",
+                            "signatureKey": "sig-b",
+                            "normalizedMessage": "duplicate course",
+                            "sampleMessage": "Duplicate course",
+                            "count": 4,
+                            "sampleErrors": [{"message": "Duplicate course"}],
+                            "termCodes": ["202505"],
+                        }
+                    ),
+                ]
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
+            "app.main.start_scheduled_sync_service",
+            new=self._async_noop,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=self._async_noop,
+        ):
+            with TestClient(app) as client:
+                response = client.get(
+                    "/api/error-analysis/export",
+                    params={"school": "foo01", "sisPlatform": "PeopleSoftDirect", "days": 30},
+                    headers=AUTH_HEADERS,
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "application/json")
+        self.assertIn("attachment;", response.headers["content-disposition"])
+        payload = response.json()
+        self.assertEqual(payload["metadata"]["appliedFilters"]["school"], "foo01")
+        self.assertEqual(payload["metadata"]["appliedFilters"]["sisPlatform"], "PeopleSoftDirect")
+        self.assertEqual(payload["metadata"]["groupCount"], 1)
+        self.assertEqual(payload["groups"][0]["school"], "foo01")
+        self.assertEqual(payload["groups"][0]["signatureKey"], "sig-b")
 
 
 class SyncRunListEndpointTests(unittest.TestCase):

@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
 import VueApexCharts from 'vue3-apexcharts';
-import { getErrorAnalysis } from '@/api';
+import { downloadErrorAnalysisExport, getErrorAnalysis } from '@/api';
 import Card from '@/components/ui/Card.vue';
 import { useChartOptions } from '@/composables/useChartOptions';
 import type {
@@ -40,6 +40,7 @@ const selectedSchool = ref('all');
 const selectedSis = ref('all');
 const activeView = ref<ErrorViewMode>('aggregate');
 const selectedErrorDetail = ref<ErrorDetailContext | null>(null);
+const isExporting = ref(false);
 const localTimeZoneLabel = getLocalTimeZoneLabel();
 const coursedogBaseUrl = (import.meta.env.VITE_COURSEDOG_PRD_URL?.trim() || 'https://app.coursedog.com').replace(/\/+$/, '');
 
@@ -409,6 +410,28 @@ const openSchoolErrorDetail = (row: ErrorBreakdownRow) => {
 const closeErrorDetail = () => {
   selectedErrorDetail.value = null;
 };
+
+const handleExport = async () => {
+  if (isExporting.value) return;
+  isExporting.value = true;
+  try {
+    const { blob, filename } = await downloadErrorAnalysisExport({
+      days: daysParam.value,
+      school: selectedSchool.value === 'all' ? undefined : selectedSchool.value,
+      sisPlatform: selectedSis.value === 'all' ? undefined : selectedSis.value,
+    });
+    const objectUrl = window.URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(objectUrl);
+  } finally {
+    isExporting.value = false;
+  }
+};
 </script>
 
 <template>
@@ -426,6 +449,18 @@ const closeErrorDetail = () => {
             <span class="inline-flex rounded-full bg-slate-100 px-3 py-1.5 text-slate-700">{{ historyStatus }}</span>
             <span class="inline-flex rounded-full bg-slate-100 px-3 py-1.5 text-slate-500">Times shown in {{ localTimeZoneLabel }}</span>
           </div>
+        </div>
+
+        <div class="mt-6 flex justify-start sm:justify-end">
+          <button
+            type="button"
+            class="inline-flex items-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
+            data-testid="error-analysis-export"
+            :disabled="isLoading || isExporting"
+            @click="handleExport"
+          >
+            {{ isExporting ? 'Saving export...' : 'Save export' }}
+          </button>
         </div>
 
         <div class="mt-8 border-t border-slate-200 pt-6">

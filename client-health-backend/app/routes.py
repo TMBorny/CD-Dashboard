@@ -11,15 +11,16 @@ import json
 import logging
 import re
 import time
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from uuid import uuid4
 from typing import Any, Optional
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Response
 from pydantic import BaseModel
 
-from app.db import api_get, get_db
+from app.db import api_get, get_db, get_error_analysis_export_path
 from app.models import (
     BackfillWorkUnit,
     ErrorAnalysisGroup,
@@ -178,6 +179,34 @@ def split_school_catalog(
             included.append(school)
 
     return included, excluded
+
+
+def write_error_analysis_export(db) -> Path:
+    """Write all captured error-analysis groups to a standalone JSON file."""
+    export_path = get_error_analysis_export_path()
+    export_path.parent.mkdir(parents=True, exist_ok=True)
+
+    groups = (
+        db.query(ErrorAnalysisGroup)
+        .order_by(
+            ErrorAnalysisGroup.snapshot_date.desc(),
+            ErrorAnalysisGroup.school.asc(),
+            ErrorAnalysisGroup.signature_key.asc(),
+        )
+        .all()
+    )
+    payload = {
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "path": str(export_path),
+        "totalGroups": len(groups),
+        "totalErrorInstances": sum(group.count for group in groups),
+        "groups": [group.to_dict() for group in groups],
+    }
+
+    temp_path = export_path.with_suffix(f"{export_path.suffix}.tmp")
+    temp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    temp_path.replace(export_path)
+    return export_path
 
 
 def is_demo_school(school: str, display_name: str) -> bool:
@@ -657,6 +686,76 @@ async def get_error_analysis(
         response["schoolBreakdowns"] = serialized_school_breakdowns
         response["sisBreakdowns"] = serialized_sis_breakdowns
         return response
+    finally:
+        db.close()
+
+
+@router.get("/error-analysis/export")
+async def export_error_analysis(
+    days: Optional[int] = Query(default=None, ge=1),
+    school: Optional[str] = Query(default=None),
+    sis_platform: Optional[str] = Query(default=None, alias="sisPlatform"),
+):
+    """Download the currently filtered error-analysis groups as JSON."""
+    db = get_db()
+    try:
+        history_start = (
+            db.query(ErrorAnalysisGroup.snapshot_date)
+            .order_by(ErrorAnalysisGroup.snapshot_date.asc())
+            .first()
+        )
+        last_capture = (
+            db.query(ErrorAnalysisGroup.created_at)
+            .order_by(ErrorAnalysisGroup.created_at.desc())
+            .first()
+        )
+
+        query = db.query(ErrorAnalysisGroup)
+        if days is not None:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+            query = query.filter(ErrorAnalysisGroup.snapshot_date >= cutoff)
+        if school:
+            query = query.filter(ErrorAnalysisGroup.school == school)
+        if sis_platform:
+            query = query.filter(ErrorAnalysisGroup.sis_platform == sis_platform)
+
+        groups = query.order_by(
+            ErrorAnalysisGroup.snapshot_date.desc(),
+            ErrorAnalysisGroup.school.asc(),
+            ErrorAnalysisGroup.signature_key.asc(),
+        ).all()
+
+        filename_parts = ["error-analysis"]
+        if school:
+            filename_parts.append(school)
+        if sis_platform:
+            filename_parts.append(sis_platform.lower().replace(" ", "-"))
+        if days is not None:
+            filename_parts.append(f"{days}d")
+        filename_parts.append(datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
+        filename = "-".join(filename_parts) + ".json"
+
+        payload = {
+            "metadata": {
+                "historyStartsOn": history_start[0] if history_start else None,
+                "lastCapturedAt": serialize_datetime(last_capture[0]) if last_capture else None,
+                "appliedFilters": {
+                    "days": days,
+                    "school": school,
+                    "sisPlatform": sis_platform,
+                },
+                "exportedAt": datetime.now(timezone.utc).isoformat(),
+                "groupCount": len(groups),
+                "totalErrorInstances": sum(group.count for group in groups),
+            },
+            "groups": [group.to_dict() for group in groups],
+        }
+
+        return Response(
+            content=json.dumps(payload, indent=2),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
     finally:
         db.close()
 
@@ -1561,6 +1660,7 @@ async def run_sync_job(
             for group_data in new_error_groups:
                 db.add(ErrorAnalysisGroup.from_dict(group_data))
             db.commit()
+            write_error_analysis_export(db)
         except Exception as e:
             db.rollback()
             raise RuntimeError(f"Database write error: {e}") from e

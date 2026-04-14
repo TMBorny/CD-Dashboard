@@ -125,6 +125,23 @@ export async function getErrorAnalysis(params: { days?: number; school?: string;
   return { data: res.data };
 }
 
+export async function downloadErrorAnalysisExport(params: { days?: number; school?: string; sisPlatform?: string }) {
+  const res = await backend.get('/error-analysis/export', {
+    params: {
+      ...(typeof params.days === 'number' ? { days: params.days } : {}),
+      ...(params.school ? { school: params.school } : {}),
+      ...(params.sisPlatform ? { sisPlatform: params.sisPlatform } : {}),
+    },
+    responseType: 'blob',
+  });
+
+  return {
+    blob: res.data as Blob,
+    filename: res.headers['content-disposition']
+      ?.match(/filename="?(.*?)"?$/)?.[1] || 'error-analysis-export.json',
+  };
+}
+
 /**
  * Get active users for a specific school via the local backend.
  */

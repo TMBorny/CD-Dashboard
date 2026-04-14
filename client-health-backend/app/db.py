@@ -103,6 +103,14 @@ def get_default_db_path() -> Path:
     return Path(__file__).parent.parent / "client_health.db"
 
 
+def get_error_analysis_export_path() -> Path:
+    configured_path = os.getenv("CLIENT_HEALTH_ERROR_EXPORT_PATH")
+    if configured_path:
+        return Path(configured_path).expanduser()
+
+    return get_default_db_path().with_name("error_analysis_export.json")
+
+
 def get_database_url() -> str:
     database_url = os.getenv("CLIENT_HEALTH_DATABASE_URL")
     if database_url:
