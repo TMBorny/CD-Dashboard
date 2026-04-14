@@ -276,7 +276,7 @@ const handleRowClick = (school: ClientHealthSnapshot) => {
           <div class="flex flex-col rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
             <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Engagement</p>
             <h3 class="mt-2 text-base font-semibold text-slate-950">Active Users (24h)</h3>
-            <p class="mt-1 text-xs text-slate-500">Distinct active users per snapshot day.</p>
+            <p class="mt-1 text-xs text-slate-500">Daily Active Sessions per snapshot day.</p>
             <div class="mt-4 flex-1 min-h-[250px]">
               <VueApexCharts type="line" :options="activeUsersOptions" :series="activeUsersSeries" height="100%" />
             </div>

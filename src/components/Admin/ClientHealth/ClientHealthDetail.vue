@@ -144,7 +144,7 @@ const mergeErrorsChartOptions = computed(() => ({
 const activeUsersChartSeries = computed(() => {
   if (!history.value) return [];
   const data = history.value.snapshots.map((s: any) => s.activeUsers24h);
-  return [{ name: 'Distinct Active Users (24h)', data }];
+  return [{ name: 'Daily Active Sessions', data }];
 });
 
 const activeUsersChartOptions = computed(() => ({
@@ -239,7 +239,7 @@ const activeUsersChartOptions = computed(() => ({
             <VueApexCharts type="line" :options="mergeErrorsChartOptions" :series="mergeErrorsChartSeries" />
           </div>
         </Card>
-        <Card subtitle="Activity" title="Distinct Active Users (per day)">
+        <Card subtitle="Activity" title="Daily Active Sessions">
           <div class="mt-6 min-h-[260px]">
             <VueApexCharts type="line" :options="activeUsersChartOptions" :series="activeUsersChartSeries" />
           </div>
