@@ -1,27 +1,45 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount, RouterLinkStub } from '@vue/test-utils';
 import { ref } from 'vue';
-import type { ErrorAnalysisResponse } from '@/types/errorAnalysis';
+import type { ErrorAnalysisResponse, ErrorDetailTableResponse } from '@/types/errorAnalysis';
 
 const queryData = ref<ErrorAnalysisResponse | null>(null);
+const detailQueryData = ref<ErrorDetailTableResponse | null>(null);
 const queryLoading = ref(false);
 const queryError = ref<Error | null>(null);
 const downloadErrorAnalysisExportMock = vi.fn().mockResolvedValue({
   blob: new Blob(['{"ok":true}'], { type: 'application/json' }),
   filename: 'error-analysis-export.json',
 });
+const downloadErrorAnalysisDetailedExportMock = vi.fn().mockResolvedValue({
+  blob: new Blob(['{"ok":true}'], { type: 'application/json' }),
+  filename: 'error-analysis-all-errors.json',
+});
 
 vi.mock('@tanstack/vue-query', () => ({
-  useQuery: vi.fn(() => ({
-    data: queryData,
-    isLoading: queryLoading,
-    error: queryError,
-  })),
+  useQuery: vi.fn((options) => {
+    const keyValue = options.queryKey?.value ?? options.queryKey;
+    const queryName = Array.isArray(keyValue) ? keyValue[0] : null;
+    if (queryName === 'errorAnalysisDetails') {
+      return {
+        data: detailQueryData,
+        isLoading: queryLoading,
+        error: queryError,
+      };
+    }
+    return {
+      data: queryData,
+      isLoading: queryLoading,
+      error: queryError,
+    };
+  }),
 }));
 
 vi.mock('@/api', () => ({
   getErrorAnalysis: vi.fn().mockResolvedValue({ data: {} }),
+  getErrorAnalysisErrors: vi.fn().mockResolvedValue({ data: {} }),
   downloadErrorAnalysisExport: downloadErrorAnalysisExportMock,
+  downloadErrorAnalysisDetailedExport: downloadErrorAnalysisDetailedExportMock,
 }));
 
 vi.mock('vue3-apexcharts', () => ({
@@ -250,12 +268,80 @@ const buildResponse = (): ErrorAnalysisResponse => ({
   ],
 });
 
+const buildDetailResponse = (): ErrorDetailTableResponse => ({
+  rows: [
+    {
+      id: 1,
+      snapshotDate: '2026-04-13',
+      school: 'foo01',
+      displayName: 'Foo State',
+      sisPlatform: 'PeopleSoftDirect',
+      entityType: 'courses',
+      errorCode: 'duplicate_course',
+      signatureKey: 'sig-b-detail',
+      signatureLabel: 'courses | duplicate_course | duplicate course <num>',
+      normalizedMessage: 'duplicate course <num>',
+      fullErrorText: 'Duplicate course 12345 already exists in CourseDog',
+      entityDisplayName: 'Course 12345',
+      mergeReport: {
+        school: 'foo01',
+        mergeReportId: 'report-b1',
+        scheduleType: 'realtime',
+        entityDisplayName: 'Course 12345',
+        snapshotDate: '2026-04-13',
+      },
+      termCodes: ['202505'],
+      rawError: { message: 'Duplicate course 12345 already exists in CourseDog' },
+      createdAt: '2026-04-13T12:00:00Z',
+    },
+    {
+      id: 2,
+      snapshotDate: '2026-04-13',
+      school: 'bar01',
+      displayName: 'Baruch College',
+      sisPlatform: 'Banner',
+      entityType: 'sections',
+      errorCode: 'missing_course',
+      signatureKey: 'sig-a-detail',
+      signatureLabel: 'sections | missing_course | course <num> missing dependency <num>',
+      normalizedMessage: 'course <num> missing dependency <num>',
+      fullErrorText: 'Course 202602 missing dependency 987654',
+      entityDisplayName: 'BIO-101-01',
+      mergeReport: {
+        school: 'bar01',
+        mergeReportId: 'report-a2',
+        scheduleType: 'nightly',
+        entityDisplayName: 'BIO-101-01',
+        snapshotDate: '2026-04-13',
+      },
+      termCodes: ['202602'],
+      rawError: { message: 'Course 202602 missing dependency 987654' },
+      createdAt: '2026-04-13T12:00:00Z',
+    },
+  ],
+  total: 2,
+  page: 1,
+  pageSize: 50,
+  sortBy: 'snapshotDate',
+  sortDir: 'desc',
+  metadata: {
+    appliedFilters: {
+      days: 7,
+      school: null,
+      sisPlatform: null,
+      q: null,
+    },
+  },
+});
+
 describe('ErrorAnalysisDashboard', () => {
   beforeEach(() => {
     queryLoading.value = false;
     queryError.value = null;
     queryData.value = buildResponse();
+    detailQueryData.value = buildDetailResponse();
     downloadErrorAnalysisExportMock.mockClear();
+    downloadErrorAnalysisDetailedExportMock.mockClear();
     window.URL.createObjectURL = vi.fn(() => 'blob:download-url');
     window.URL.revokeObjectURL = vi.fn();
   });
@@ -284,6 +370,7 @@ describe('ErrorAnalysisDashboard', () => {
       schoolBreakdowns: [],
       sisBreakdowns: [],
     };
+    detailQueryData.value = { ...buildDetailResponse(), rows: [], total: 0 };
 
     const { default: ErrorAnalysisDashboard } = await import('./ErrorAnalysisDashboard.vue');
     const wrapper = mount(ErrorAnalysisDashboard, {
@@ -315,7 +402,7 @@ describe('ErrorAnalysisDashboard', () => {
     expect(wrapper.html()).toContain('/#/int/foo01/merge-history/report-b1');
     expect(wrapper.html()).not.toContain('/#/int/bar01/merge-history/report-b2');
 
-    await wrapper.get('[data-testid="view-toggle"]').findAll('button')[1].trigger('click');
+    await wrapper.get('[data-testid="view-toggle"]').findAll('button')[2].trigger('click');
 
     expect(wrapper.text()).toContain('Where recurring errors concentrate');
     expect(wrapper.text()).toContain('Foo State');
@@ -363,7 +450,7 @@ describe('ErrorAnalysisDashboard', () => {
       },
     });
 
-    await wrapper.get('[data-testid="view-toggle"]').findAll('button')[1].trigger('click');
+    await wrapper.get('[data-testid="view-toggle"]').findAll('button')[2].trigger('click');
     const schoolButtons = wrapper.findAll('button').filter((button) => button.text() === 'View full error');
     await schoolButtons[0].trigger('click');
 
@@ -414,6 +501,58 @@ describe('ErrorAnalysisDashboard', () => {
     });
     expect(window.URL.createObjectURL).toHaveBeenCalled();
     expect(clickSpy).toHaveBeenCalled();
+
+    clickSpy.mockRestore();
+  });
+
+  it('renders and searches the all errors table', async () => {
+    const { default: ErrorAnalysisDashboard } = await import('./ErrorAnalysisDashboard.vue');
+    const wrapper = mount(ErrorAnalysisDashboard, {
+      global: {
+        stubs: {
+          RouterLink: RouterLinkStub,
+          VueApexCharts: { template: '<div class="chart-stub" />' },
+        },
+      },
+    });
+
+    await wrapper.get('[data-testid="view-toggle"]').findAll('button')[1].trigger('click');
+
+    expect(wrapper.text()).toContain('All captured merge errors');
+    expect(wrapper.text()).toContain('Duplicate course 12345 already exists in CourseDog');
+    expect(wrapper.findAll('[data-testid="detail-row"]')).toHaveLength(2);
+
+    await wrapper.get('[data-testid="error-detail-search"]').setValue('duplicate');
+    expect(wrapper.get('[data-testid="error-detail-search"]').element).toHaveProperty('value', 'duplicate');
+  });
+
+  it('opens a modal from the all errors table and exports detailed rows', async () => {
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    const { default: ErrorAnalysisDashboard } = await import('./ErrorAnalysisDashboard.vue');
+    const wrapper = mount(ErrorAnalysisDashboard, {
+      global: {
+        stubs: {
+          RouterLink: RouterLinkStub,
+          VueApexCharts: { template: '<div class="chart-stub" />' },
+        },
+      },
+    });
+
+    await wrapper.get('[data-testid="view-toggle"]').findAll('button')[1].trigger('click');
+    await wrapper.get('[data-testid="detail-row"] button').trigger('click');
+
+    const modal = wrapper.get('[data-testid="error-detail-modal"]');
+    expect(modal.text()).toContain('Duplicate course 12345 already exists in CourseDog');
+    expect(modal.html()).toContain('/#/int/foo01/merge-history/report-b1');
+
+    await wrapper.get('[data-testid="error-analysis-export"]').trigger('click');
+    expect(downloadErrorAnalysisDetailedExportMock).toHaveBeenCalledWith({
+      days: 7,
+      school: undefined,
+      sisPlatform: undefined,
+      q: undefined,
+    });
 
     clickSpy.mockRestore();
   });

@@ -281,6 +281,41 @@ def ensure_schema_updates(engine) -> None:
             connection.execute(text("CREATE INDEX ix_error_analysis_groups_sis_platform ON error_analysis_groups (sis_platform)"))
             connection.execute(text("CREATE INDEX ix_error_analysis_groups_signature_key ON error_analysis_groups (signature_key)"))
 
+    if "error_analysis_details" not in table_names:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE error_analysis_details (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        snapshot_date VARCHAR(10) NOT NULL,
+                        school VARCHAR(255) NOT NULL,
+                        display_name VARCHAR(255) NOT NULL,
+                        sis_platform VARCHAR(255),
+                        entity_type VARCHAR(255),
+                        error_code VARCHAR(255),
+                        signature_key VARCHAR(64) NOT NULL,
+                        signature_label TEXT NOT NULL,
+                        normalized_message TEXT NOT NULL,
+                        full_error_text TEXT NOT NULL,
+                        entity_display_name VARCHAR(255),
+                        merge_report_id VARCHAR(255),
+                        schedule_type VARCHAR(255),
+                        term_codes_json TEXT NOT NULL DEFAULT '[]',
+                        raw_error_json TEXT NOT NULL,
+                        created_at DATETIME NOT NULL
+                    )
+                    """
+                )
+            )
+            connection.execute(text("CREATE INDEX ix_error_analysis_details_snapshot_date ON error_analysis_details (snapshot_date)"))
+            connection.execute(text("CREATE INDEX ix_error_analysis_details_school ON error_analysis_details (school)"))
+            connection.execute(text("CREATE INDEX ix_error_analysis_details_sis_platform ON error_analysis_details (sis_platform)"))
+            connection.execute(text("CREATE INDEX ix_error_analysis_details_entity_type ON error_analysis_details (entity_type)"))
+            connection.execute(text("CREATE INDEX ix_error_analysis_details_error_code ON error_analysis_details (error_code)"))
+            connection.execute(text("CREATE INDEX ix_error_analysis_details_signature_key ON error_analysis_details (signature_key)"))
+            connection.execute(text("CREATE INDEX ix_error_analysis_details_merge_report_id ON error_analysis_details (merge_report_id)"))
+
 
 def get_db() -> Session:
     """Get a new database session. Caller is responsible for closing it."""

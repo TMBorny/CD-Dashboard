@@ -65,6 +65,42 @@ export interface ErrorAnalysisFilterOption {
   sisPlatform?: string | null;
 }
 
+export interface ErrorDetailRow {
+  id: number;
+  snapshotDate: string;
+  school: string;
+  displayName: string;
+  sisPlatform?: string | null;
+  entityType?: string | null;
+  errorCode?: string | null;
+  signatureKey: string;
+  signatureLabel: string;
+  normalizedMessage: string;
+  fullErrorText: string;
+  entityDisplayName?: string | null;
+  mergeReport?: MergeReportReference | null;
+  termCodes: string[];
+  rawError?: Record<string, unknown> | null;
+  createdAt?: string | null;
+}
+
+export interface ErrorDetailTableResponse {
+  rows: ErrorDetailRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  sortBy: string;
+  sortDir: 'asc' | 'desc';
+  metadata: {
+    appliedFilters: {
+      days: number | null;
+      school: string | null;
+      sisPlatform: string | null;
+      q: string | null;
+    };
+  };
+}
+
 export interface ErrorAnalysisResponse {
   metadata: {
     historyStartsOn: string | null;

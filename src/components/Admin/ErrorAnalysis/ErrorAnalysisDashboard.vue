@@ -2,12 +2,14 @@
 import { computed, ref, watch } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
 import VueApexCharts from 'vue3-apexcharts';
-import { downloadErrorAnalysisExport, getErrorAnalysis } from '@/api';
+import { downloadErrorAnalysisDetailedExport, downloadErrorAnalysisExport, getErrorAnalysis, getErrorAnalysisErrors } from '@/api';
 import Card from '@/components/ui/Card.vue';
 import { useChartOptions } from '@/composables/useChartOptions';
 import type {
   ErrorAnalysisResponse,
   ErrorBreakdownRow,
+  ErrorDetailRow,
+  ErrorDetailTableResponse,
   ErrorSignatureCluster,
   MergeReportReference,
   ResolutionHint,
@@ -15,8 +17,9 @@ import type {
 import { formatLocalDateTime, getLocalTimeZoneLabel } from '@/utils/dateTime';
 import { formatSchoolLabel } from '@/utils/schoolNames';
 
-type ErrorViewMode = 'aggregate' | 'school' | 'sis';
+type ErrorViewMode = 'aggregate' | 'all' | 'school' | 'sis';
 type WindowOption = '7' | '30' | 'all';
+type ErrorSortDir = 'asc' | 'desc';
 
 interface ErrorDetailContext {
   title: string;
@@ -41,6 +44,11 @@ const selectedSis = ref('all');
 const activeView = ref<ErrorViewMode>('aggregate');
 const selectedErrorDetail = ref<ErrorDetailContext | null>(null);
 const isExporting = ref(false);
+const detailSearch = ref('');
+const detailPage = ref(1);
+const detailPageSize = 50;
+const detailSortBy = ref('snapshotDate');
+const detailSortDir = ref<ErrorSortDir>('desc');
 const localTimeZoneLabel = getLocalTimeZoneLabel();
 const coursedogBaseUrl = (import.meta.env.VITE_COURSEDOG_PRD_URL?.trim() || 'https://app.coursedog.com').replace(/\/+$/, '');
 
@@ -67,6 +75,35 @@ const { data, isLoading, error } = useQuery({
 });
 
 const response = computed(() => data.value);
+
+const { data: detailData, isLoading: isLoadingDetails } = useQuery({
+  queryKey: computed(() => [
+    'errorAnalysisDetails',
+    {
+      days: daysParam.value ?? 'all',
+      school: selectedSchool.value,
+      sisPlatform: selectedSis.value,
+      q: detailSearch.value,
+      page: detailPage.value,
+      pageSize: detailPageSize,
+      sortBy: detailSortBy.value,
+      sortDir: detailSortDir.value,
+    },
+  ]),
+  queryFn: () =>
+    getErrorAnalysisErrors({
+      days: daysParam.value,
+      school: selectedSchool.value === 'all' ? undefined : selectedSchool.value,
+      sisPlatform: selectedSis.value === 'all' ? undefined : selectedSis.value,
+      q: detailSearch.value || undefined,
+      page: detailPage.value,
+      pageSize: detailPageSize,
+      sortBy: detailSortBy.value,
+      sortDir: detailSortDir.value,
+    }).then((res) => res.data as ErrorDetailTableResponse),
+});
+
+const detailResponse = computed(() => detailData.value);
 
 const sisOptions = computed(() => [
   { value: 'all', label: 'All SIS Platforms' },
@@ -98,6 +135,10 @@ watch([selectedSis, response], () => {
     selectedSchool.value = 'all';
   }
 }, { immediate: true });
+
+watch([selectedWindow, selectedSchool, selectedSis, detailSearch], () => {
+  detailPage.value = 1;
+});
 
 const hasCapturedData = computed(() => response.value?.metadata.hasCapturedData ?? false);
 const hasFilteredRows = computed(() => (response.value?.summary.totalErrorInstances ?? 0) > 0);
@@ -163,9 +204,14 @@ const allSignatures = computed(() => response.value?.signatures ?? []);
 const topSignatures = computed(() => allSignatures.value.slice(0, 12));
 const schoolRows = computed(() => response.value?.schoolBreakdowns ?? []);
 const sisRows = computed(() => response.value?.sisBreakdowns ?? []);
+const detailRows = computed(() => detailResponse.value?.rows ?? []);
+const detailTotal = computed(() => detailResponse.value?.total ?? 0);
+const detailTotalPages = computed(() => Math.max(1, Math.ceil(detailTotal.value / detailPageSize)));
+const hasDetailRows = computed(() => detailRows.value.length > 0);
 
 const viewOptions: Array<{ value: ErrorViewMode; label: string }> = [
   { value: 'aggregate', label: 'Aggregate' },
+  { value: 'all', label: 'All Errors' },
   { value: 'school', label: 'By School' },
   { value: 'sis', label: 'By SIS' },
 ];
@@ -399,6 +445,23 @@ const buildSchoolErrorDetail = (row: ErrorBreakdownRow): ErrorDetailContext | nu
   };
 };
 
+const buildDetailRowErrorContext = (row: ErrorDetailRow): ErrorDetailContext => ({
+  title: `${formatSchoolLabel(row.school, row.displayName)} error`,
+  signatureLabel: row.signatureLabel,
+  fullErrorText: row.fullErrorText,
+  entityType: row.entityType,
+  errorCode: row.errorCode,
+  school: row.school,
+  schoolLabel: formatSchoolLabel(row.school, row.displayName),
+  sisPlatform: row.sisPlatform,
+  termCode: row.termCodes[0] || null,
+  scheduleType: row.mergeReport?.scheduleType || null,
+  entityDisplayName: row.entityDisplayName,
+  mergeReport: row.mergeReport || null,
+  rawPayload: stringifyPayload(row.rawError),
+  resolutionHint: null,
+});
+
 const openSignatureDetail = (signature: ErrorSignatureCluster) => {
   selectedErrorDetail.value = buildSignatureErrorDetail(signature);
 };
@@ -407,19 +470,38 @@ const openSchoolErrorDetail = (row: ErrorBreakdownRow) => {
   selectedErrorDetail.value = buildSchoolErrorDetail(row);
 };
 
+const openDetailRowError = (row: ErrorDetailRow) => {
+  selectedErrorDetail.value = buildDetailRowErrorContext(row);
+};
+
 const closeErrorDetail = () => {
   selectedErrorDetail.value = null;
+};
+
+const toggleDetailSort = (column: string) => {
+  if (detailSortBy.value === column) {
+    detailSortDir.value = detailSortDir.value === 'asc' ? 'desc' : 'asc';
+    return;
+  }
+  detailSortBy.value = column;
+  detailSortDir.value = 'asc';
 };
 
 const handleExport = async () => {
   if (isExporting.value) return;
   isExporting.value = true;
   try {
-    const { blob, filename } = await downloadErrorAnalysisExport({
+    const exportParams = {
       days: daysParam.value,
       school: selectedSchool.value === 'all' ? undefined : selectedSchool.value,
       sisPlatform: selectedSis.value === 'all' ? undefined : selectedSis.value,
-    });
+    };
+    const { blob, filename } = activeView.value === 'all'
+      ? await downloadErrorAnalysisDetailedExport({
+        ...exportParams,
+        q: detailSearch.value || undefined,
+      })
+      : await downloadErrorAnalysisExport(exportParams);
     const objectUrl = window.URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = objectUrl;
@@ -651,6 +733,119 @@ const handleExport = async () => {
                   </tr>
                 </tbody>
               </table>
+            </div>
+          </Card>
+        </template>
+
+        <template v-else-if="activeView === 'all'">
+          <Card subtitle="Detailed Search" title="All captured merge errors">
+            <div class="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div class="max-w-xl">
+                <p class="text-sm text-slate-500">Search across error text, signature, school, SIS, entity, and merge-report metadata. Results are paginated server-side.</p>
+              </div>
+              <input
+                v-model="detailSearch"
+                type="search"
+                placeholder="Search all captured errors"
+                data-testid="error-detail-search"
+                class="w-full rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm focus:border-slate-400 focus:outline-none lg:max-w-sm"
+              >
+            </div>
+
+            <div v-if="isLoadingDetails" class="rounded-2xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-600">
+              Loading captured error rows...
+            </div>
+            <div v-else-if="!hasDetailRows" class="rounded-2xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-600">
+              No individual captured errors match the current filters yet. Detailed per-error history starts with the new persistence pipeline.
+            </div>
+            <div v-else class="overflow-x-auto">
+              <table class="min-w-full table-fixed border-separate border-spacing-y-3 text-left text-sm text-slate-600">
+                <colgroup>
+                  <col class="w-[10%]">
+                  <col class="w-[15%]">
+                  <col class="w-[10%]">
+                  <col class="w-[8%]">
+                  <col class="w-[9%]">
+                  <col class="w-[18%]">
+                  <col class="w-[20%]">
+                  <col class="w-[5%]">
+                  <col class="w-[5%]">
+                </colgroup>
+                <thead class="text-xs uppercase tracking-[0.12em] text-slate-500">
+                  <tr>
+                    <th class="px-4 py-2 font-semibold"><button type="button" class="hover:text-slate-900" @click="toggleDetailSort('snapshotDate')">Date</button></th>
+                    <th class="px-4 py-2 font-semibold"><button type="button" class="hover:text-slate-900" @click="toggleDetailSort('displayName')">School</button></th>
+                    <th class="px-4 py-2 font-semibold"><button type="button" class="hover:text-slate-900" @click="toggleDetailSort('sisPlatform')">SIS</button></th>
+                    <th class="px-4 py-2 font-semibold"><button type="button" class="hover:text-slate-900" @click="toggleDetailSort('entityType')">Entity</button></th>
+                    <th class="px-4 py-2 font-semibold"><button type="button" class="hover:text-slate-900" @click="toggleDetailSort('errorCode')">Code</button></th>
+                    <th class="px-4 py-2 font-semibold"><button type="button" class="hover:text-slate-900" @click="toggleDetailSort('signatureLabel')">Signature</button></th>
+                    <th class="px-4 py-2 font-semibold">Error text</th>
+                    <th class="px-4 py-2 font-semibold">Term</th>
+                    <th class="px-4 py-2 font-semibold">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in detailRows" :key="row.id" data-testid="detail-row">
+                    <td class="rounded-l-3xl border-y border-l border-slate-200 bg-slate-50 px-4 py-4 align-top text-xs text-slate-500">{{ row.snapshotDate }}</td>
+                    <td class="border-y border-slate-200 bg-slate-50 px-4 py-4 align-top">
+                      <p class="font-medium text-slate-900">{{ formatSchoolLabel(row.school, row.displayName) }}</p>
+                    </td>
+                    <td class="border-y border-slate-200 bg-slate-50 px-4 py-4 align-top text-xs text-slate-600">{{ row.sisPlatform || 'Unknown' }}</td>
+                    <td class="border-y border-slate-200 bg-slate-50 px-4 py-4 align-top text-xs text-slate-600">{{ row.entityType || 'Unknown' }}</td>
+                    <td class="border-y border-slate-200 bg-slate-50 px-4 py-4 align-top text-xs text-slate-600">{{ row.errorCode || '—' }}</td>
+                    <td class="border-y border-slate-200 bg-slate-50 px-4 py-4 align-top">
+                      <p class="font-medium leading-6 text-slate-900 break-words" :title="row.signatureLabel">{{ buildSignatureHeadline(row.signatureLabel) }}</p>
+                    </td>
+                    <td class="border-y border-slate-200 bg-slate-50 px-4 py-4 align-top">
+                      <p class="line-clamp-3 break-words text-xs leading-5 text-slate-600" :title="row.fullErrorText">{{ row.fullErrorText }}</p>
+                    </td>
+                    <td class="border-y border-slate-200 bg-slate-50 px-4 py-4 align-top text-xs text-slate-600">{{ row.termCodes[0] || '—' }}</td>
+                    <td class="rounded-r-3xl border-y border-r border-slate-200 bg-slate-50 px-4 py-4 align-top">
+                      <div class="flex flex-col items-start gap-2">
+                        <button
+                          type="button"
+                          class="inline-flex w-full items-center justify-center rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700 sm:w-auto"
+                          @click="openDetailRowError(row)"
+                        >
+                          View
+                        </button>
+                        <a
+                          v-if="row.mergeReport"
+                          :href="getMergeReportUrl(row.mergeReport)"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          class="inline-flex w-full items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950 sm:w-auto"
+                        >
+                          Report ↗
+                        </a>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="mt-4 flex flex-col gap-3 border-t border-slate-200 pt-4 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+              <p>{{ detailTotal }} error row{{ detailTotal === 1 ? '' : 's' }} total</p>
+              <div class="flex items-center gap-3">
+                <button
+                  type="button"
+                  class="rounded-full border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+                  :disabled="detailPage <= 1"
+                  @click="detailPage -= 1"
+                >
+                  Previous
+                </button>
+                <span>Page {{ detailPage }} of {{ detailTotalPages }}</span>
+                <button
+                  type="button"
+                  class="rounded-full border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+                  :disabled="detailPage >= detailTotalPages"
+                  @click="detailPage += 1"
+                >
+                  Next
+                </button>
+              </div>
             </div>
           </Card>
         </template>

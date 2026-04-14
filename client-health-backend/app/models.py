@@ -278,6 +278,81 @@ class ErrorAnalysisGroup(Base):
         )
 
 
+class ErrorAnalysisDetail(Base):
+    """One captured individual merge error row for detailed search and export."""
+
+    __tablename__ = "error_analysis_details"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    snapshot_date = Column(String(10), nullable=False, index=True)
+    school = Column(String(255), nullable=False, index=True)
+    display_name = Column(String(255), nullable=False)
+    sis_platform = Column(String(255), nullable=True, index=True)
+    entity_type = Column(String(255), nullable=True, index=True)
+    error_code = Column(String(255), nullable=True, index=True)
+    signature_key = Column(String(64), nullable=False, index=True)
+    signature_label = Column(Text, nullable=False)
+    normalized_message = Column(Text, nullable=False)
+    full_error_text = Column(Text, nullable=False)
+    entity_display_name = Column(String(255), nullable=True)
+    merge_report_id = Column(String(255), nullable=True, index=True)
+    schedule_type = Column(String(255), nullable=True)
+    term_codes_json = Column(Text, nullable=False, default="[]")
+    raw_error_json = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "snapshotDate": self.snapshot_date,
+            "school": self.school,
+            "displayName": self.display_name,
+            "sisPlatform": self.sis_platform,
+            "entityType": self.entity_type,
+            "errorCode": self.error_code,
+            "signatureKey": self.signature_key,
+            "signatureLabel": self.signature_label,
+            "normalizedMessage": self.normalized_message,
+            "fullErrorText": self.full_error_text,
+            "entityDisplayName": self.entity_display_name,
+            "mergeReport": (
+                {
+                    "school": self.school,
+                    "mergeReportId": self.merge_report_id,
+                    "scheduleType": self.schedule_type,
+                    "entityDisplayName": self.entity_display_name,
+                    "snapshotDate": self.snapshot_date,
+                }
+                if self.merge_report_id
+                else None
+            ),
+            "termCodes": json.loads(self.term_codes_json) if self.term_codes_json else [],
+            "rawError": json.loads(self.raw_error_json) if self.raw_error_json else None,
+            "createdAt": serialize_datetime(self.created_at),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ErrorAnalysisDetail":
+        merge_report = data.get("mergeReport") or {}
+        return cls(
+            snapshot_date=data["snapshotDate"],
+            school=data["school"],
+            display_name=data.get("displayName", data["school"]),
+            sis_platform=data.get("sisPlatform"),
+            entity_type=data.get("entityType"),
+            error_code=data.get("errorCode"),
+            signature_key=data["signatureKey"],
+            signature_label=data.get("signatureLabel", ""),
+            normalized_message=data.get("normalizedMessage", ""),
+            full_error_text=data.get("fullErrorText", ""),
+            entity_display_name=data.get("entityDisplayName"),
+            merge_report_id=merge_report.get("mergeReportId"),
+            schedule_type=merge_report.get("scheduleType"),
+            term_codes_json=json.dumps(data.get("termCodes", [])),
+            raw_error_json=json.dumps(data.get("rawError")),
+        )
+
+
 class BackfillWorkUnit(Base):
     """One resumable work item within a historical backfill job."""
 

@@ -23,11 +23,12 @@ from sqlalchemy import create_engine, inspect
 
 from app.db import ensure_schema_updates, get_database_url, get_db, get_default_db_path, init_db
 from app.main import app, create_app
-from app.models import BackfillWorkUnit, ErrorAnalysisGroup, SchedulerSettings, SchoolSnapshot, SyncRun
+from app.models import BackfillWorkUnit, ErrorAnalysisDetail, ErrorAnalysisGroup, SchedulerSettings, SchoolSnapshot, SyncRun
 from app.security import is_loopback_client, require_internal_auth
 from app.routes import (
     build_snapshot_dates,
     build_error_analysis_groups,
+    build_error_analysis_details,
     build_resolution_hint,
     classify_nightly_merge_halt_status,
     fetch_school_health_for_date,
@@ -374,6 +375,41 @@ class MergeErrorCountTests(unittest.TestCase):
             "sections | missing_course | course <num> missing dependency <num>",
         )
 
+    def test_build_error_analysis_details_keeps_individual_rows(self):
+        rows = [
+            {
+                "entityType": "sections",
+                "errorCode": "missing_course",
+                "message": "Course 202505 missing dependency 123456",
+                "termCode": "202505",
+                "entityDisplayName": "BIO-101-01",
+                "lastSyncMergeReportId": "report-a1",
+                "mergeReport": {"scheduleType": "nightly"},
+            },
+            {
+                "entityType": "sections",
+                "errorCode": "missing_course",
+                "message": "Course 202602 missing dependency 987654",
+                "termCode": "202602",
+                "entityDisplayName": "BIO-101-02",
+                "lastSyncMergeReportId": "report-a2",
+                "mergeReport": {"scheduleType": "nightly"},
+            },
+        ]
+
+        details = build_error_analysis_details(
+            snapshot_date="2026-04-13",
+            school="bar01",
+            display_name="Baruch College",
+            sis_platform="Banner",
+            merge_error_rows=rows,
+        )
+
+        self.assertEqual(len(details), 2)
+        self.assertEqual(details[0]["school"], "bar01")
+        self.assertEqual(details[0]["mergeReport"]["mergeReportId"], "report-a1")
+        self.assertEqual(details[1]["termCodes"], ["202602"])
+
     def test_build_resolution_hint_detects_missing_reference(self):
         hint = build_resolution_hint("section missing prerequisite reference", "sections", None)
         self.assertEqual(hint["bucket"], "missing_reference")
@@ -706,6 +742,7 @@ class SyncJobErrorAnalysisPersistenceTests(unittest.IsolatedAsyncioTestCase):
         init_db()
         db = get_db()
         try:
+            db.query(ErrorAnalysisDetail).filter(ErrorAnalysisDetail.school == "bar01").delete(synchronize_session=False)
             db.query(ErrorAnalysisGroup).filter(ErrorAnalysisGroup.school == "bar01").delete(synchronize_session=False)
             db.query(SchoolSnapshot).filter(SchoolSnapshot.school == "bar01").delete(synchronize_session=False)
             db.query(SyncRun).filter(SyncRun.job_id == "test-sync-error-groups").delete(synchronize_session=False)
@@ -785,6 +822,30 @@ class SyncJobErrorAnalysisPersistenceTests(unittest.IsolatedAsyncioTestCase):
                         "termCodes": ["202505"],
                     }
                 ],
+                "_errorDetails": [
+                    {
+                        "snapshotDate": snapshot_date,
+                        "school": school,
+                        "displayName": display_name,
+                        "sisPlatform": "Banner",
+                        "entityType": "courses",
+                        "errorCode": "new",
+                        "signatureKey": "sig-new",
+                        "signatureLabel": "courses | new | new error",
+                        "normalizedMessage": "new error",
+                        "fullErrorText": "New error",
+                        "entityDisplayName": "Course 101",
+                        "mergeReport": {
+                            "school": school,
+                            "mergeReportId": "report-new",
+                            "scheduleType": "nightly",
+                            "entityDisplayName": "Course 101",
+                            "snapshotDate": snapshot_date,
+                        },
+                        "termCodes": ["202505"],
+                        "rawError": {"message": "New error"},
+                    }
+                ],
                 "_syncErrors": [],
             }
 
@@ -825,6 +886,16 @@ class SyncJobErrorAnalysisPersistenceTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(len(persisted), 1)
             self.assertEqual(persisted[0].signature_key, "sig-new")
+            detail_rows = (
+                db.query(ErrorAnalysisDetail)
+                .filter(
+                    ErrorAnalysisDetail.school == "bar01",
+                    ErrorAnalysisDetail.snapshot_date == "2026-04-13",
+                )
+                .all()
+            )
+            self.assertEqual(len(detail_rows), 1)
+            self.assertEqual(detail_rows[0].merge_report_id, "report-new")
             with open(TEST_ERROR_EXPORT_PATH, "r", encoding="utf-8") as exported_file:
                 payload = json.load(exported_file)
             self.assertEqual(payload["totalGroups"], 1)
@@ -1970,6 +2041,9 @@ class ErrorAnalysisEndpointTests(unittest.TestCase):
         init_db()
         db = get_db()
         try:
+            db.query(ErrorAnalysisDetail).filter(
+                ErrorAnalysisDetail.school.in_(["bar01", "foo01", "bar02"])
+            ).delete(synchronize_session=False)
             db.query(ErrorAnalysisGroup).filter(
                 ErrorAnalysisGroup.school.in_(["bar01", "foo01", "bar02"])
             ).delete(synchronize_session=False)
@@ -1984,6 +2058,9 @@ class ErrorAnalysisEndpointTests(unittest.TestCase):
         init_db()
         db = get_db()
         try:
+            db.query(ErrorAnalysisDetail).filter(
+                ErrorAnalysisDetail.school.in_(["bar01", "foo01", "bar02"])
+            ).delete(synchronize_session=False)
             db.query(ErrorAnalysisGroup).filter(
                 ErrorAnalysisGroup.school.in_(["bar01", "foo01", "bar02"])
             ).delete(synchronize_session=False)
@@ -2282,6 +2359,128 @@ class ErrorAnalysisEndpointTests(unittest.TestCase):
         self.assertEqual(payload["metadata"]["groupCount"], 1)
         self.assertEqual(payload["groups"][0]["school"], "foo01")
         self.assertEqual(payload["groups"][0]["signatureKey"], "sig-b")
+
+    def test_error_analysis_errors_supports_search_sort_and_pagination(self):
+        init_db()
+        db = get_db()
+        try:
+            db.add_all(
+                [
+                    ErrorAnalysisDetail.from_dict(
+                        {
+                            "snapshotDate": "2026-04-13",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": "Banner",
+                            "entityType": "sections",
+                            "errorCode": "missing_course",
+                            "signatureKey": "sig-a",
+                            "signatureLabel": "sections | missing_course | course <num> missing dependency <num>",
+                            "normalizedMessage": "course <num> missing dependency <num>",
+                            "fullErrorText": "Course 202602 missing dependency 987654",
+                            "entityDisplayName": "BIO-101-01",
+                            "mergeReport": {"school": "bar01", "mergeReportId": "report-a1", "scheduleType": "nightly", "snapshotDate": "2026-04-13"},
+                            "termCodes": ["202602"],
+                            "rawError": {"message": "Course 202602 missing dependency 987654"},
+                        }
+                    ),
+                    ErrorAnalysisDetail.from_dict(
+                        {
+                            "snapshotDate": "2026-04-13",
+                            "school": "foo01",
+                            "displayName": "Foo State",
+                            "sisPlatform": "PeopleSoftDirect",
+                            "entityType": "courses",
+                            "errorCode": "duplicate_course",
+                            "signatureKey": "sig-b",
+                            "signatureLabel": "courses | duplicate_course | duplicate course <num>",
+                            "normalizedMessage": "duplicate course <num>",
+                            "fullErrorText": "Duplicate course 12345 already exists in CourseDog",
+                            "entityDisplayName": "Course 12345",
+                            "mergeReport": {"school": "foo01", "mergeReportId": "report-b1", "scheduleType": "realtime", "snapshotDate": "2026-04-13"},
+                            "termCodes": ["202505"],
+                            "rawError": {"message": "Duplicate course 12345 already exists in CourseDog"},
+                        }
+                    ),
+                ]
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
+            "app.main.start_scheduled_sync_service",
+            new=self._async_noop,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=self._async_noop,
+        ):
+            with TestClient(app) as client:
+                response = client.get(
+                    "/api/error-analysis/errors",
+                    params={
+                        "q": "Duplicate course",
+                        "sortBy": "school",
+                        "sortDir": "asc",
+                        "page": 1,
+                        "pageSize": 1,
+                    },
+                    headers=AUTH_HEADERS,
+                )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["rows"][0]["school"], "foo01")
+        self.assertEqual(payload["rows"][0]["mergeReport"]["mergeReportId"], "report-b1")
+
+    def test_error_analysis_export_downloads_detailed_rows(self):
+        init_db()
+        db = get_db()
+        try:
+            db.add(
+                ErrorAnalysisDetail.from_dict(
+                    {
+                        "snapshotDate": "2026-04-13",
+                        "school": "foo01",
+                        "displayName": "Foo State",
+                        "sisPlatform": "PeopleSoftDirect",
+                        "entityType": "courses",
+                        "errorCode": "duplicate_course",
+                        "signatureKey": "sig-b",
+                        "signatureLabel": "courses | duplicate_course | duplicate course <num>",
+                        "normalizedMessage": "duplicate course <num>",
+                        "fullErrorText": "Duplicate course 12345 already exists in CourseDog",
+                        "entityDisplayName": "Course 12345",
+                        "mergeReport": {"school": "foo01", "mergeReportId": "report-b1", "scheduleType": "realtime", "snapshotDate": "2026-04-13"},
+                        "termCodes": ["202505"],
+                        "rawError": {"message": "Duplicate course 12345 already exists in CourseDog"},
+                    }
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
+            "app.main.start_scheduled_sync_service",
+            new=self._async_noop,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=self._async_noop,
+        ):
+            with TestClient(app) as client:
+                response = client.get(
+                    "/api/error-analysis/export",
+                    params={"view": "all-errors", "school": "foo01", "q": "Duplicate course"},
+                    headers=AUTH_HEADERS,
+                )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["metadata"]["rowCount"], 1)
+        self.assertEqual(payload["rows"][0]["school"], "foo01")
+        self.assertEqual(payload["rows"][0]["mergeReport"]["mergeReportId"], "report-b1")
 
 
 class SyncRunListEndpointTests(unittest.TestCase):

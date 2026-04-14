@@ -142,6 +142,54 @@ export async function downloadErrorAnalysisExport(params: { days?: number; schoo
   };
 }
 
+export async function getErrorAnalysisErrors(params: {
+  days?: number;
+  school?: string;
+  sisPlatform?: string;
+  q?: string;
+  sortBy?: string;
+  sortDir?: 'asc' | 'desc';
+  page?: number;
+  pageSize?: number;
+}) {
+  const res = await backend.get('/error-analysis/errors', {
+    params: {
+      ...(typeof params.days === 'number' ? { days: params.days } : {}),
+      ...(params.school ? { school: params.school } : {}),
+      ...(params.sisPlatform ? { sisPlatform: params.sisPlatform } : {}),
+      ...(params.q ? { q: params.q } : {}),
+      ...(params.sortBy ? { sortBy: params.sortBy } : {}),
+      ...(params.sortDir ? { sortDir: params.sortDir } : {}),
+      ...(params.page ? { page: params.page } : {}),
+      ...(params.pageSize ? { pageSize: params.pageSize } : {}),
+    },
+  });
+  return { data: res.data };
+}
+
+export async function downloadErrorAnalysisDetailedExport(params: {
+  days?: number;
+  school?: string;
+  sisPlatform?: string;
+  q?: string;
+}) {
+  const res = await backend.get('/error-analysis/export', {
+    params: {
+      ...(typeof params.days === 'number' ? { days: params.days } : {}),
+      ...(params.school ? { school: params.school } : {}),
+      ...(params.sisPlatform ? { sisPlatform: params.sisPlatform } : {}),
+      ...(params.q ? { q: params.q } : {}),
+      view: 'all-errors',
+    },
+    responseType: 'blob',
+  });
+  return {
+    blob: res.data as Blob,
+    filename: res.headers['content-disposition']
+      ?.match(/filename="?(.*?)"?$/)?.[1] || 'error-analysis-all-errors.json',
+  };
+}
+
 /**
  * Get active users for a specific school via the local backend.
  */

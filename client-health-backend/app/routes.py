@@ -19,10 +19,12 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Query, HTTPException, Response
 from pydantic import BaseModel
+from sqlalchemy import or_
 
 from app.db import api_get, get_db, get_error_analysis_export_path
 from app.models import (
     BackfillWorkUnit,
+    ErrorAnalysisDetail,
     ErrorAnalysisGroup,
     ExcludedSchool,
     SchedulerSettings,
@@ -207,6 +209,34 @@ def write_error_analysis_export(db) -> Path:
     temp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     temp_path.replace(export_path)
     return export_path
+
+
+def apply_error_analysis_detail_filters(query, *, days: Optional[int], school: Optional[str], sis_platform: Optional[str], search: Optional[str]):
+    """Apply the shared detail-table filters to a SQLAlchemy query."""
+    if days is not None:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+        query = query.filter(ErrorAnalysisDetail.snapshot_date >= cutoff)
+    if school:
+        query = query.filter(ErrorAnalysisDetail.school == school)
+    if sis_platform:
+        query = query.filter(ErrorAnalysisDetail.sis_platform == sis_platform)
+    if search:
+        pattern = f"%{search.strip()}%"
+        query = query.filter(
+            or_(
+                ErrorAnalysisDetail.full_error_text.ilike(pattern),
+                ErrorAnalysisDetail.signature_label.ilike(pattern),
+                ErrorAnalysisDetail.normalized_message.ilike(pattern),
+                ErrorAnalysisDetail.entity_type.ilike(pattern),
+                ErrorAnalysisDetail.error_code.ilike(pattern),
+                ErrorAnalysisDetail.school.ilike(pattern),
+                ErrorAnalysisDetail.display_name.ilike(pattern),
+                ErrorAnalysisDetail.sis_platform.ilike(pattern),
+                ErrorAnalysisDetail.entity_display_name.ilike(pattern),
+                ErrorAnalysisDetail.merge_report_id.ilike(pattern),
+            )
+        )
+    return query
 
 
 def is_demo_school(school: str, display_name: str) -> bool:
@@ -695,37 +725,55 @@ async def export_error_analysis(
     days: Optional[int] = Query(default=None, ge=1),
     school: Optional[str] = Query(default=None),
     sis_platform: Optional[str] = Query(default=None, alias="sisPlatform"),
+    view: Optional[str] = Query(default="grouped"),
+    q: Optional[str] = Query(default=None),
 ):
-    """Download the currently filtered error-analysis groups as JSON."""
+    """Download the currently filtered error-analysis groups or details as JSON."""
     db = get_db()
     try:
+        is_detail_export = view == "all-errors"
+        model = ErrorAnalysisDetail if is_detail_export else ErrorAnalysisGroup
         history_start = (
-            db.query(ErrorAnalysisGroup.snapshot_date)
-            .order_by(ErrorAnalysisGroup.snapshot_date.asc())
+            db.query(model.snapshot_date)
+            .order_by(model.snapshot_date.asc())
             .first()
         )
         last_capture = (
-            db.query(ErrorAnalysisGroup.created_at)
-            .order_by(ErrorAnalysisGroup.created_at.desc())
+            db.query(model.created_at)
+            .order_by(model.created_at.desc())
             .first()
         )
-
-        query = db.query(ErrorAnalysisGroup)
-        if days is not None:
-            cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
-            query = query.filter(ErrorAnalysisGroup.snapshot_date >= cutoff)
-        if school:
-            query = query.filter(ErrorAnalysisGroup.school == school)
-        if sis_platform:
-            query = query.filter(ErrorAnalysisGroup.sis_platform == sis_platform)
-
-        groups = query.order_by(
-            ErrorAnalysisGroup.snapshot_date.desc(),
-            ErrorAnalysisGroup.school.asc(),
-            ErrorAnalysisGroup.signature_key.asc(),
-        ).all()
+        if is_detail_export:
+            query = apply_error_analysis_detail_filters(
+                db.query(ErrorAnalysisDetail),
+                days=days,
+                school=school,
+                sis_platform=sis_platform,
+                search=q,
+            )
+            rows = query.order_by(
+                ErrorAnalysisDetail.snapshot_date.desc(),
+                ErrorAnalysisDetail.school.asc(),
+                ErrorAnalysisDetail.id.asc(),
+            ).all()
+        else:
+            query = db.query(ErrorAnalysisGroup)
+            if days is not None:
+                cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+                query = query.filter(ErrorAnalysisGroup.snapshot_date >= cutoff)
+            if school:
+                query = query.filter(ErrorAnalysisGroup.school == school)
+            if sis_platform:
+                query = query.filter(ErrorAnalysisGroup.sis_platform == sis_platform)
+            rows = query.order_by(
+                ErrorAnalysisGroup.snapshot_date.desc(),
+                ErrorAnalysisGroup.school.asc(),
+                ErrorAnalysisGroup.signature_key.asc(),
+            ).all()
 
         filename_parts = ["error-analysis"]
+        if is_detail_export:
+            filename_parts.append("all-errors")
         if school:
             filename_parts.append(school)
         if sis_platform:
@@ -743,12 +791,14 @@ async def export_error_analysis(
                     "days": days,
                     "school": school,
                     "sisPlatform": sis_platform,
+                    "q": q,
+                    "view": view,
                 },
                 "exportedAt": datetime.now(timezone.utc).isoformat(),
-                "groupCount": len(groups),
-                "totalErrorInstances": sum(group.count for group in groups),
+                ("rowCount" if is_detail_export else "groupCount"): len(rows),
+                "totalErrorInstances": sum(getattr(row, "count", 1) for row in rows),
             },
-            "groups": [group.to_dict() for group in groups],
+            ("rows" if is_detail_export else "groups"): [row.to_dict() for row in rows],
         }
 
         return Response(
@@ -756,6 +806,65 @@ async def export_error_analysis(
             media_type="application/json",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+    finally:
+        db.close()
+
+
+@router.get("/error-analysis/errors")
+async def get_error_analysis_errors(
+    days: Optional[int] = Query(default=None, ge=1),
+    school: Optional[str] = Query(default=None),
+    sis_platform: Optional[str] = Query(default=None, alias="sisPlatform"),
+    q: Optional[str] = Query(default=None),
+    sort_by: str = Query(default="snapshotDate", alias="sortBy"),
+    sort_dir: str = Query(default="desc", alias="sortDir"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200, alias="pageSize"),
+):
+    """Return paginated individual captured merge errors for the all-errors table."""
+    db = get_db()
+    try:
+        sort_columns = {
+            "snapshotDate": ErrorAnalysisDetail.snapshot_date,
+            "school": ErrorAnalysisDetail.school,
+            "displayName": ErrorAnalysisDetail.display_name,
+            "sisPlatform": ErrorAnalysisDetail.sis_platform,
+            "entityType": ErrorAnalysisDetail.entity_type,
+            "errorCode": ErrorAnalysisDetail.error_code,
+            "signatureLabel": ErrorAnalysisDetail.signature_label,
+            "mergeReportId": ErrorAnalysisDetail.merge_report_id,
+        }
+        order_column = sort_columns.get(sort_by, ErrorAnalysisDetail.snapshot_date)
+        query = apply_error_analysis_detail_filters(
+            db.query(ErrorAnalysisDetail),
+            days=days,
+            school=school,
+            sis_platform=sis_platform,
+            search=q,
+        )
+        total = query.count()
+        ordered_query = query.order_by(
+            order_column.asc() if sort_dir == "asc" else order_column.desc(),
+            ErrorAnalysisDetail.id.desc() if sort_dir == "desc" else ErrorAnalysisDetail.id.asc(),
+        )
+        rows = ordered_query.offset((page - 1) * page_size).limit(page_size).all()
+
+        return {
+            "rows": [row.to_dict() for row in rows],
+            "total": total,
+            "page": page,
+            "pageSize": page_size,
+            "sortBy": sort_by,
+            "sortDir": sort_dir,
+            "metadata": {
+                "appliedFilters": {
+                    "days": days,
+                    "school": school,
+                    "sisPlatform": sis_platform,
+                    "q": q,
+                },
+            },
+        }
     finally:
         db.close()
 
@@ -1605,6 +1714,7 @@ async def run_sync_job(
         snapshot_date = snapshot_date_override or datetime.now(timezone.utc).strftime("%Y-%m-%d")
         new_snapshots: list[dict] = []
         new_error_groups: list[dict] = []
+        new_error_details: list[dict] = []
         errors: list[str] = []
 
         # 2. Process schools in batches of 10
@@ -1627,6 +1737,7 @@ async def run_sync_job(
                 elif result is not None:
                     errors.extend(result.pop("_syncErrors", []))
                     new_error_groups.extend(result.pop("_errorGroups", []))
+                    new_error_details.extend(result.pop("_errorDetails", []))
                     new_snapshots.append(result)
             job["schoolsProcessed"] = len(new_snapshots)
             job["errors"] = errors[-20:]
@@ -1650,15 +1761,22 @@ async def run_sync_job(
             delete_error_groups_query = db.query(ErrorAnalysisGroup).filter(
                 ErrorAnalysisGroup.snapshot_date == snapshot_date
             )
+            delete_error_details_query = db.query(ErrorAnalysisDetail).filter(
+                ErrorAnalysisDetail.snapshot_date == snapshot_date
+            )
             if school:
                 delete_query = delete_query.filter(SchoolSnapshot.school == school)
                 delete_error_groups_query = delete_error_groups_query.filter(ErrorAnalysisGroup.school == school)
+                delete_error_details_query = delete_error_details_query.filter(ErrorAnalysisDetail.school == school)
             delete_query.delete()
             delete_error_groups_query.delete()
+            delete_error_details_query.delete()
             for snap_data in new_snapshots:
                 db.add(SchoolSnapshot.from_dict(snap_data))
             for group_data in new_error_groups:
                 db.add(ErrorAnalysisGroup.from_dict(group_data))
+            for detail_data in new_error_details:
+                db.add(ErrorAnalysisDetail.from_dict(detail_data))
             db.commit()
             write_error_analysis_export(db)
         except Exception as e:
@@ -2251,6 +2369,49 @@ def normalize_merge_error_row(payload: dict) -> dict:
         "termCodes": collect_term_codes(payload),
         "rawError": payload,
     }
+
+
+def build_error_analysis_details(
+    snapshot_date: str,
+    school: str,
+    display_name: str,
+    sis_platform: Optional[str],
+    merge_error_rows: list[dict],
+) -> list[dict]:
+    """Normalize every raw merge-error row into a searchable persisted detail row."""
+    details: list[dict] = []
+
+    for row in merge_error_rows:
+        normalized_row = normalize_merge_error_row(row)
+        merge_report_reference = extract_merge_report_reference([row])
+        details.append(
+            {
+                "snapshotDate": snapshot_date,
+                "school": school,
+                "displayName": display_name,
+                "sisPlatform": sis_platform,
+                "entityType": normalized_row["entityType"],
+                "errorCode": normalized_row["errorCode"],
+                "signatureKey": normalized_row["signatureKey"],
+                "signatureLabel": normalized_row["signatureLabel"],
+                "normalizedMessage": normalized_row["normalizedMessage"],
+                "fullErrorText": normalized_row["sampleMessage"],
+                "entityDisplayName": first_non_empty_string(row.get("entityDisplayName"), row.get("entityName")),
+                "mergeReport": (
+                    {
+                        **merge_report_reference,
+                        "school": school,
+                        "snapshotDate": snapshot_date,
+                    }
+                    if merge_report_reference
+                    else None
+                ),
+                "termCodes": normalized_row["termCodes"],
+                "rawError": row,
+            }
+        )
+
+    return details
 
 
 def build_error_analysis_groups(
@@ -3000,6 +3161,13 @@ async def fetch_school_health(
             sis_platform=sis_platform,
             merge_error_rows=merge_error_rows,
         )
+        error_details = build_error_analysis_details(
+            snapshot_date=snapshot_date,
+            school=school,
+            display_name=display_name,
+            sis_platform=sis_platform,
+            merge_error_rows=merge_error_rows,
+        )
 
         return {
             "snapshotDate": snapshot_date,
@@ -3037,6 +3205,7 @@ async def fetch_school_health(
             "activeUsers24h": active_users_24h,
             "createdAt": datetime.now(timezone.utc).isoformat(),
             "_errorGroups": error_groups,
+            "_errorDetails": error_details,
             "_syncErrors": sync_errors,
         }
     except Exception as e:
