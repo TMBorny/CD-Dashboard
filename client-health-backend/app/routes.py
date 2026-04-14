@@ -51,6 +51,7 @@ MERGE_ERRORS_MAX_PAGES = 200
 ERROR_ANALYSIS_SAMPLE_LIMIT = 3
 HALTED_CHANGE_THRESHOLD_STATUS = "Halted: Change Threshold Exceeded"
 HALTED_STAGE_NAME = "Sync Coursedog Updates with SIS"
+CHANGE_THRESHOLD_LIMIT = 10
 
 
 class SchoolExclusionPayload(BaseModel):
@@ -2807,8 +2808,28 @@ def _extract_stage_status_from_payload(payload: Any, stage_name: str) -> Optiona
 
 async def classify_nightly_merge_halt_status(school: str, merge_report_id: str) -> Optional[str]:
     """Return the halt status for the nightly sync stage when present."""
-    payload = await api_get(f"/api/v1/{school}/mergeReports/{merge_report_id}")
-    return _extract_stage_status_from_payload(payload, HALTED_STAGE_NAME)
+    try:
+        payload = await api_get(f"/api/v1/{school}/mergeReports/{merge_report_id}")
+    except Exception:
+        payload = None
+
+    stage_status = _extract_stage_status_from_payload(payload, HALTED_STAGE_NAME)
+    if stage_status:
+        return stage_status
+
+    try:
+        post_step_updates = await api_get(
+            f"/api/v1/int/{school}/integrations-hub/merge-history/{merge_report_id}/post-step-updates",
+            params={"page": "0", "size": "1"},
+        )
+    except Exception:
+        return None
+
+    update_count = post_step_updates.get("count")
+    if isinstance(update_count, int) and update_count > CHANGE_THRESHOLD_LIMIT:
+        return HALTED_CHANGE_THRESHOLD_STATUS
+
+    return None
 
 
 async def annotate_nightly_halted_merges(school: str, merge_entries: list[dict]) -> list[dict]:

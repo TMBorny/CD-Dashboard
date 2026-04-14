@@ -651,6 +651,33 @@ class MergeErrorCountTests(unittest.TestCase):
 
         self.assertEqual(status, "Halted: Change Threshold Exceeded")
 
+    def test_classify_nightly_merge_halt_status_falls_back_to_post_step_update_count(self):
+        async def fake_api_get(path, params=None):
+            if path.endswith("/mergeReports/report-123"):
+                raise RuntimeError("legacy merge report endpoint unavailable")
+            if path.endswith("/integrations-hub/merge-history/report-123/post-step-updates"):
+                self.assertEqual(params, {"page": "0", "size": "1"})
+                return {"count": 11, "items": []}
+            raise AssertionError(f"Unexpected api_get call: {path} params={params}")
+
+        with patch("app.routes.api_get", side_effect=fake_api_get):
+            status = routes.asyncio.run(classify_nightly_merge_halt_status("bar01", "report-123"))
+
+        self.assertEqual(status, "Halted: Change Threshold Exceeded")
+
+    def test_classify_nightly_merge_halt_status_does_not_flag_small_post_step_update_counts(self):
+        async def fake_api_get(path, params=None):
+            if path.endswith("/mergeReports/report-123"):
+                raise RuntimeError("legacy merge report endpoint unavailable")
+            if path.endswith("/integrations-hub/merge-history/report-123/post-step-updates"):
+                return {"count": 1, "items": []}
+            raise AssertionError(f"Unexpected api_get call: {path} params={params}")
+
+        with patch("app.routes.api_get", side_effect=fake_api_get):
+            status = routes.asyncio.run(classify_nightly_merge_halt_status("bar01", "report-123"))
+
+        self.assertIsNone(status)
+
     def test_extract_sis_platform_prefers_platform_name(self):
         payload = {"sisPlatform": "Banner", "integrationBroker": "Ethos"}
         self.assertEqual(extract_sis_platform(payload), "Banner")
