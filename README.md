@@ -98,6 +98,8 @@ poetry install
 cd ..
 ```
 
+Note: the backend is currently pinned to a FastAPI release line that remains compatible with Python 3.9. If you want to move to newer FastAPI releases, upgrade the local/runtime Python version first.
+
 ### 3. Start the backend
 
 From `client-health-backend/`:

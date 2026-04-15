@@ -48,6 +48,13 @@ def is_loopback_client(request: Request) -> bool:
     return client_host in LOOPBACK_CLIENTS
 
 
+def is_loopback_origin(request: Request) -> bool:
+    origin = (request.headers.get("origin") or "").strip().lower()
+    if not origin:
+        return True
+    return origin.startswith("http://localhost:") or origin.startswith("http://127.0.0.1:")
+
+
 def get_cors_settings() -> dict:
     return {
         "allow_origins": _parse_csv_env(
@@ -67,15 +74,12 @@ async def require_internal_auth(
     request: Request,
     x_internal_api_key: Optional[str] = Header(default=None, alias=INTERNAL_API_KEY_HEADER),
 ) -> None:
+    if is_loopback_client(request) and is_loopback_origin(request):
+        logger.info("Allowing loopback request to %s without enforcing internal API key", request.url.path)
+        return
+
     expected_api_key = get_internal_api_key()
     if not expected_api_key:
-        if is_loopback_client(request):
-            logger.warning(
-                "Internal API key is not configured; allowing loopback request to %s",
-                request.url.path,
-            )
-            return
-
         logger.error("Internal API key is not configured; rejecting %s", request.url.path)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

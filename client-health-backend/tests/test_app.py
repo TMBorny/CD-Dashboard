@@ -24,7 +24,7 @@ from sqlalchemy import create_engine, inspect
 from app.db import ensure_schema_updates, get_database_url, get_db, get_default_db_path, init_db
 from app.main import app, create_app
 from app.models import BackfillWorkUnit, ErrorAnalysisDetail, ErrorAnalysisGroup, SchedulerSettings, SchoolSnapshot, SyncRun
-from app.security import is_loopback_client, require_internal_auth
+from app.security import is_loopback_client, is_loopback_origin, require_internal_auth
 from app.routes import (
     build_snapshot_dates,
     build_error_analysis_groups,
@@ -586,6 +586,20 @@ class MergeErrorCountTests(unittest.TestCase):
         self.assertEqual(snapshot["merges"]["nightly"]["failed"], 0)
         self.assertEqual(snapshot["recentFailedMerges"][0]["haltReason"], "Halted: Change Threshold Exceeded")
 
+    def test_calculate_nightly_merge_time_falls_back_to_completion_span_by_day(self):
+        first_end_ms = int(datetime(2026, 4, 15, 5, 22, tzinfo=timezone.utc).timestamp() * 1000)
+        last_end_ms = int(datetime(2026, 4, 15, 9, 0, tzinfo=timezone.utc).timestamp() * 1000)
+
+        self.assertEqual(
+            routes.calculate_nightly_merge_time(
+                [
+                    {"id": "nightly-early", "scheduleType": "nightly", "status": "success", "timestampEnd": first_end_ms},
+                    {"id": "nightly-late", "scheduleType": "nightly", "status": "success", "timestampEnd": last_end_ms},
+                ]
+            ),
+            last_end_ms - first_end_ms,
+        )
+
     def test_extract_unique_activity_users_from_keyed_object(self):
         payload = {
             "HWXr7RVN62eNIVLZjufZ": {"email": "a@example.com"},
@@ -751,6 +765,70 @@ class FetchSchoolHealthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot["merges"]["nightly"]["failed"], 0)
         self.assertEqual(snapshot["merges"]["nightly"]["finishedWithIssues"], 0)
         self.assertEqual(snapshot["recentFailedMerges"][0]["haltReason"], "Halted: Change Threshold Exceeded")
+
+    async def test_fetch_school_health_uses_dedicated_nightly_history_for_merge_time(self):
+        first_end_ms = int(datetime(2026, 4, 15, 5, 22, tzinfo=timezone.utc).timestamp() * 1000)
+        last_end_ms = int(datetime(2026, 4, 15, 9, 0, tzinfo=timezone.utc).timestamp() * 1000)
+
+        async def fake_api_get(path, params=None):
+            if path.endswith("/integrations-hub/overview/health"):
+                return {
+                    "allNightlyMergesCount": 2,
+                    "succeededNightlyMergesCount": 2,
+                    "recentFailedMerges": [],
+                }
+
+            if path.endswith("/integrations-hub/overview/merge-errors"):
+                return {"totalCount": 0}
+
+            if path.endswith("/integrations-hub/merge-history") and params and params.get("scheduleType") == "nightly":
+                self.assertEqual(params.get("size"), "500")
+                return {
+                    "content": [
+                        {
+                            "id": "nightly-early",
+                            "scheduleType": "nightly",
+                            "status": "success",
+                            "timestampEnd": first_end_ms,
+                        },
+                        {
+                            "id": "nightly-late",
+                            "scheduleType": "nightly",
+                            "status": "success",
+                            "timestampEnd": last_end_ms,
+                        },
+                    ]
+                }
+
+            if path.endswith("/integrations-hub/merge-history"):
+                return {
+                    "content": [
+                        {
+                            "id": "rt-1",
+                            "scheduleType": "realtime",
+                            "status": "success",
+                            "timestampEnd": last_end_ms,
+                        }
+                    ]
+                }
+
+            if path.endswith("/userActivity"):
+                return {}
+
+            raise AssertionError(f"Unexpected api_get call: {path} params={params}")
+
+        with patch("app.routes.api_get", side_effect=fake_api_get), patch(
+            "app.routes.fetch_school_sis_platform",
+            return_value="PeopleSoft",
+        ):
+            snapshot = await routes.fetch_school_health(
+                school="utah_peoplesoft",
+                display_name="University of Utah",
+                products=["integrations"],
+                snapshot_date="2026-04-15",
+            )
+
+        self.assertEqual(snapshot["merges"]["nightly"]["mergeTimeMs"], last_end_ms - first_end_ms)
 
 
 class SyncJobErrorAnalysisPersistenceTests(unittest.IsolatedAsyncioTestCase):
@@ -1697,13 +1775,21 @@ class SchoolExclusionTests(unittest.TestCase):
 
 class InternalAuthTests(unittest.IsolatedAsyncioTestCase):
     async def test_loopback_client_is_allowed_without_configured_key(self):
-        request = SimpleNamespace(url=SimpleNamespace(path="/api/schools"), client=SimpleNamespace(host="127.0.0.1"))
+        request = SimpleNamespace(
+            url=SimpleNamespace(path="/api/schools"),
+            client=SimpleNamespace(host="127.0.0.1"),
+            headers={},
+        )
 
         with patch.dict(os.environ, {"INTERNAL_API_KEY": "", "VITE_INTERNAL_API_KEY": ""}, clear=False):
             await require_internal_auth(request, x_internal_api_key=None)
 
     async def test_remote_client_is_rejected_without_configured_key(self):
-        request = SimpleNamespace(url=SimpleNamespace(path="/api/schools"), client=SimpleNamespace(host="10.0.0.5"))
+        request = SimpleNamespace(
+            url=SimpleNamespace(path="/api/schools"),
+            client=SimpleNamespace(host="10.0.0.5"),
+            headers={},
+        )
 
         with patch.dict(os.environ, {"INTERNAL_API_KEY": "", "VITE_INTERNAL_API_KEY": ""}, clear=False):
             with self.assertRaises(HTTPException) as exc:
@@ -1711,9 +1797,27 @@ class InternalAuthTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(exc.exception.status_code, 503)
 
+    async def test_loopback_client_is_allowed_even_with_mismatched_key(self):
+        request = SimpleNamespace(
+            url=SimpleNamespace(path="/api/schools"),
+            client=SimpleNamespace(host="127.0.0.1"),
+            headers={"origin": "http://localhost:5173"},
+        )
+
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False):
+            await require_internal_auth(request, x_internal_api_key="wrong-key")
+
     def test_detects_loopback_client(self):
         request = SimpleNamespace(client=SimpleNamespace(host="localhost"))
         self.assertTrue(is_loopback_client(request))
+
+    def test_detects_loopback_origin(self):
+        request = SimpleNamespace(headers={"origin": "http://127.0.0.1:5173"})
+        self.assertTrue(is_loopback_origin(request))
+
+    def test_rejects_non_loopback_origin(self):
+        request = SimpleNamespace(headers={"origin": "https://dashboard.example.com"})
+        self.assertFalse(is_loopback_origin(request))
 
 
 class DemoSchoolTests(unittest.TestCase):
@@ -1729,7 +1833,7 @@ class DemoSchoolTests(unittest.TestCase):
 
 
 class ApiSecurityTests(unittest.TestCase):
-    def test_protected_api_rejects_missing_internal_api_key(self):
+    def test_protected_api_allows_loopback_requests_without_internal_api_key(self):
         with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
             "app.main.start_scheduled_sync_service",
             new=self._async_noop,
@@ -1740,8 +1844,8 @@ class ApiSecurityTests(unittest.TestCase):
             with TestClient(app) as client:
                 response = client.get("/api/client-health/sync-runs")
 
-        self.assertEqual(response.status_code, 401)
-        self.assertEqual(response.json()["detail"]["code"], "invalid_internal_api_key")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("syncRuns", response.json())
 
     def test_protected_api_accepts_valid_internal_api_key(self):
         with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(

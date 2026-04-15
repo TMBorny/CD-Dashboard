@@ -2711,52 +2711,48 @@ async def fetch_school_sis_platform(school: str) -> Optional[str]:
 
 
 def calculate_nightly_merge_time(merge_entries: list[dict]) -> int:
-    """Calculate the contiguous duration spanning all nightly merges in the provided entries.
-    
-    This merges overlapping execution intervals to prevent gaps between disconnected
-    nightly runs (e.g. yesterday's run and today's run) from artificially inflating
-    the total duration.
+    """Calculate the duration spanned by nightly merges in the provided entries.
+
+    Prefer explicit start/end timestamps and group ids when present. When upstream only
+    provides completion timestamps, fall back to the earliest and latest nightly event
+    observed on the same UTC day so long-running nightly batches are still represented.
     """
-    groups: dict[str, list] = {}
-    fallback_intervals = []
-    
+    groups: dict[str, dict[str, list[int]]] = {}
+    fallback_days: dict[str, dict[str, list[int]]] = {}
+
     for report in merge_entries:
         if str(report.get("scheduleType", "")).lower() == "nightly":
-            start_val = report.get("timestampStart") or report.get("startedAt") or report.get("timestampEnd")
+            start_val = report.get("timestampStart") or report.get("startedAt")
             end_val = report.get("timestampEnd") or report.get("completedAt")
-            
-            if start_val and end_val and isinstance(start_val, (int, float)) and isinstance(end_val, (int, float)):
-                if start_val <= end_val:
-                    group_id = report.get("groupId")
-                    if group_id:
-                        if group_id not in groups:
-                            groups[group_id] = {"starts": [], "ends": []}
-                        groups[group_id]["starts"].append(start_val)
-                        groups[group_id]["ends"].append(end_val)
-                    else:
-                        fallback_intervals.append([start_val, end_val])
-    
+
+            if not isinstance(end_val, (int, float)):
+                continue
+
+            if isinstance(start_val, (int, float)) and start_val <= end_val:
+                group_id = report.get("groupId")
+                if group_id:
+                    if group_id not in groups:
+                        groups[group_id] = {"starts": [], "ends": []}
+                    groups[group_id]["starts"].append(int(start_val))
+                    groups[group_id]["ends"].append(int(end_val))
+                    continue
+
+            day_key = datetime.fromtimestamp(end_val / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+            if day_key not in fallback_days:
+                fallback_days[day_key] = {"starts": [], "ends": []}
+            fallback_days[day_key]["starts"].append(int(start_val) if isinstance(start_val, (int, float)) else int(end_val))
+            fallback_days[day_key]["ends"].append(int(end_val))
+
     total_duration = 0
-    
+
     # 1. Calculate duration for explicitly grouped merge events
     for g in groups.values():
         total_duration += max(0, int(max(g["ends"]) - min(g["starts"])))
-        
-    # 2. Handle legacy reports missing a groupId using the 2-hour sliding window tolerance
-    if fallback_intervals:
-        fallback_intervals.sort(key=lambda x: x[0])
-        merged = [fallback_intervals[0]]
-        GROUPING_TOLERANCE_MS = 2 * 60 * 60 * 1000
-        
-        for current in fallback_intervals[1:]:
-            prev = merged[-1]
-            if current[0] <= prev[1] + GROUPING_TOLERANCE_MS:
-                prev[1] = max(prev[1], current[1])
-            else:
-                merged.append(current)
-                
-        total_duration += int(sum(end - start for start, end in merged))
-        
+
+    # 2. Handle legacy reports missing a groupId by spanning the observed nightly batch.
+    for batch in fallback_days.values():
+        total_duration += max(0, int(max(batch["ends"]) - min(batch["starts"])))
+
     return max(0, total_duration)
 
 
@@ -3113,7 +3109,7 @@ async def fetch_school_health(
                 f"/api/v1/int/{school}/integrations-hub/merge-history",
                 params={
                     "page": "0",
-                    "size": "100",
+                    "size": "500",
                     "dateFrom": nightly_date_from,
                     "dateTo": date_to,
                     "scheduleType": "nightly",
@@ -3153,7 +3149,7 @@ async def fetch_school_health(
         ) = summarize_recent_merge_activity(merge_reports, last_24h)
 
         # Compute nightly merge time from merge reports history
-        nightly_merge_time = calculate_nightly_merge_time(merge_reports)
+        nightly_merge_time = calculate_nightly_merge_time(nightly_merge_reports)
 
         # Active users — try to get from user activity endpoint
         active_users_24h = 0

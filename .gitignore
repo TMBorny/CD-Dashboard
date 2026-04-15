@@ -29,3 +29,4 @@ client-health-backend/*.db
 *.njsproj
 *.sln
 *.sw?
+client-health-backend/error_analysis_export.json
