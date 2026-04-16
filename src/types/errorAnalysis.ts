@@ -57,6 +57,15 @@ export interface ErrorBreakdownRow {
   affectedSchools?: number;
   commonResolutionTheme?: string | null;
   latestMergeReport?: MergeReportReference | null;
+  associatedSignatures?: Array<{
+    signatureKey: string;
+    signatureLabel: string;
+    count: number;
+    entityType?: string | null;
+    errorCode?: string | null;
+    resolutionTitle?: string | null;
+    sampleMessage?: string | null;
+  }>;
 }
 
 export interface ErrorAnalysisFilterOption {

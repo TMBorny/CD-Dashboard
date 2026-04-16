@@ -254,6 +254,17 @@ const buildResponse = (): ErrorAnalysisResponse => ({
       lastSeen: '2026-04-13',
       affectedSchools: 1,
       commonResolutionTheme: 'duplicate_conflict',
+      associatedSignatures: [
+        {
+          signatureKey: 'sig-b',
+          signatureLabel: 'courses | duplicate_course | duplicate course <num>',
+          count: 4,
+          entityType: 'courses',
+          errorCode: 'duplicate_course',
+          resolutionTitle: 'Duplicate or conflicting record',
+          sampleMessage: 'Duplicate course 12345',
+        },
+      ],
     },
     {
       key: 'Banner',
@@ -264,6 +275,17 @@ const buildResponse = (): ErrorAnalysisResponse => ({
       lastSeen: '2026-04-13',
       affectedSchools: 1,
       commonResolutionTheme: 'missing_reference',
+      associatedSignatures: [
+        {
+          signatureKey: 'sig-a',
+          signatureLabel: 'sections | missing_course | course <num> missing dependency <num>',
+          count: 3,
+          entityType: 'sections',
+          errorCode: 'missing_course',
+          resolutionTitle: 'Missing dependency or reference',
+          sampleMessage: 'Course 202602 missing dependency 987654',
+        },
+      ],
     },
   ],
 });
@@ -555,5 +577,31 @@ describe('ErrorAnalysisDashboard', () => {
     });
 
     clickSpy.mockRestore();
+  });
+
+  it('opens associated signatures from the SIS view', async () => {
+    const { default: ErrorAnalysisDashboard } = await import('./ErrorAnalysisDashboard.vue');
+    const wrapper = mount(ErrorAnalysisDashboard, {
+      global: {
+        stubs: {
+          RouterLink: RouterLinkStub,
+          VueApexCharts: { template: '<div class="chart-stub" />' },
+        },
+      },
+    });
+
+    await wrapper.get('[data-testid="view-toggle"]').findAll('button')[3].trigger('click');
+    expect(wrapper.text()).toContain('Recurring patterns by SIS');
+
+    const sisButton = wrapper.findAll('button').find((button) => button.text().includes('View all 1 signature'));
+    expect(sisButton).toBeTruthy();
+    await sisButton!.trigger('click');
+
+    const modal = wrapper.get('[data-testid="sis-signatures-modal"]');
+    expect(modal.text()).toContain('PeopleSoftDirect');
+    expect(modal.text()).toContain('courses | duplicate_course | duplicate course <num>');
+
+    await modal.findAll('button').find((button) => button.text() === 'View full error')!.trigger('click');
+    expect(wrapper.get('[data-testid="error-detail-modal"]').text()).toContain('Duplicate course 12345 already exists in CourseDog');
   });
 });

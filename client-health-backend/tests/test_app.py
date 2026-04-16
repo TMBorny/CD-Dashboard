@@ -600,6 +600,24 @@ class MergeErrorCountTests(unittest.TestCase):
             last_end_ms - first_end_ms,
         )
 
+    def test_calculate_latest_nightly_merge_time_uses_most_recent_batch(self):
+        first_day_start_ms = int(datetime(2026, 4, 15, 5, 24, tzinfo=timezone.utc).timestamp() * 1000)
+        first_day_end_ms = int(datetime(2026, 4, 15, 21, 11, tzinfo=timezone.utc).timestamp() * 1000)
+        second_day_start_ms = int(datetime(2026, 4, 16, 5, 31, tzinfo=timezone.utc).timestamp() * 1000)
+        second_day_end_ms = int(datetime(2026, 4, 16, 21, 3, tzinfo=timezone.utc).timestamp() * 1000)
+
+        self.assertEqual(
+            routes.calculate_latest_nightly_merge_time(
+                [
+                    {"id": "nightly-1a", "scheduleType": "nightly", "status": "success", "timestampEnd": first_day_start_ms},
+                    {"id": "nightly-1b", "scheduleType": "nightly", "status": "success", "timestampEnd": first_day_end_ms},
+                    {"id": "nightly-2a", "scheduleType": "nightly", "status": "success", "timestampEnd": second_day_start_ms},
+                    {"id": "nightly-2b", "scheduleType": "nightly", "status": "success", "timestampEnd": second_day_end_ms},
+                ]
+            ),
+            second_day_end_ms - second_day_start_ms,
+        )
+
     def test_extract_unique_activity_users_from_keyed_object(self):
         payload = {
             "HWXr7RVN62eNIVLZjufZ": {"email": "a@example.com"},
@@ -829,6 +847,54 @@ class FetchSchoolHealthTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(snapshot["merges"]["nightly"]["mergeTimeMs"], last_end_ms - first_end_ms)
+
+    async def test_fetch_school_health_uses_latest_nightly_batch_in_48h_window(self):
+        first_day_start_ms = int(datetime(2026, 4, 15, 5, 24, tzinfo=timezone.utc).timestamp() * 1000)
+        first_day_end_ms = int(datetime(2026, 4, 15, 21, 11, tzinfo=timezone.utc).timestamp() * 1000)
+        second_day_start_ms = int(datetime(2026, 4, 16, 5, 31, tzinfo=timezone.utc).timestamp() * 1000)
+        second_day_end_ms = int(datetime(2026, 4, 16, 21, 3, tzinfo=timezone.utc).timestamp() * 1000)
+
+        async def fake_api_get(path, params=None):
+            if path.endswith("/integrations-hub/overview/health"):
+                return {
+                    "allNightlyMergesCount": 4,
+                    "succeededNightlyMergesCount": 4,
+                    "recentFailedMerges": [],
+                }
+
+            if path.endswith("/integrations-hub/overview/merge-errors"):
+                return {"totalCount": 0}
+
+            if path.endswith("/integrations-hub/merge-history") and params and params.get("scheduleType") == "nightly":
+                return {
+                    "content": [
+                        {"id": "nightly-1a", "scheduleType": "nightly", "status": "success", "timestampEnd": first_day_start_ms},
+                        {"id": "nightly-1b", "scheduleType": "nightly", "status": "success", "timestampEnd": first_day_end_ms},
+                        {"id": "nightly-2a", "scheduleType": "nightly", "status": "success", "timestampEnd": second_day_start_ms},
+                        {"id": "nightly-2b", "scheduleType": "nightly", "status": "success", "timestampEnd": second_day_end_ms},
+                    ]
+                }
+
+            if path.endswith("/integrations-hub/merge-history"):
+                return {"content": []}
+
+            if path.endswith("/userActivity"):
+                return {}
+
+            raise AssertionError(f"Unexpected api_get call: {path} params={params}")
+
+        with patch("app.routes.api_get", side_effect=fake_api_get), patch(
+            "app.routes.fetch_school_sis_platform",
+            return_value="Colleague Ethos",
+        ):
+            snapshot = await routes.fetch_school_health(
+                school="callutheran_colleague_ethos",
+                display_name="California Lutheran University",
+                products=["integrations"],
+                snapshot_date="2026-04-16",
+            )
+
+        self.assertEqual(snapshot["merges"]["nightly"]["mergeTimeMs"], second_day_end_ms - second_day_start_ms)
 
 
 class SyncJobErrorAnalysisPersistenceTests(unittest.IsolatedAsyncioTestCase):
@@ -2341,7 +2407,7 @@ class ErrorAnalysisEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertTrue(payload["metadata"]["hasCapturedData"])
-        self.assertEqual(payload["summary"]["totalErrorInstances"], 8)
+        self.assertEqual(payload["summary"]["totalErrorInstances"], 5)
         self.assertEqual(payload["summary"]["distinctSignatures"], 2)
         self.assertEqual(payload["trends"][0]["snapshotDate"], "2026-04-12")
         self.assertEqual(payload["signatures"][0]["signatureKey"], "sig-b")
@@ -2351,6 +2417,7 @@ class ErrorAnalysisEndpointTests(unittest.TestCase):
         self.assertEqual(school_breakdowns["foo01"]["latestMergeReport"]["mergeReportId"], "report-b1")
         sis_breakdowns = {row["key"]: row for row in payload["sisBreakdowns"]}
         self.assertEqual(sis_breakdowns["PeopleSoftDirect"]["key"], "PeopleSoftDirect")
+        self.assertEqual(sis_breakdowns["PeopleSoftDirect"]["associatedSignatures"][0]["signatureKey"], "sig-b")
         self.assertEqual(len(payload["filterOptions"]["schools"]), 2)
 
     def test_error_analysis_filters_by_school_and_sis(self):
@@ -2422,6 +2489,65 @@ class ErrorAnalysisEndpointTests(unittest.TestCase):
         self.assertEqual(sis_response.status_code, 200)
         self.assertEqual(sis_response.json()["summary"]["totalErrorInstances"], 4)
         self.assertEqual(sis_response.json()["sisBreakdowns"][0]["key"], "PeopleSoftDirect")
+
+    def test_error_analysis_summary_uses_latest_snapshot_not_window_sum(self):
+        init_db()
+        db = get_db()
+        try:
+            db.add_all(
+                [
+                    ErrorAnalysisGroup.from_dict(
+                        {
+                            "snapshotDate": "2026-04-12",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": "Banner",
+                            "entityType": "sections",
+                            "errorCode": "missing_course",
+                            "signatureKey": "sig-a",
+                            "normalizedMessage": "course missing dependency",
+                            "sampleMessage": "Course missing dependency",
+                            "count": 3,
+                            "sampleErrors": [],
+                            "termCodes": [],
+                        }
+                    ),
+                    ErrorAnalysisGroup.from_dict(
+                        {
+                            "snapshotDate": "2026-04-13",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": "Banner",
+                            "entityType": "sections",
+                            "errorCode": "missing_course",
+                            "signatureKey": "sig-a",
+                            "normalizedMessage": "course missing dependency",
+                            "sampleMessage": "Course missing dependency",
+                            "count": 3,
+                            "sampleErrors": [],
+                            "termCodes": [],
+                        }
+                    ),
+                ]
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
+            "app.main.start_scheduled_sync_service",
+            new=self._async_noop,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=self._async_noop,
+        ):
+            with TestClient(app) as client:
+                response = client.get("/api/error-analysis", headers=AUTH_HEADERS)
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["summary"]["totalErrorInstances"], 3)
+        self.assertEqual(payload["summary"]["captureDays"], 2)
 
     def test_error_analysis_export_downloads_filtered_groups(self):
         init_db()

@@ -474,7 +474,7 @@ async def get_error_analysis(
         affected_schools: set[str] = set()
         affected_sis: set[str] = set()
         capture_days: set[str] = set()
-        total_error_instances = 0
+        latest_snapshot_total_error_instances = 0
 
         def get_dominant_entry(counter: dict[str, int]) -> Optional[str]:
             if not counter:
@@ -491,7 +491,6 @@ async def get_error_analysis(
                 group.error_code,
             )
             sis_label = group.sis_platform or "Unknown"
-            total_error_instances += group.count
             affected_schools.add(group.school)
             affected_sis.add(sis_label)
             capture_days.add(group.snapshot_date)
@@ -689,6 +688,25 @@ async def get_error_analysis(
             dominant_signature_key = get_dominant_entry(sis_row["countsBySignature"])
             dominant_signature = signatures.get(dominant_signature_key) if dominant_signature_key else None
             dominant_bucket = get_dominant_entry(sis_row["resolutionBuckets"])
+            associated_signatures = []
+            for signature_key, count in sorted(
+                sis_row["countsBySignature"].items(),
+                key=lambda item: (-item[1], item[0]),
+            ):
+                signature = signatures.get(signature_key)
+                if not signature:
+                    continue
+                associated_signatures.append(
+                    {
+                        "signatureKey": signature["signatureKey"],
+                        "signatureLabel": signature["signatureLabel"],
+                        "count": count,
+                        "entityType": signature["entityType"],
+                        "errorCode": signature["errorCode"],
+                        "resolutionTitle": signature["resolutionHint"]["title"],
+                        "sampleMessage": signature["sampleMessage"],
+                    }
+                )
             serialized_sis_breakdowns.append(
                 {
                     "key": sis_row["key"],
@@ -699,18 +717,32 @@ async def get_error_analysis(
                     "dominantSignature": dominant_signature["signatureLabel"] if dominant_signature else None,
                     "lastSeen": sis_row["lastSeen"],
                     "commonResolutionTheme": dominant_bucket,
+                    "associatedSignatures": associated_signatures,
                 }
             )
         serialized_sis_breakdowns.sort(key=lambda item: (-item["totalErrors"], item["label"]))
 
+        latest_snapshot_date = max(capture_days)
+        latest_snapshot_by_school: dict[str, str] = {}
+        for group in groups:
+            latest_snapshot_by_school[group.school] = max(
+                latest_snapshot_by_school.get(group.school, group.snapshot_date),
+                group.snapshot_date,
+            )
+        latest_snapshot_total_error_instances = sum(
+            group.count
+            for group in groups
+            if latest_snapshot_by_school.get(group.school) == group.snapshot_date
+        )
+
         response["summary"] = {
             "totalGroupedErrors": len(groups),
-            "totalErrorInstances": total_error_instances,
+            "totalErrorInstances": latest_snapshot_total_error_instances,
             "distinctSignatures": len(signatures),
             "affectedSchools": len(affected_schools),
             "affectedSisPlatforms": len(affected_sis),
             "captureDays": len(capture_days),
-            "latestSnapshotDate": max(capture_days),
+            "latestSnapshotDate": latest_snapshot_date,
         }
         response["trends"] = serialized_trends
         response["signatures"] = serialized_signatures
@@ -2710,13 +2742,8 @@ async def fetch_school_sis_platform(school: str) -> Optional[str]:
     return platform
 
 
-def calculate_nightly_merge_time(merge_entries: list[dict]) -> int:
-    """Calculate the duration spanned by nightly merges in the provided entries.
-
-    Prefer explicit start/end timestamps and group ids when present. When upstream only
-    provides completion timestamps, fall back to the earliest and latest nightly event
-    observed on the same UTC day so long-running nightly batches are still represented.
-    """
+def _collect_nightly_merge_batches(merge_entries: list[dict]) -> list[dict[str, int]]:
+    """Normalize nightly merge reports into batch spans with start/end timestamps."""
     groups: dict[str, dict[str, list[int]]] = {}
     fallback_days: dict[str, dict[str, list[int]]] = {}
 
@@ -2743,17 +2770,44 @@ def calculate_nightly_merge_time(merge_entries: list[dict]) -> int:
             fallback_days[day_key]["starts"].append(int(start_val) if isinstance(start_val, (int, float)) else int(end_val))
             fallback_days[day_key]["ends"].append(int(end_val))
 
+    batches: list[dict[str, int]] = []
+    for g in groups.values():
+        batches.append({
+            "start": int(min(g["starts"])),
+            "end": int(max(g["ends"])),
+        })
+    for batch in fallback_days.values():
+        batches.append({
+            "start": int(min(batch["starts"])),
+            "end": int(max(batch["ends"])),
+        })
+
+    return batches
+
+
+def calculate_nightly_merge_time(merge_entries: list[dict]) -> int:
+    """Calculate the duration spanned by nightly merges in the provided entries.
+
+    Prefer explicit start/end timestamps and group ids when present. When upstream only
+    provides completion timestamps, fall back to the earliest and latest nightly event
+    observed on the same UTC day so long-running nightly batches are still represented.
+    """
+    batches = _collect_nightly_merge_batches(merge_entries)
     total_duration = 0
 
-    # 1. Calculate duration for explicitly grouped merge events
-    for g in groups.values():
-        total_duration += max(0, int(max(g["ends"]) - min(g["starts"])))
-
-    # 2. Handle legacy reports missing a groupId by spanning the observed nightly batch.
-    for batch in fallback_days.values():
-        total_duration += max(0, int(max(batch["ends"]) - min(batch["starts"])))
+    for batch in batches:
+        total_duration += max(0, int(batch["end"] - batch["start"]))
 
     return max(0, total_duration)
+
+
+def calculate_latest_nightly_merge_time(merge_entries: list[dict]) -> int:
+    """Return the duration of the most recent nightly batch in the provided entries."""
+    batches = _collect_nightly_merge_batches(merge_entries)
+    if not batches:
+        return 0
+    latest_batch = max(batches, key=lambda batch: batch["end"])
+    return max(0, int(latest_batch["end"] - latest_batch["start"]))
 
 
 def _normalize_merge_identifier(report: dict) -> str:
@@ -3149,7 +3203,7 @@ async def fetch_school_health(
         ) = summarize_recent_merge_activity(merge_reports, last_24h)
 
         # Compute nightly merge time from merge reports history
-        nightly_merge_time = calculate_nightly_merge_time(nightly_merge_reports)
+        nightly_merge_time = calculate_latest_nightly_merge_time(nightly_merge_reports)
 
         # Active users — try to get from user activity endpoint
         active_users_24h = 0

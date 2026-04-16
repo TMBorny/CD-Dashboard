@@ -38,11 +38,17 @@ interface ErrorDetailContext {
   resolutionHint?: ResolutionHint | null;
 }
 
+interface SisSignatureContext {
+  label: string;
+  associatedSignatures: NonNullable<ErrorBreakdownRow['associatedSignatures']>;
+}
+
 const selectedWindow = ref<WindowOption>('7');
 const selectedSchool = ref('all');
 const selectedSis = ref('all');
 const activeView = ref<ErrorViewMode>('aggregate');
 const selectedErrorDetail = ref<ErrorDetailContext | null>(null);
+const selectedSisSignatureContext = ref<SisSignatureContext | null>(null);
 const isExporting = ref(false);
 const detailSearch = ref('');
 const detailPage = ref(1);
@@ -148,7 +154,7 @@ const summaryCards = computed(() => ([
     key: 'totalErrors',
     label: 'Open Error Instances',
     value: response.value?.summary.totalErrorInstances ?? 0,
-    detail: 'Grouped open merge errors counted across captured snapshots.',
+    detail: 'Open merge-error instances in the latest captured snapshot for the current filters.',
   },
   {
     key: 'signatures',
@@ -474,8 +480,26 @@ const openDetailRowError = (row: ErrorDetailRow) => {
   selectedErrorDetail.value = buildDetailRowErrorContext(row);
 };
 
+const openSisSignatures = (row: ErrorBreakdownRow) => {
+  selectedSisSignatureContext.value = {
+    label: row.label,
+    associatedSignatures: row.associatedSignatures ?? [],
+  };
+};
+
 const closeErrorDetail = () => {
   selectedErrorDetail.value = null;
+};
+
+const closeSisSignatures = () => {
+  selectedSisSignatureContext.value = null;
+};
+
+const openSignatureDetailByKey = (signatureKey: string) => {
+  const signature = allSignatures.value.find((item) => item.signatureKey === signatureKey);
+  if (!signature) return;
+  selectedSisSignatureContext.value = null;
+  openSignatureDetail(signature);
 };
 
 const toggleDetailSort = (column: string) => {
@@ -955,6 +979,14 @@ const handleExport = async () => {
                     </td>
                     <td class="border-y border-slate-200 bg-slate-50 px-4 py-4 align-top">
                       <p class="font-medium text-slate-900">{{ row.dominantSignature || 'No dominant signature yet' }}</p>
+                      <button
+                        v-if="row.associatedSignatures?.length"
+                        type="button"
+                        class="mt-3 inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+                        @click="openSisSignatures(row)"
+                      >
+                        View all {{ row.associatedSignatures.length }} signature{{ row.associatedSignatures.length === 1 ? '' : 's' }}
+                      </button>
                     </td>
                     <td class="rounded-r-3xl border-y border-r border-slate-200 bg-slate-50 px-4 py-4 align-top">
                       <p class="text-sm leading-6 text-slate-700">{{ formatTheme(row.commonResolutionTheme) }}</p>
@@ -968,6 +1000,67 @@ const handleExport = async () => {
 
         <div v-if="!hasFilteredRows" class="rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-4 text-sm text-amber-800">
           No grouped error rows match the current filters yet. Captured history remains available starting on {{ response?.metadata.historyStartsOn || 'the next sync' }}.
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="selectedSisSignatureContext"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-8"
+      data-testid="sis-signatures-modal"
+      @click.self="closeSisSignatures"
+    >
+      <div class="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-[28px] border border-slate-200 bg-white p-6 shadow-2xl sm:p-8">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">SIS signatures</p>
+            <h2 class="mt-2 text-2xl font-semibold text-slate-950">{{ selectedSisSignatureContext.label }}</h2>
+            <p class="mt-2 text-sm text-slate-600">All associated signatures captured for this SIS in the current filter window.</p>
+          </div>
+          <button
+            type="button"
+            class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-lg text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
+            aria-label="Close SIS signatures modal"
+            @click="closeSisSignatures"
+          >
+            ×
+          </button>
+        </div>
+
+        <div class="mt-6 space-y-3">
+          <div
+            v-for="signature in selectedSisSignatureContext.associatedSignatures"
+            :key="signature.signatureKey"
+            class="rounded-3xl border border-slate-200 bg-slate-50 p-4"
+          >
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span v-if="signature.entityType" class="rounded-full bg-slate-900 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-white">
+                    {{ signature.entityType }}
+                  </span>
+                  <span v-if="signature.errorCode" class="rounded-full bg-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-700">
+                    {{ signature.errorCode }}
+                  </span>
+                  <span class="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700">
+                    {{ signature.count }} occurrence{{ signature.count === 1 ? '' : 's' }}
+                  </span>
+                </div>
+                <p class="mt-3 font-medium leading-6 text-slate-900 break-words">{{ buildSignatureHeadline(signature.signatureLabel) }}</p>
+                <p v-if="signature.sampleMessage" class="mt-2 text-xs leading-5 text-slate-500 break-words">{{ signature.sampleMessage }}</p>
+                <p v-if="signature.resolutionTitle" class="mt-2 text-xs font-medium uppercase tracking-[0.08em] text-slate-500">{{ signature.resolutionTitle }}</p>
+              </div>
+              <div class="flex shrink-0 flex-wrap gap-2">
+                <button
+                  type="button"
+                  class="inline-flex items-center rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700"
+                  @click="openSignatureDetailByKey(signature.signatureKey)"
+                >
+                  View full error
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
