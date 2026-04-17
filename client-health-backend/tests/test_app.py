@@ -2413,6 +2413,8 @@ class ErrorAnalysisEndpointTests(unittest.TestCase):
         self.assertEqual(payload["signatures"][0]["signatureKey"], "sig-b")
         self.assertEqual(payload["signatures"][0]["latestMergeReport"]["mergeReportId"], "report-b2")
         self.assertEqual(payload["signatures"][0]["dominantSchoolMergeReport"]["mergeReportId"], "report-b1")
+        self.assertEqual(payload["signatures"][0]["impactedSchools"][0]["school"], "foo01")
+        self.assertEqual(payload["signatures"][0]["exampleMergeReports"][0]["mergeReportId"], "report-b2")
         school_breakdowns = {row["key"]: row for row in payload["schoolBreakdowns"]}
         self.assertEqual(school_breakdowns["foo01"]["latestMergeReport"]["mergeReportId"], "report-b1")
         sis_breakdowns = {row["key"]: row for row in payload["sisBreakdowns"]}

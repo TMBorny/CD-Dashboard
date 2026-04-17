@@ -41,6 +41,12 @@ export interface ErrorSignatureCluster {
   resolutionHint: ResolutionHint;
   latestMergeReport?: MergeReportReference | null;
   dominantSchoolMergeReport?: MergeReportReference | null;
+  impactedSchools?: Array<{
+    school: string;
+    label: string;
+    count: number;
+  }>;
+  exampleMergeReports?: MergeReportReference[];
 }
 
 export interface ErrorBreakdownRow {

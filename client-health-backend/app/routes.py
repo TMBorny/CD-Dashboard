@@ -529,7 +529,9 @@ async def get_error_analysis(
                     "recurrenceDays": set(),
                     "countsBySchool": {},
                     "countsBySis": {},
+                    "schoolLabels": {},
                     "latestMergeReportBySchool": {},
+                    "exampleMergeReports": [],
                     "sampleErrors": sample_errors,
                     "termCodes": set(term_codes),
                     "resolutionHint": resolution_hint,
@@ -544,6 +546,7 @@ async def get_error_analysis(
             signature_row["recurrenceDays"].add(group.snapshot_date)
             signature_row["countsBySchool"][group.school] = signature_row["countsBySchool"].get(group.school, 0) + group.count
             signature_row["countsBySis"][sis_label] = signature_row["countsBySis"].get(sis_label, 0) + group.count
+            signature_row["schoolLabels"][group.school] = group.display_name or group.school
             signature_row["termCodes"].update(term_codes)
             if merge_report_reference and (
                 signature_row["latestMergeReport"] is None
@@ -562,6 +565,11 @@ async def get_error_analysis(
                         "school": group.school,
                         "snapshotDate": group.snapshot_date,
                     }
+                    signature_row["exampleMergeReports"] = sorted(
+                        signature_row["latestMergeReportBySchool"].values(),
+                        key=lambda item: (item["snapshotDate"], item["school"], item["mergeReportId"]),
+                        reverse=True,
+                    )[:5]
 
             school_row = school_breakdowns.setdefault(
                 group.school,
@@ -655,6 +663,18 @@ async def get_error_analysis(
                     "resolutionHint": signature["resolutionHint"],
                     "latestMergeReport": signature["latestMergeReport"],
                     "dominantSchoolMergeReport": dominant_school_merge_report,
+                    "impactedSchools": [
+                        {
+                            "school": school_key,
+                            "label": signature["schoolLabels"].get(school_key, school_key),
+                            "count": count,
+                        }
+                        for school_key, count in sorted(
+                            signature["countsBySchool"].items(),
+                            key=lambda item: (-item[1], item[0]),
+                        )
+                    ],
+                    "exampleMergeReports": signature["exampleMergeReports"],
                 }
             )
         serialized_signatures.sort(

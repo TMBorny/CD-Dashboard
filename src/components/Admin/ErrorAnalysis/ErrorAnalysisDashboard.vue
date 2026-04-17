@@ -20,6 +20,7 @@ import { formatSchoolLabel } from '@/utils/schoolNames';
 type ErrorViewMode = 'aggregate' | 'all' | 'school' | 'sis';
 type WindowOption = '7' | '30' | 'all';
 type ErrorSortDir = 'asc' | 'desc';
+type SisSortKey = 'label' | 'affectedSchools' | 'totalErrors' | 'dominantSignature' | 'commonResolutionTheme';
 
 interface ErrorDetailContext {
   title: string;
@@ -34,6 +35,8 @@ interface ErrorDetailContext {
   scheduleType?: string | null;
   entityDisplayName?: string | null;
   mergeReport?: MergeReportReference | null;
+  impactedSchools?: ErrorSignatureCluster['impactedSchools'];
+  exampleMergeReports?: ErrorSignatureCluster['exampleMergeReports'];
   rawPayload?: string | null;
   resolutionHint?: ResolutionHint | null;
 }
@@ -55,6 +58,8 @@ const detailPage = ref(1);
 const detailPageSize = 50;
 const detailSortBy = ref('snapshotDate');
 const detailSortDir = ref<ErrorSortDir>('desc');
+const sisSortBy = ref<SisSortKey>('totalErrors');
+const sisSortDir = ref<ErrorSortDir>('desc');
 const localTimeZoneLabel = getLocalTimeZoneLabel();
 const coursedogBaseUrl = (import.meta.env.VITE_COURSEDOG_PRD_URL?.trim() || 'https://app.coursedog.com').replace(/\/+$/, '');
 
@@ -273,7 +278,35 @@ const schoolRoute = (school: string) => ({
 });
 
 const sortSchoolRows = computed(() => [...schoolRows.value].sort((a, b) => b.totalErrors - a.totalErrors || a.label.localeCompare(b.label)));
-const sortSisRows = computed(() => [...sisRows.value].sort((a, b) => b.totalErrors - a.totalErrors || a.label.localeCompare(b.label)));
+const sortSisRows = computed(() => [...sisRows.value].sort((a, b) => {
+  const direction = sisSortDir.value === 'asc' ? 1 : -1;
+  const compareStrings = (left?: string | null, right?: string | null) =>
+    (left || '').localeCompare(right || '', undefined, { sensitivity: 'base' });
+
+  switch (sisSortBy.value) {
+    case 'label': {
+      const result = compareStrings(a.label, b.label);
+      return result === 0 ? b.totalErrors - a.totalErrors : result * direction;
+    }
+    case 'affectedSchools': {
+      const result = (a.affectedSchools || 0) - (b.affectedSchools || 0);
+      return result === 0 ? compareStrings(a.label, b.label) : result * direction;
+    }
+    case 'dominantSignature': {
+      const result = compareStrings(a.dominantSignature, b.dominantSignature);
+      return result === 0 ? b.totalErrors - a.totalErrors : result * direction;
+    }
+    case 'commonResolutionTheme': {
+      const result = compareStrings(formatTheme(a.commonResolutionTheme), formatTheme(b.commonResolutionTheme));
+      return result === 0 ? b.totalErrors - a.totalErrors : result * direction;
+    }
+    case 'totalErrors':
+    default: {
+      const result = a.totalErrors - b.totalErrors;
+      return result === 0 ? compareStrings(a.label, b.label) : result * direction;
+    }
+  }
+}));
 
 const hasAnyRows = computed(() =>
   topSignatures.value.length > 0 || sortSchoolRows.value.length > 0 || sortSisRows.value.length > 0
@@ -425,6 +458,8 @@ const buildSignatureErrorDetail = (signature: ErrorSignatureCluster): ErrorDetai
   scheduleType: extractSampleScheduleType(signature.sampleErrors, signature.dominantSchoolMergeReport || signature.latestMergeReport),
   entityDisplayName: extractSampleEntityDisplayName(signature.sampleErrors, signature.dominantSchoolMergeReport || signature.latestMergeReport),
   mergeReport: signature.dominantSchoolMergeReport || signature.latestMergeReport || null,
+  impactedSchools: signature.impactedSchools,
+  exampleMergeReports: signature.exampleMergeReports,
   rawPayload: stringifyPayload(getBestSamplePayload(signature.sampleErrors)),
   resolutionHint: signature.resolutionHint,
 });
@@ -509,6 +544,17 @@ const toggleDetailSort = (column: string) => {
   }
   detailSortBy.value = column;
   detailSortDir.value = 'asc';
+};
+
+const toggleSisSort = (column: SisSortKey) => {
+  if (sisSortBy.value === column) {
+    sisSortDir.value = sisSortDir.value === 'asc' ? 'desc' : 'asc';
+    return;
+  }
+  sisSortBy.value = column;
+  sisSortDir.value = column === 'label' || column === 'dominantSignature' || column === 'commonResolutionTheme'
+    ? 'asc'
+    : 'desc';
 };
 
 const handleExport = async () => {
@@ -957,11 +1003,11 @@ const handleExport = async () => {
               <table class="min-w-full border-separate border-spacing-y-3 text-left text-sm text-slate-600">
                 <thead class="text-xs uppercase tracking-[0.12em] text-slate-500">
                   <tr>
-                    <th class="px-4 py-2 font-semibold">SIS</th>
-                    <th class="px-4 py-2 font-semibold">Affected schools</th>
-                    <th class="px-4 py-2 font-semibold">Impact</th>
-                    <th class="px-4 py-2 font-semibold">Dominant signature</th>
-                    <th class="px-4 py-2 font-semibold">Common theme</th>
+                    <th class="px-4 py-2 font-semibold"><button type="button" class="hover:text-slate-900" @click="toggleSisSort('label')">SIS</button></th>
+                    <th class="px-4 py-2 font-semibold"><button type="button" class="hover:text-slate-900" @click="toggleSisSort('affectedSchools')">Affected schools</button></th>
+                    <th class="px-4 py-2 font-semibold"><button type="button" class="hover:text-slate-900" @click="toggleSisSort('totalErrors')">Impact</button></th>
+                    <th class="px-4 py-2 font-semibold"><button type="button" class="hover:text-slate-900" @click="toggleSisSort('dominantSignature')">Dominant signature</button></th>
+                    <th class="px-4 py-2 font-semibold"><button type="button" class="hover:text-slate-900" @click="toggleSisSort('commonResolutionTheme')">Common theme</button></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1145,6 +1191,35 @@ const handleExport = async () => {
                   class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
                 >
                   Merge report ↗
+                </a>
+              </div>
+            </div>
+
+            <div v-if="selectedErrorDetail.impactedSchools?.length" class="rounded-3xl border border-slate-200 bg-white p-5">
+              <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Impacted schools</p>
+              <div class="mt-3 flex flex-wrap gap-2">
+                <span
+                  v-for="school in selectedErrorDetail.impactedSchools"
+                  :key="school.school"
+                  class="inline-flex rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700"
+                >
+                  {{ formatSchoolLabel(school.school, school.label) }} · {{ school.count }}
+                </span>
+              </div>
+            </div>
+
+            <div v-if="selectedErrorDetail.exampleMergeReports?.length" class="rounded-3xl border border-slate-200 bg-white p-5">
+              <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Example merge reports</p>
+              <div class="mt-3 flex flex-wrap gap-2">
+                <a
+                  v-for="report in selectedErrorDetail.exampleMergeReports"
+                  :key="`${report.school}-${report.mergeReportId}`"
+                  :href="getMergeReportUrl(report)"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+                >
+                  {{ getSchoolLabel(report.school) }} ↗
                 </a>
               </div>
             </div>

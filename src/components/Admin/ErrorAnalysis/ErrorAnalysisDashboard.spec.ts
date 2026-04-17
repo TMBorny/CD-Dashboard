@@ -133,6 +133,18 @@ const buildResponse = (): ErrorAnalysisResponse => ({
         entityDisplayName: 'Duplicate course 12345',
         snapshotDate: '2026-04-13',
       },
+      impactedSchools: [
+        { school: 'foo01', label: 'Foo State', count: 4 },
+      ],
+      exampleMergeReports: [
+        {
+          school: 'foo01',
+          mergeReportId: 'report-b1',
+          scheduleType: 'realtime',
+          entityDisplayName: 'Duplicate course 12345',
+          snapshotDate: '2026-04-13',
+        },
+      ],
       resolutionHint: {
         bucket: 'duplicate_conflict',
         title: 'Duplicate or conflicting record',
@@ -195,6 +207,18 @@ const buildResponse = (): ErrorAnalysisResponse => ({
         entityDisplayName: 'Course 202602 missing dependency 987654',
         snapshotDate: '2026-04-13',
       },
+      impactedSchools: [
+        { school: 'bar01', label: 'Baruch College', count: 3 },
+      ],
+      exampleMergeReports: [
+        {
+          school: 'bar01',
+          mergeReportId: 'report-a2',
+          scheduleType: 'nightly',
+          entityDisplayName: 'Course 202602 missing dependency 987654',
+          snapshotDate: '2026-04-13',
+        },
+      ],
       resolutionHint: {
         bucket: 'missing_reference',
         title: 'Missing dependency or reference',
@@ -454,6 +478,9 @@ describe('ErrorAnalysisDashboard', () => {
     expect(modal.text()).toContain('PeopleSoftDirect');
     expect(modal.text()).toContain('Term 202505');
     expect(modal.text()).toContain('realtime');
+    expect(modal.text()).toContain('Impacted schools');
+    expect(modal.text()).toContain('Foo State (foo01) · 4');
+    expect(modal.text()).toContain('Example merge reports');
     expect(modal.html()).toContain('/#/int/foo01/merge-history/report-b1');
     expect(modal.text()).toContain('Integration Hub');
 
@@ -603,5 +630,28 @@ describe('ErrorAnalysisDashboard', () => {
 
     await modal.findAll('button').find((button) => button.text() === 'View full error')!.trigger('click');
     expect(wrapper.get('[data-testid="error-detail-modal"]').text()).toContain('Duplicate course 12345 already exists in CourseDog');
+  });
+
+  it('sorts the SIS table when a header is clicked', async () => {
+    const { default: ErrorAnalysisDashboard } = await import('./ErrorAnalysisDashboard.vue');
+    const wrapper = mount(ErrorAnalysisDashboard, {
+      global: {
+        stubs: {
+          RouterLink: RouterLinkStub,
+          VueApexCharts: { template: '<div class="chart-stub" />' },
+        },
+      },
+    });
+
+    await wrapper.get('[data-testid="view-toggle"]').findAll('button')[3].trigger('click');
+
+    const before = wrapper.findAll('tbody tr td:first-child p.font-semibold').map((node) => node.text());
+    expect(before[0]).toBe('PeopleSoftDirect');
+
+    const headerButtons = wrapper.findAll('thead button');
+    await headerButtons[0].trigger('click');
+
+    const after = wrapper.findAll('tbody tr td:first-child p.font-semibold').map((node) => node.text());
+    expect(after[0]).toBe('Banner');
   });
 });

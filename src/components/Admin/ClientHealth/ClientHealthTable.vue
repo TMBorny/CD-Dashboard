@@ -31,8 +31,13 @@ const sortLabels: Record<typeof sortBy.value, string> = {
   health: 'Health',
 };
 
-const healthScoreHelpText =
-  'Score = average nightly and realtime success, minus a modest open-error penalty, plus a small activity confidence adjustment.';
+const healthScoreHelpText = [
+  'Health score = clamp(0, 100, baseSuccess - errorPenalty + activityAdjustment).',
+  'baseSuccess = average(nightlyRate, realtimeRate), using only rates with data.',
+  'nightlyRate/realtimeRate = ((succeeded + 0.5 * finishedWithIssues) / (total - noData)) * 100.',
+  'errorPenalty = min(20, log2(openErrors + 1) * 4).',
+  'activityAdjustment = +4 for 20+ active users, +2 for 5-19, 0 for 1-4, and -3 for 0.',
+];
 
 const formatDuration = (ms?: number) => {
   if (!ms) return 'N/A';
@@ -308,12 +313,18 @@ const getRowTone = (school: ClientHealthSnapshot) => {
                   <button
                     type="button"
                     class="flex h-5 w-5 items-center justify-center rounded-full border border-slate-300 bg-white text-[11px] font-semibold text-slate-500 transition hover:border-slate-400 hover:text-slate-700"
-                    :aria-label="healthScoreHelpText"
+                    :aria-label="healthScoreHelpText.join(' ')"
                   >
                     i
                   </button>
-                  <div class="pointer-events-none absolute left-1/2 top-full z-20 mt-2 hidden w-64 -translate-x-1/2 rounded-2xl border border-slate-200 bg-white p-3 text-[11px] leading-5 text-slate-600 shadow-lg group-hover:block">
-                    {{ healthScoreHelpText }}
+                  <div class="pointer-events-none absolute left-1/2 top-full z-20 mt-2 hidden w-80 -translate-x-1/2 rounded-2xl border border-slate-200 bg-white p-3 text-[11px] leading-5 text-slate-600 shadow-lg group-hover:block">
+                    <p
+                      v-for="line in healthScoreHelpText"
+                      :key="line"
+                      class="mt-2 first:mt-0"
+                    >
+                      {{ line }}
+                    </p>
                   </div>
                 </div>
               </div>
