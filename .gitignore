@@ -30,3 +30,4 @@ client-health-backend/*.db
 *.sln
 *.sw?
 client-health-backend/error_analysis_export.json
+client-health-backend/error_analysis_export.json

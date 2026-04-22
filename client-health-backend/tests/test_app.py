@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from datetime import datetime, timezone, timedelta
 
+import httpx
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
@@ -19,6 +20,7 @@ os.environ["CLIENT_HEALTH_ERROR_EXPORT_PATH"] = TEST_ERROR_EXPORT_PATH
 atexit.register(lambda: shutil.rmtree(TEST_DB_DIR, ignore_errors=True))
 
 import app.routes as routes
+import app.db as db_module
 from sqlalchemy import create_engine, inspect
 
 from app.db import ensure_schema_updates, get_database_url, get_db, get_default_db_path, init_db
@@ -141,6 +143,227 @@ class SchedulerHelperTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((summer.hour, summer.minute), (7, 30))
         self.assertEqual(str(winter.tzinfo), "America/New_York")
         self.assertEqual(str(summer.tzinfo), "America/New_York")
+
+
+class CoursedogAuthRetryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_api_get_reauthenticates_once_after_401(self):
+        original_client = db_module._http_client
+        original_cookie = db_module._auth_cookie
+
+        class FakeCookies:
+            def __init__(self):
+                self.values = {}
+
+            def clear(self):
+                self.values.clear()
+
+            def set(self, key, value):
+                self.values[key] = value
+
+            def items(self):
+                return self.values.items()
+
+        class FakeResponse:
+            def __init__(self, status_code, payload=None, text="", headers=None, cookies=None):
+                self.status_code = status_code
+                self._payload = payload if payload is not None else {}
+                self.text = text
+                self.headers = headers or {}
+                self.cookies = cookies or FakeCookies()
+
+            def json(self):
+                return self._payload
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    request = httpx.Request("GET", "https://app.coursedog.com/api/v1/admin/schools/products")
+                    response = httpx.Response(status_code=self.status_code, request=request)
+                    raise httpx.HTTPStatusError("error", request=request, response=response)
+
+        class FakeClient:
+            def __init__(self):
+                self.headers = {"Authorization": "Bearer stale-token"}
+                self.cookies = FakeCookies()
+                self.get_calls = 0
+                self.post_calls = 0
+
+            async def get(self, path, params=None):
+                self.get_calls += 1
+                if self.get_calls == 1:
+                    return FakeResponse(401, text="Unauthorized")
+                return FakeResponse(200, payload={"ok": True})
+
+            async def post(self, path, json=None):
+                self.post_calls += 1
+                cookies = FakeCookies()
+                cookies.set("session", "fresh-cookie")
+                return FakeResponse(
+                    200,
+                    payload={"token": "fresh-token"},
+                    headers={"set-cookie": "session=fresh-cookie"},
+                    cookies=cookies,
+                )
+
+        fake_client = FakeClient()
+        db_module._http_client = fake_client
+        db_module._auth_cookie = None
+
+        try:
+            payload = await db_module.api_get("/api/v1/admin/schools/products")
+        finally:
+            db_module._http_client = original_client
+            db_module._auth_cookie = original_cookie
+
+        self.assertEqual(payload, {"ok": True})
+        self.assertEqual(fake_client.post_calls, 1)
+        self.assertEqual(fake_client.get_calls, 2)
+        self.assertEqual(fake_client.headers["Authorization"], "Bearer fresh-token")
+        self.assertEqual(fake_client.headers["cookie"], "session=fresh-cookie")
+        self.assertEqual(fake_client.cookies.values["session"], "fresh-cookie")
+
+    async def test_run_sync_job_refreshes_auth_before_fetching(self):
+        init_db()
+        auth_calls = []
+
+        async def fake_authenticate_api():
+            auth_calls.append("called")
+            return True
+
+        async def fake_list_schools():
+            return {
+                "schools": [
+                    {"school": "bar01", "displayName": "Baruch College", "products": []},
+                ]
+            }
+
+        async def fake_fetch_school_health(school, display_name, products, snapshot_date):
+            return {
+                "school": school,
+                "displayName": display_name,
+                "products": products,
+                "snapshotDate": snapshot_date,
+                "sisPlatform": "Banner",
+                "nightlySuccessRate": 100,
+                "realtimeSuccessRate": 100,
+                "manualSuccessRate": 100,
+                "nightlyTotal": 1,
+                "nightlySuccesses": 1,
+                "nightlyIssues": 0,
+                "nightlyNoData": 0,
+                "nightlyHalted": 0,
+                "nightlyMergeTimeMs": 0,
+                "realtimeTotal": 0,
+                "realtimeSuccesses": 0,
+                "realtimeIssues": 0,
+                "realtimeNoData": 0,
+                "manualTotal": 0,
+                "manualSuccesses": 0,
+                "manualIssues": 0,
+                "manualNoData": 0,
+                "openMergeErrors": 0,
+                "activeUsers24h": 0,
+                "_syncErrors": [],
+                "_errorGroups": [],
+                "_errorDetails": [],
+            }
+
+        routes._sync_jobs["test-sync-auth-refresh"] = {
+            "jobId": "test-sync-auth-refresh",
+            "status": "queued",
+            "snapshotDate": "2026-04-13",
+            "schoolsProcessed": 0,
+            "totalSchools": 0,
+            "errors": [],
+            "timing": None,
+            "error": None,
+            "scope": "single-school",
+            "school": "bar01",
+            "startedAt": None,
+            "finishedAt": None,
+        }
+
+        with patch("app.routes.authenticate_api", side_effect=fake_authenticate_api), patch(
+            "app.routes.list_schools",
+            side_effect=fake_list_schools,
+        ), patch(
+            "app.routes.fetch_school_health",
+            side_effect=fake_fetch_school_health,
+        ):
+            await routes.run_sync_job(
+                "test-sync-auth-refresh",
+                school="bar01",
+                snapshot_date_override="2026-04-13",
+            )
+
+        self.assertEqual(auth_calls, ["called"])
+
+    async def test_run_history_backfill_job_refreshes_auth_before_fetching(self):
+        init_db()
+        auth_calls = []
+
+        async def fake_authenticate_api():
+            auth_calls.append("called")
+            return True
+
+        async def fake_list_schools():
+            return {
+                "schools": [
+                    {"school": "bar01", "displayName": "Baruch College", "products": []},
+                ]
+            }
+
+        async def fake_fetch_school_health_for_date(school, display_name, products, snapshot_date):
+            return {
+                "school": school,
+                "displayName": display_name,
+                "products": products,
+                "snapshotDate": snapshot_date,
+                "sisPlatform": "Banner",
+                "nightlySuccessRate": 100,
+                "realtimeSuccessRate": 100,
+                "manualSuccessRate": 100,
+                "nightlyTotal": 1,
+                "nightlySuccesses": 1,
+                "nightlyIssues": 0,
+                "nightlyNoData": 0,
+                "nightlyHalted": 0,
+                "nightlyMergeTimeMs": 0,
+                "realtimeTotal": 0,
+                "realtimeSuccesses": 0,
+                "realtimeIssues": 0,
+                "realtimeNoData": 0,
+                "manualTotal": 0,
+                "manualSuccesses": 0,
+                "manualIssues": 0,
+                "manualNoData": 0,
+                "openMergeErrors": 0,
+                "activeUsers24h": 0,
+                "_syncErrors": [],
+            }
+
+        routes._sync_jobs["test-backfill-auth-refresh"] = routes.create_backfill_job_payload(
+            job_id="test-backfill-auth-refresh",
+            school="bar01",
+            start_date="2026-04-10",
+            end_date="2026-04-10",
+            date_count=1,
+        )
+
+        with patch("app.routes.authenticate_api", side_effect=fake_authenticate_api), patch(
+            "app.routes.list_schools",
+            side_effect=fake_list_schools,
+        ), patch(
+            "app.routes.fetch_school_health_for_date",
+            side_effect=fake_fetch_school_health_for_date,
+        ):
+            await routes.run_history_backfill_job(
+                "test-backfill-auth-refresh",
+                school="bar01",
+                start_date="2026-04-10",
+                end_date="2026-04-10",
+            )
+
+        self.assertEqual(auth_calls, ["called"])
 
     def test_get_next_scheduled_sync_time_uses_custom_time(self):
         scheduled = get_next_scheduled_sync_time(

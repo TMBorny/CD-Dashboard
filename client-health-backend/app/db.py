@@ -5,6 +5,7 @@ Manages two connections:
 2. httpx AsyncClient for fetching data from the Coursedog API
 """
 
+import asyncio
 import os
 from pathlib import Path
 from typing import Optional
@@ -32,6 +33,7 @@ COURSEDOG_PASSWORD = os.getenv(
 
 _http_client: Optional[httpx.AsyncClient] = None
 _auth_cookie: Optional[str] = None
+_auth_lock = asyncio.Lock()
 
 
 def get_http_client() -> httpx.AsyncClient:
@@ -48,46 +50,75 @@ async def connect_api():
         timeout=30.0,
         follow_redirects=True,
     )
+    _auth_cookie = None
 
-    if COURSEDOG_EMAIL and COURSEDOG_PASSWORD:
+    await authenticate_api()
+
+
+def _clear_auth_state(client: httpx.AsyncClient) -> None:
+    global _auth_cookie
+    _auth_cookie = None
+    client.headers.pop("Authorization", None)
+    client.headers.pop("cookie", None)
+    client.cookies.clear()
+
+
+async def authenticate_api() -> bool:
+    """Authenticate the shared HTTP client with Coursedog."""
+    if not COURSEDOG_EMAIL or not COURSEDOG_PASSWORD:
+        print("Warning: No COURSEDOG_EMAIL/COURSEDOG_PASSWORD set. API calls will be unauthenticated.")
+        return False
+
+    client = get_http_client()
+
+    async with _auth_lock:
+        _clear_auth_state(client)
+
         try:
-            resp = await _http_client.post(
+            resp = await client.post(
                 "/api/v1/sessions",
                 json={"email": COURSEDOG_EMAIL, "password": COURSEDOG_PASSWORD},
             )
             if resp.status_code in (200, 201):
                 # Try token-based auth first (response has {"token": "..."})
-                resp_data = resp.json() if resp.text else {}
+                try:
+                    resp_data = resp.json()
+                except ValueError:
+                    resp_data = {}
                 token = resp_data.get("token") if isinstance(resp_data, dict) else None
                 if token:
-                    _http_client.headers["Authorization"] = f"Bearer {token}"
+                    client.headers["Authorization"] = f"Bearer {token}"
 
                 # Also grab cookies as fallback
                 _auth_cookie = resp.headers.get("set-cookie", "")
                 if _auth_cookie:
-                    _http_client.headers["cookie"] = _auth_cookie
+                    client.headers["cookie"] = _auth_cookie
                 for cookie_name, cookie_value in resp.cookies.items():
-                    _http_client.cookies.set(cookie_name, cookie_value)
+                    client.cookies.set(cookie_name, cookie_value)
                 print(f"Authenticated with Coursedog at {COURSEDOG_BASE_URL}")
-            else:
-                print(f"Warning: Login failed ({resp.status_code}): {resp.text[:200]}")
+                return True
+
+            print(f"Warning: Login failed ({resp.status_code}): {resp.text[:200]}")
+            return False
         except Exception as e:
             print(f"Warning: Could not authenticate with Coursedog: {e}")
-    else:
-        print("Warning: No COURSEDOG_EMAIL/COURSEDOG_PASSWORD set. API calls will be unauthenticated.")
+            return False
 
 
 async def close_api():
-    global _http_client
+    global _http_client, _auth_cookie
     if _http_client:
         await _http_client.aclose()
         _http_client = None
+    _auth_cookie = None
 
 
 async def api_get(path: str, params: Optional[dict] = None) -> dict:
     """Make an authenticated GET request to the Coursedog API."""
     client = get_http_client()
     resp = await client.get(path, params=params)
+    if resp.status_code == 401 and await authenticate_api():
+        resp = await client.get(path, params=params)
     resp.raise_for_status()
     return resp.json()
 

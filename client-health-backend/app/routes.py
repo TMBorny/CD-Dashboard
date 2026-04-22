@@ -21,7 +21,7 @@ from fastapi import APIRouter, Query, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy import or_
 
-from app.db import api_get, get_db, get_error_analysis_export_path
+from app.db import api_get, authenticate_api, get_db, get_error_analysis_export_path
 from app.models import (
     BackfillWorkUnit,
     ErrorAnalysisDetail,
@@ -1749,6 +1749,9 @@ async def run_sync_job(
     db.close()
 
     try:
+        # Start each sync with a fresh upstream auth session when credentials
+        # are configured. Mid-run expiry is still handled by api_get().
+        await authenticate_api()
         # 1. Get all schools
         schools_resp = await list_schools()
         schools = select_schools_for_sync(schools_resp["schools"], school)
@@ -3419,6 +3422,9 @@ async def run_history_backfill_job(
         db.close()
 
     try:
+        # Start each backfill with a fresh upstream auth session when
+        # credentials are configured. Mid-run expiry is still handled by api_get().
+        await authenticate_api()
         schools_resp = await list_schools()
         schools = select_schools_for_sync(schools_resp["schools"], school)
         list_time = time.time()
