@@ -2774,6 +2774,109 @@ class ErrorAnalysisEndpointTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["totalErrorInstances"], 3)
         self.assertEqual(payload["summary"]["captureDays"], 2)
 
+    def test_error_analysis_latest_only_returns_newest_school_snapshot(self):
+        init_db()
+        db = get_db()
+        try:
+            db.add_all(
+                [
+                    ErrorAnalysisGroup.from_dict(
+                        {
+                            "snapshotDate": "2026-04-12",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": "Banner",
+                            "entityType": "sections",
+                            "errorCode": "missing_course",
+                            "signatureKey": "sig-a",
+                            "normalizedMessage": "course missing dependency",
+                            "sampleMessage": "Older course missing dependency",
+                            "count": 3,
+                            "sampleErrors": [],
+                            "termCodes": ["202505"],
+                        }
+                    ),
+                    ErrorAnalysisGroup.from_dict(
+                        {
+                            "snapshotDate": "2026-04-14",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": "Banner",
+                            "entityType": "courses",
+                            "errorCode": "duplicate_course",
+                            "signatureKey": "sig-b",
+                            "normalizedMessage": "duplicate course",
+                            "sampleMessage": "Current duplicate course",
+                            "count": 1,
+                            "sampleErrors": [{"message": "Current duplicate course"}],
+                            "termCodes": ["202506"],
+                        }
+                    ),
+                    ErrorAnalysisGroup.from_dict(
+                        {
+                            "snapshotDate": "2026-04-15",
+                            "school": "foo01",
+                            "displayName": "Foo State",
+                            "sisPlatform": "PeopleSoftDirect",
+                            "entityType": "courses",
+                            "errorCode": "duplicate_course",
+                            "signatureKey": "sig-c",
+                            "normalizedMessage": "duplicate course",
+                            "sampleMessage": "Other school duplicate course",
+                            "count": 8,
+                            "sampleErrors": [],
+                            "termCodes": ["202507"],
+                        }
+                    ),
+                ]
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
+            "app.main.start_scheduled_sync_service",
+            new=self._async_noop,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=self._async_noop,
+        ):
+            with TestClient(app) as client:
+                response = client.get(
+                    "/api/error-analysis",
+                    params={"school": "bar01", "latestOnly": "true"},
+                    headers=AUTH_HEADERS,
+                )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["metadata"]["resolvedSnapshotDate"], "2026-04-14")
+        self.assertTrue(payload["metadata"]["appliedFilters"]["latestOnly"])
+        self.assertEqual(payload["summary"]["captureDays"], 1)
+        self.assertEqual(payload["summary"]["totalErrorInstances"], 1)
+        self.assertEqual(payload["signatures"][0]["signatureKey"], "sig-b")
+        self.assertEqual(payload["schoolBreakdowns"][0]["key"], "bar01")
+
+    def test_error_analysis_latest_only_returns_empty_with_no_school_capture(self):
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
+            "app.main.start_scheduled_sync_service",
+            new=self._async_noop,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=self._async_noop,
+        ):
+            with TestClient(app) as client:
+                response = client.get(
+                    "/api/error-analysis",
+                    params={"school": "bar02", "latestOnly": "true"},
+                    headers=AUTH_HEADERS,
+                )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIsNone(payload["metadata"]["resolvedSnapshotDate"])
+        self.assertEqual(payload["signatures"], [])
+
     def test_error_analysis_export_downloads_filtered_groups(self):
         init_db()
         db = get_db()
@@ -2914,6 +3017,76 @@ class ErrorAnalysisEndpointTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["total"], 1)
         self.assertEqual(payload["rows"][0]["school"], "foo01")
+        self.assertEqual(payload["rows"][0]["mergeReport"]["mergeReportId"], "report-b1")
+
+    def test_error_analysis_errors_latest_only_returns_latest_school_rows(self):
+        init_db()
+        db = get_db()
+        try:
+            db.add_all(
+                [
+                    ErrorAnalysisDetail.from_dict(
+                        {
+                            "snapshotDate": "2026-04-12",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": "Banner",
+                            "entityType": "sections",
+                            "errorCode": "missing_course",
+                            "signatureKey": "sig-a",
+                            "signatureLabel": "sections | missing_course | course missing dependency",
+                            "normalizedMessage": "course missing dependency",
+                            "fullErrorText": "Older missing dependency",
+                            "entityDisplayName": "BIO-101-01",
+                            "mergeReport": {"school": "bar01", "mergeReportId": "report-a1", "scheduleType": "nightly", "snapshotDate": "2026-04-12"},
+                            "termCodes": ["202505"],
+                            "rawError": {"message": "Older missing dependency"},
+                        }
+                    ),
+                    ErrorAnalysisDetail.from_dict(
+                        {
+                            "snapshotDate": "2026-04-14",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": "Banner",
+                            "entityType": "courses",
+                            "errorCode": "duplicate_course",
+                            "signatureKey": "sig-b",
+                            "signatureLabel": "courses | duplicate_course | duplicate course",
+                            "normalizedMessage": "duplicate course",
+                            "fullErrorText": "Current duplicate course",
+                            "entityDisplayName": "Course 99999",
+                            "mergeReport": {"school": "bar01", "mergeReportId": "report-b1", "scheduleType": "nightly", "snapshotDate": "2026-04-14"},
+                            "termCodes": ["202506"],
+                            "rawError": {"message": "Current duplicate course"},
+                        }
+                    ),
+                ]
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
+            "app.main.start_scheduled_sync_service",
+            new=self._async_noop,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=self._async_noop,
+        ):
+            with TestClient(app) as client:
+                response = client.get(
+                    "/api/error-analysis/errors",
+                    params={"school": "bar01", "latestOnly": "true"},
+                    headers=AUTH_HEADERS,
+                )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["metadata"]["resolvedSnapshotDate"], "2026-04-14")
+        self.assertTrue(payload["metadata"]["appliedFilters"]["latestOnly"])
+        self.assertEqual(payload["rows"][0]["snapshotDate"], "2026-04-14")
         self.assertEqual(payload["rows"][0]["mergeReport"]["mergeReportId"], "report-b1")
 
     def test_error_analysis_export_downloads_detailed_rows(self):

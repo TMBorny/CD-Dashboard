@@ -113,12 +113,13 @@ export async function getClientHealthHistory(params: { days?: number; school?: s
   return { data: res.data };
 }
 
-export async function getErrorAnalysis(params: { days?: number; school?: string; sisPlatform?: string }) {
+export async function getErrorAnalysis(params: { days?: number; school?: string; sisPlatform?: string; latestOnly?: boolean }) {
   const res = await backend.get('/error-analysis', {
     params: {
       ...(typeof params.days === 'number' ? { days: params.days } : {}),
       ...(params.school ? { school: params.school } : {}),
       ...(params.sisPlatform ? { sisPlatform: params.sisPlatform } : {}),
+      ...(params.latestOnly ? { latestOnly: true } : {}),
     },
   });
 
@@ -146,6 +147,7 @@ export async function getErrorAnalysisErrors(params: {
   days?: number;
   school?: string;
   sisPlatform?: string;
+  latestOnly?: boolean;
   q?: string;
   sortBy?: string;
   sortDir?: 'asc' | 'desc';
@@ -157,6 +159,7 @@ export async function getErrorAnalysisErrors(params: {
       ...(typeof params.days === 'number' ? { days: params.days } : {}),
       ...(params.school ? { school: params.school } : {}),
       ...(params.sisPlatform ? { sisPlatform: params.sisPlatform } : {}),
+      ...(params.latestOnly ? { latestOnly: true } : {}),
       ...(params.q ? { q: params.q } : {}),
       ...(params.sortBy ? { sortBy: params.sortBy } : {}),
       ...(params.sortDir ? { sortDir: params.sortDir } : {}),

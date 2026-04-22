@@ -111,8 +111,10 @@ export interface ErrorDetailTableResponse {
       days: number | null;
       school: string | null;
       sisPlatform: string | null;
+      latestOnly: boolean;
       q: string | null;
     };
+    resolvedSnapshotDate: string | null;
   };
 }
 
@@ -124,9 +126,11 @@ export interface ErrorAnalysisResponse {
       days: number | null;
       school: string | null;
       sisPlatform: string | null;
+      latestOnly: boolean;
     };
     hasCapturedData: boolean;
     filteredGroupCount: number;
+    resolvedSnapshotDate: string | null;
   };
   filterOptions: {
     schools: ErrorAnalysisFilterOption[];

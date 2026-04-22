@@ -64,6 +64,163 @@ vi.mock('@tanstack/vue-query', () => ({
       };
     }
 
+    if (key === 'clientHealthCurrentErrorAnalysis') {
+      return {
+        data: ref({
+          metadata: {
+            historyStartsOn: '2026-04-12',
+            lastCapturedAt: '2026-04-12T00:00:00Z',
+            appliedFilters: {
+              days: null,
+              school: 'bar01',
+              sisPlatform: null,
+              latestOnly: true,
+            },
+            hasCapturedData: true,
+            filteredGroupCount: 2,
+            resolvedSnapshotDate: '2026-04-12',
+          },
+          filterOptions: {
+            schools: [],
+            sisPlatforms: [],
+          },
+          summary: {
+            totalGroupedErrors: 2,
+            totalErrorInstances: 3,
+            distinctSignatures: 2,
+            affectedSchools: 1,
+            affectedSisPlatforms: 1,
+            captureDays: 1,
+            latestSnapshotDate: '2026-04-12',
+          },
+          trends: [],
+          signatures: [
+            {
+              signatureKey: 'sig-a',
+              entityType: 'sections',
+              errorCode: 'missing_course',
+              signatureLabel: 'sections | missing_course | course <num> missing dependency <num>',
+              normalizedMessage: 'course <num> missing dependency <num>',
+              sampleMessage: 'Course 202602 missing dependency 987654',
+              totalCount: 2,
+              affectedSchools: 1,
+              affectedSisPlatforms: 1,
+              firstSeen: '2026-04-12',
+              lastSeen: '2026-04-12',
+              recurrenceDays: 1,
+              dominantSchool: 'bar01',
+              dominantSisPlatform: 'Banner',
+              sampleErrors: [],
+              termCodes: ['202602'],
+              resolutionHint: {
+                bucket: 'missing_reference',
+                title: 'Missing reference',
+                action: 'Verify the related dependency exists before rerunning the merge.',
+                rationale: 'Dependency is missing.',
+                confidence: 0.9,
+              },
+              latestMergeReport: {
+                school: 'bar01',
+                mergeReportId: 'report-a1',
+                scheduleType: 'nightly',
+                snapshotDate: '2026-04-12',
+              },
+              dominantSchoolMergeReport: {
+                school: 'bar01',
+                mergeReportId: 'report-a1',
+                scheduleType: 'nightly',
+                snapshotDate: '2026-04-12',
+              },
+              impactedSchools: [],
+              exampleMergeReports: [],
+            },
+            {
+              signatureKey: 'sig-b',
+              entityType: 'courses',
+              errorCode: 'duplicate_course',
+              signatureLabel: 'courses | duplicate_course | duplicate course <num>',
+              normalizedMessage: 'duplicate course <num>',
+              sampleMessage: 'Duplicate course 12345',
+              totalCount: 1,
+              affectedSchools: 1,
+              affectedSisPlatforms: 1,
+              firstSeen: '2026-04-12',
+              lastSeen: '2026-04-12',
+              recurrenceDays: 1,
+              dominantSchool: 'bar01',
+              dominantSisPlatform: 'Banner',
+              sampleErrors: [],
+              termCodes: ['202602'],
+              resolutionHint: {
+                bucket: 'duplicate_conflict',
+                title: 'Duplicate conflict',
+                action: 'Resolve the duplicate upstream record before retrying.',
+                rationale: 'Duplicate detected.',
+                confidence: 0.85,
+              },
+              latestMergeReport: null,
+              dominantSchoolMergeReport: null,
+              impactedSchools: [],
+              exampleMergeReports: [],
+            },
+          ],
+          schoolBreakdowns: [],
+          sisBreakdowns: [],
+        }),
+        isLoading: ref(false),
+        error: ref(null),
+      };
+    }
+
+    if (key === 'clientHealthCurrentErrorRows') {
+      return {
+        data: ref({
+          rows: [
+            {
+              id: 1,
+              snapshotDate: '2026-04-12',
+              school: 'bar01',
+              displayName: 'Baruch College',
+              sisPlatform: 'Banner',
+              entityType: 'sections',
+              errorCode: 'missing_course',
+              signatureKey: 'sig-a',
+              signatureLabel: 'sections | missing_course | course <num> missing dependency <num>',
+              normalizedMessage: 'course <num> missing dependency <num>',
+              fullErrorText: 'Course 202602 missing dependency 987654',
+              entityDisplayName: 'BIO-101-01',
+              mergeReport: {
+                school: 'bar01',
+                mergeReportId: 'report-a1',
+                scheduleType: 'nightly',
+                snapshotDate: '2026-04-12',
+              },
+              termCodes: ['202602'],
+              rawError: { message: 'Course 202602 missing dependency 987654' },
+              createdAt: '2026-04-12T00:00:00Z',
+            },
+          ],
+          total: 1,
+          page: 1,
+          pageSize: 8,
+          sortBy: 'signatureLabel',
+          sortDir: 'asc',
+          metadata: {
+            appliedFilters: {
+              days: null,
+              school: 'bar01',
+              sisPlatform: null,
+              latestOnly: true,
+              q: null,
+            },
+            resolvedSnapshotDate: '2026-04-12',
+          },
+        }),
+        isLoading: ref(false),
+        error: ref(null),
+      };
+    }
+
     return {
       data: ref(null),
       isLoading: ref(false),
@@ -76,6 +233,8 @@ vi.mock('@/api', () => ({
   getClientHealthHistory: vi.fn().mockResolvedValue({ data: { snapshots: [] } }),
   getClientHealthActiveUsers: vi.fn().mockResolvedValue({ data: { count: 0, users: [] } }),
   getClientHealthSyncMetadata: vi.fn().mockResolvedValue({ data: { lastAttemptedSync: null, lastSuccessfulSync: null } }),
+  getErrorAnalysis: vi.fn().mockResolvedValue({ data: {} }),
+  getErrorAnalysisErrors: vi.fn().mockResolvedValue({ data: {} }),
 }));
 
 vi.mock('vue3-apexcharts', () => ({
@@ -120,5 +279,24 @@ describe('ClientHealthDetail', () => {
 
     expect(wrapper.findAll('.chart-stub').some((node) => node.text().includes('Halted'))).toBe(true);
     expect(wrapper.text()).toContain('Halted: Change Threshold Exceeded');
+  });
+
+  it('renders current error categories, signatures, and captured rows from the latest snapshot', async () => {
+    const { default: ClientHealthDetail } = await import('./ClientHealthDetail.vue');
+    const wrapper = mount(ClientHealthDetail, {
+      global: {
+        stubs: {
+          RouterLink: RouterLinkStub,
+          Card: CardStub,
+        },
+      },
+    });
+
+    expect(wrapper.text()).toContain('Current detailed error snapshot: 2026-04-12');
+    expect(wrapper.text()).toContain('Missing reference');
+    expect(wrapper.text()).toContain('Duplicate conflict');
+    expect(wrapper.findAll('[data-testid="current-error-signature"]')).toHaveLength(2);
+    expect(wrapper.findAll('[data-testid="current-error-row"]')).toHaveLength(1);
+    expect(wrapper.text()).toContain('Course 202602 missing dependency 987654');
   });
 });

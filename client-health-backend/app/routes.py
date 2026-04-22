@@ -240,6 +240,12 @@ def apply_error_analysis_detail_filters(query, *, days: Optional[int], school: O
     return query
 
 
+def resolve_latest_snapshot_date(query, snapshot_column) -> Optional[str]:
+    """Return the newest snapshot date available for the current filtered query."""
+    latest_row = query.order_by(snapshot_column.desc()).with_entities(snapshot_column).first()
+    return latest_row[0] if latest_row else None
+
+
 def is_demo_school(school: str, display_name: str) -> bool:
     """Return True when a school looks like a demo/testing tenant."""
     haystacks = [school, display_name]
@@ -377,6 +383,7 @@ async def get_error_analysis(
     days: Optional[int] = Query(default=None, ge=1),
     school: Optional[str] = Query(default=None),
     sis_platform: Optional[str] = Query(default=None, alias="sisPlatform"),
+    latest_only: bool = Query(default=False, alias="latestOnly"),
 ):
     """Return aggregate error-analysis data from captured open merge-error groups."""
     db = get_db()
@@ -426,6 +433,9 @@ async def get_error_analysis(
             query = query.filter(ErrorAnalysisGroup.school == school)
         if sis_platform:
             query = query.filter(ErrorAnalysisGroup.sis_platform == sis_platform)
+        resolved_snapshot_date = resolve_latest_snapshot_date(query, ErrorAnalysisGroup.snapshot_date) if latest_only else None
+        if resolved_snapshot_date:
+            query = query.filter(ErrorAnalysisGroup.snapshot_date == resolved_snapshot_date)
 
         groups = query.order_by(
             ErrorAnalysisGroup.snapshot_date.asc(),
@@ -441,9 +451,11 @@ async def get_error_analysis(
                     "days": days,
                     "school": school,
                     "sisPlatform": sis_platform,
+                    "latestOnly": latest_only,
                 },
                 "hasCapturedData": bool(history_start),
                 "filteredGroupCount": len(groups),
+                "resolvedSnapshotDate": resolved_snapshot_date,
             },
             "filterOptions": {
                 "schools": school_options,
@@ -868,6 +880,7 @@ async def get_error_analysis_errors(
     days: Optional[int] = Query(default=None, ge=1),
     school: Optional[str] = Query(default=None),
     sis_platform: Optional[str] = Query(default=None, alias="sisPlatform"),
+    latest_only: bool = Query(default=False, alias="latestOnly"),
     q: Optional[str] = Query(default=None),
     sort_by: str = Query(default="snapshotDate", alias="sortBy"),
     sort_dir: str = Query(default="desc", alias="sortDir"),
@@ -895,6 +908,9 @@ async def get_error_analysis_errors(
             sis_platform=sis_platform,
             search=q,
         )
+        resolved_snapshot_date = resolve_latest_snapshot_date(query, ErrorAnalysisDetail.snapshot_date) if latest_only else None
+        if resolved_snapshot_date:
+            query = query.filter(ErrorAnalysisDetail.snapshot_date == resolved_snapshot_date)
         total = query.count()
         ordered_query = query.order_by(
             order_column.asc() if sort_dir == "asc" else order_column.desc(),
@@ -914,8 +930,10 @@ async def get_error_analysis_errors(
                     "days": days,
                     "school": school,
                     "sisPlatform": sis_platform,
+                    "latestOnly": latest_only,
                     "q": q,
                 },
+                "resolvedSnapshotDate": resolved_snapshot_date,
             },
         }
     finally:

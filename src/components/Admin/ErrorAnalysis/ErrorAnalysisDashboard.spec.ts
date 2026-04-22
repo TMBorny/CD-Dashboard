@@ -57,9 +57,11 @@ const buildResponse = (): ErrorAnalysisResponse => ({
       days: 7,
       school: null,
       sisPlatform: null,
+      latestOnly: false,
     },
     hasCapturedData: true,
     filteredGroupCount: 3,
+    resolvedSnapshotDate: null,
   },
   filterOptions: {
     schools: [
@@ -375,8 +377,10 @@ const buildDetailResponse = (): ErrorDetailTableResponse => ({
       days: 7,
       school: null,
       sisPlatform: null,
+      latestOnly: false,
       q: null,
     },
+    resolvedSnapshotDate: null,
   },
 });
 
@@ -398,9 +402,10 @@ describe('ErrorAnalysisDashboard', () => {
       metadata: {
         historyStartsOn: null,
         lastCapturedAt: null,
-        appliedFilters: { days: 7, school: null, sisPlatform: null },
+        appliedFilters: { days: 7, school: null, sisPlatform: null, latestOnly: false },
         hasCapturedData: false,
         filteredGroupCount: 0,
+        resolvedSnapshotDate: null,
       },
       summary: {
         totalGroupedErrors: 0,

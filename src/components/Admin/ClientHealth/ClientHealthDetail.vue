@@ -2,8 +2,9 @@
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
 import { useQuery } from '@tanstack/vue-query';
-import { getClientHealthHistory, getClientHealthActiveUsers, getClientHealthSyncMetadata } from '@/api';
+import { getClientHealthHistory, getClientHealthActiveUsers, getClientHealthSyncMetadata, getErrorAnalysis, getErrorAnalysisErrors } from '@/api';
 import type { FailedMerge } from '@/types/clientHealth';
+import type { ErrorAnalysisResponse, ErrorDetailRow, ErrorDetailTableResponse, ErrorSignatureCluster, ResolutionHint } from '@/types/errorAnalysis';
 import VueApexCharts from 'vue3-apexcharts';
 import Card from '@/components/ui/Card.vue';
 import { useChartOptions, useStackedBarChartOptions } from '@/composables/useChartOptions';
@@ -35,6 +36,30 @@ const { data: syncMetadata, isLoading: isLoadingSyncMetadata } = useQuery({
   enabled: computed(() => school.value.length > 0),
 });
 
+const { data: currentErrorAnalysis, isLoading: isLoadingCurrentErrorAnalysis, error: currentErrorAnalysisError } = useQuery({
+  queryKey: computed(() => ['clientHealthCurrentErrorAnalysis', school.value]),
+  queryFn: () =>
+    getErrorAnalysis({
+      school: school.value,
+      latestOnly: true,
+    }).then((res) => res.data as ErrorAnalysisResponse),
+  enabled: computed(() => school.value.length > 0),
+});
+
+const { data: currentErrorRows, isLoading: isLoadingCurrentErrorRows, error: currentErrorRowsError } = useQuery({
+  queryKey: computed(() => ['clientHealthCurrentErrorRows', school.value]),
+  queryFn: () =>
+    getErrorAnalysisErrors({
+      school: school.value,
+      latestOnly: true,
+      page: 1,
+      pageSize: 8,
+      sortBy: 'signatureLabel',
+      sortDir: 'asc',
+    }).then((res) => res.data as ErrorDetailTableResponse),
+  enabled: computed(() => school.value.length > 0),
+});
+
 const loading = computed(() => isLoadingHistory.value || isLoadingUsers.value || isLoadingSyncMetadata.value);
 const error = computed(() => historyError.value || usersError.value ? 'Failed to load data' : null);
 const snapshotCount = computed(() => history.value?.snapshots?.length ?? 0);
@@ -62,6 +87,37 @@ const latestSnapshotCapturedAtLabel = computed(() => {
   const createdAt = latestSnapshot.value?.createdAt;
   return createdAt ? formatLocalDateTime(createdAt) : null;
 });
+const currentErrorSnapshotDate = computed(() => currentErrorAnalysis.value?.metadata.resolvedSnapshotDate ?? null);
+const currentErrorSnapshotLabel = computed(() => {
+  if (!currentErrorSnapshotDate.value) return 'No current detailed error snapshot captured yet.';
+  return `Current detailed error snapshot: ${currentErrorSnapshotDate.value}`;
+});
+const currentErrorSignatures = computed(() => currentErrorAnalysis.value?.signatures ?? []);
+const currentErrorDetailRows = computed(() => currentErrorRows.value?.rows ?? []);
+const currentErrorTotals = computed(() => currentErrorAnalysis.value?.summary.totalErrorInstances ?? 0);
+const currentErrorCategories = computed(() => {
+  const categories = new Map<string, { key: string; title: string; action: string; bucket: string; count: number; signatures: number }>();
+  currentErrorSignatures.value.forEach((signature) => {
+    const hint = signature.resolutionHint;
+    const existing = categories.get(hint.title);
+    if (existing) {
+      existing.count += signature.totalCount;
+      existing.signatures += 1;
+      return;
+    }
+    categories.set(hint.title, {
+      key: hint.title,
+      title: hint.title,
+      action: hint.action,
+      bucket: hint.bucket,
+      count: signature.totalCount,
+      signatures: 1,
+    });
+  });
+
+  return [...categories.values()].sort((left, right) => right.count - left.count || left.title.localeCompare(right.title));
+});
+const hasCurrentErrorContent = computed(() => currentErrorSignatures.value.length > 0 || currentErrorDetailRows.value.length > 0);
 
 const nightlySuccessChartSeries = computed(() => {
   if (!history.value) return [];
@@ -166,6 +222,41 @@ const activeUsersChartOptions = computed(() => ({
     },
   },
 }));
+
+const buildSignatureHeadline = (signatureLabel?: string | null) => {
+  const normalized = (signatureLabel || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return 'Unknown signature';
+  const segments = normalized.split('|').map((segment) => segment.trim()).filter(Boolean);
+  const [entity, errorCode, ...rest] = segments;
+  const message = rest.join(' | ');
+  return [entity, errorCode, message].filter(Boolean).join(' | ');
+};
+
+const getResolutionToneClass = (hint: ResolutionHint | { bucket: string }) => {
+  switch (hint.bucket) {
+    case 'missing_reference':
+      return 'bg-amber-100 text-amber-800';
+    case 'duplicate_conflict':
+      return 'bg-rose-100 text-rose-700';
+    case 'validation_data_shape':
+      return 'bg-sky-100 text-sky-700';
+    case 'configuration_auth':
+      return 'bg-violet-100 text-violet-700';
+    default:
+      return 'bg-slate-100 text-slate-700';
+  }
+};
+
+const getMergeReportUrl = (reference: { school: string; mergeReportId: string }) =>
+  `${coursedogBaseUrl}/#/int/${reference.school}/merge-history/${reference.mergeReportId}`;
+
+const getSignatureSummary = (signature: ErrorSignatureCluster) => {
+  return [signature.entityType, signature.errorCode, signature.termCodes[0]].filter(Boolean).join(' • ');
+};
+
+const getRowSummary = (row: ErrorDetailRow) => {
+  return [row.entityType, row.errorCode, row.termCodes[0], row.entityDisplayName].filter(Boolean).join(' • ');
+};
 </script>
 
 <template>
@@ -276,6 +367,118 @@ const activeUsersChartOptions = computed(() => ({
             <div v-if="!latestSnapshot?.recentFailedMerges?.length" class="text-sm text-slate-500">No recent failed merges</div>
           </div>
         </Card>
+        </div>
+
+        <Card subtitle="Current Errors" title="Current Error Categories">
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p class="text-sm text-slate-500">Grouped from the latest captured detailed error snapshot for this school only.</p>
+              <p class="mt-2 text-xs text-slate-400">{{ currentErrorSnapshotLabel }}</p>
+            </div>
+            <p v-if="hasCurrentErrorContent" class="text-sm font-medium text-slate-700">{{ currentErrorTotals }} current captured error{{ currentErrorTotals === 1 ? '' : 's' }}</p>
+          </div>
+
+          <div v-if="isLoadingCurrentErrorAnalysis" class="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+            Loading current error categories...
+          </div>
+          <div v-else-if="currentErrorAnalysisError" class="mt-6 rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700">
+            Failed to load current error categories.
+          </div>
+          <div v-else-if="!hasCurrentErrorContent" class="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+            No detailed captured errors are present in the latest local snapshot for this school yet.
+          </div>
+          <div v-else class="mt-6 grid gap-4 lg:grid-cols-3">
+            <div v-for="category in currentErrorCategories" :key="category.key" class="rounded-3xl border border-slate-200 bg-slate-50 p-5" data-testid="current-error-category">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <span class="inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em]" :class="getResolutionToneClass(category)">
+                    {{ category.title }}
+                  </span>
+                  <p class="mt-3 text-sm leading-6 text-slate-600">{{ category.action }}</p>
+                </div>
+                <div class="text-right">
+                  <p class="text-2xl font-semibold text-slate-950">{{ category.count }}</p>
+                  <p class="text-xs text-slate-500">{{ category.signatures }} signature{{ category.signatures === 1 ? '' : 's' }}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Card>
+
+        <div class="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+          <Card subtitle="Current Errors" title="Current Error Signatures">
+            <div v-if="isLoadingCurrentErrorAnalysis" class="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+              Loading current signatures...
+            </div>
+            <div v-else-if="currentErrorAnalysisError" class="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700">
+              Failed to load current error signatures.
+            </div>
+            <div v-else-if="!currentErrorSignatures.length" class="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+              No current captured error signatures for this school.
+            </div>
+            <div v-else class="space-y-3">
+              <div v-for="signature in currentErrorSignatures" :key="signature.signatureKey" class="rounded-3xl border border-slate-200 bg-slate-50 p-5" data-testid="current-error-signature">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div class="min-w-0">
+                    <p class="font-semibold leading-6 text-slate-950">{{ buildSignatureHeadline(signature.signatureLabel) }}</p>
+                    <p v-if="getSignatureSummary(signature)" class="mt-1 text-xs text-slate-500">{{ getSignatureSummary(signature) }}</p>
+                    <p class="mt-3 text-sm leading-6 text-slate-600">{{ signature.resolutionHint.action }}</p>
+                    <p class="mt-3 text-xs leading-5 text-slate-500">{{ signature.sampleMessage }}</p>
+                  </div>
+                  <div class="flex flex-col items-start gap-2 lg:items-end">
+                    <span class="inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em]" :class="getResolutionToneClass(signature.resolutionHint)">
+                      {{ signature.resolutionHint.title }}
+                    </span>
+                    <p class="text-2xl font-semibold text-slate-950">{{ signature.totalCount }}</p>
+                    <a
+                      v-if="signature.latestMergeReport"
+                      :href="getMergeReportUrl(signature.latestMergeReport)"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+                    >
+                      Merge report ↗
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          <Card subtitle="Current Errors" title="Current Captured Errors">
+            <div v-if="isLoadingCurrentErrorRows" class="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+              Loading current captured errors...
+            </div>
+            <div v-else-if="currentErrorRowsError" class="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700">
+              Failed to load current captured errors.
+            </div>
+            <div v-else-if="!currentErrorDetailRows.length" class="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+              No individual captured errors are available for the current snapshot.
+            </div>
+            <div v-else class="space-y-3">
+              <div v-for="row in currentErrorDetailRows" :key="row.id" class="rounded-3xl border border-slate-200 bg-slate-50 p-5" data-testid="current-error-row">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div class="min-w-0">
+                    <p class="font-semibold leading-6 text-slate-950">{{ buildSignatureHeadline(row.signatureLabel) }}</p>
+                    <p v-if="getRowSummary(row)" class="mt-1 text-xs text-slate-500">{{ getRowSummary(row) }}</p>
+                    <p class="mt-3 text-sm leading-6 text-slate-600">{{ row.fullErrorText }}</p>
+                  </div>
+                  <div class="flex flex-col items-start gap-2 lg:items-end">
+                    <p class="text-xs text-slate-500">{{ row.snapshotDate }}</p>
+                    <a
+                      v-if="row.mergeReport"
+                      :href="getMergeReportUrl(row.mergeReport)"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+                    >
+                      Merge report ↗
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Card>
         </div>
       </div>
     </div>
