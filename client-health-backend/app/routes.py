@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
@@ -2254,6 +2255,44 @@ def first_non_empty_string(*values) -> Optional[str]:
     return None
 
 
+# XML tag names (namespace-stripped) that carry a human-readable SOAP fault message.
+_SOAP_READABLE_TAGS = {"faultstring", "Message", "message", "detail", "Detail", "Text"}
+
+
+def extract_message_from_xml_body(body: str) -> Optional[str]:
+    """Try to pull a short, readable message out of a raw XML/SOAP body string.
+
+    Priority:
+    1. The text content of any <faultstring> (or other well-known readable) element.
+    2. The concatenated leaf-node text of the first <detail> / <Detail> subtree.
+    3. None — let the caller decide what to do next.
+    """
+    try:
+        root = ET.fromstring(body.strip())
+    except ET.ParseError:
+        return None
+
+    # Walk every element; strip namespace prefixes for comparison.
+    readable_texts: list[str] = []
+    detail_texts: list[str] = []
+
+    for elem in root.iter():
+        local = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
+        text = (elem.text or "").strip()
+        if not text:
+            continue
+        if local in ("faultstring", "message", "Message", "Text"):
+            readable_texts.append(text)
+        elif local in ("detail", "Detail"):
+            detail_texts.append(text)
+
+    if readable_texts:
+        return " | ".join(dict.fromkeys(readable_texts))  # deduplicate, preserve order
+    if detail_texts:
+        return " | ".join(dict.fromkeys(detail_texts))
+    return None
+
+
 def collect_term_codes(payload) -> list[str]:
     """Extract stable term code strings from a merge-error row."""
     values: list[str] = []
@@ -2340,7 +2379,12 @@ def extract_merge_error_message(payload: dict) -> str:
                     if nested_body_message:
                         return nested_body_message
         elif isinstance(body, str) and body.strip():
-            return body.strip()
+            xml_message = extract_message_from_xml_body(body)
+            if xml_message:
+                return xml_message
+            # Body is a non-XML string — return it directly.
+            if not body.strip().startswith("<"):
+                return body.strip()
 
         original_error_message = first_non_empty_string(
             original_error.get("message"),

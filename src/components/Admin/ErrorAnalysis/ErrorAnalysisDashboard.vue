@@ -1069,7 +1069,7 @@ const handleExport = async () => {
                         {{ buildSignatureSubline(row.dominantSignature || undefined) }}
                       </p>
                       <p class="mt-2 text-xs text-slate-500">Theme: {{ formatTheme(row.topResolutionTheme) }}</p>
-                      <p class="mt-2 text-xs leading-5 text-slate-500">{{ row.likelyNextStep || 'Inspect the latest Integration Hub samples for this school.' }}</p>
+                      <p class="mt-2 text-xs leading-5 text-slate-500">{{ row.likelyNextStep || 'Inspect the latest merge error samples for this school.' }}</p>
                     </td>
                     <td class="rounded-r-3xl border-y border-r border-slate-200 bg-slate-50 px-4 py-4 align-top">
                       <div class="flex flex-col items-start gap-2">
@@ -1321,15 +1321,7 @@ const handleExport = async () => {
                 >
                   School detail
                 </router-link>
-                <a
-                  v-if="selectedErrorDetail.school"
-                  :href="getIntegrationHubUrl(selectedErrorDetail.school)"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
-                >
-                  Integration Hub
-                </a>
+
                 <a
                   v-if="selectedErrorDetail.mergeReport && !selectedErrorDetail.exampleMergeReports?.length"
                   :href="getMergeReportUrl(selectedErrorDetail.mergeReport)"

@@ -489,14 +489,7 @@ watch([currentErrorCategoryFilter, currentErrorEntityTypeFilter, currentErrorSig
               >
                 ← Back to Client Health
               </router-link>
-              <a
-                :href="integrationHubUrl"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="inline-flex items-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
-              >
-                Integration Hub ↗
-              </a>
+
               <a
                 :href="mergeReportsUrl"
                 target="_blank"
@@ -877,15 +870,7 @@ watch([currentErrorCategoryFilter, currentErrorEntityTypeFilter, currentErrorSig
                     >
                       School detail
                     </router-link>
-                    <a
-                      v-if="selectedErrorDetail.school"
-                      :href="getIntegrationHubSchoolUrl(selectedErrorDetail.school)"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
-                    >
-                      Integration Hub
-                    </a>
+
                     <a
                       v-if="selectedErrorDetail.mergeReport"
                       :href="getMergeReportUrl(selectedErrorDetail.mergeReport)"
