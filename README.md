@@ -67,22 +67,35 @@ Backend:
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` in the repo root and `client-health-backend/.env.example` to `client-health-backend/.env`. These runtime files are intentionally gitignored and should never be committed.
+All configuration lives in a **single `.env` file** at the repo root. Copy `.env.example` to `.env` — this file is intentionally gitignored and should never be committed. The backend loads it directly alongside the frontend.
 
-Commonly used values:
+Key variables:
 
+- `VITE_INTERNAL_API_KEY`: shared secret used to authenticate frontend-to-backend requests. Generated automatically by the setup script.
+- `VITE_COURSEDOG_PRD_URL`: Coursedog base URL. Defaults to `https://app.coursedog.com`.
+- `VITE_COURSEDOG_EMAIL`: login email for Coursedog API access.
+- `VITE_COURSEDOG_PASSWORD`: login password for Coursedog API access.
+- `VITE_ALLOWED_ORIGINS`: comma-separated browser origins allowed to access the backend.
 - `BACKEND_URL`: frontend proxy target in development. Defaults to `http://localhost:8000`.
-- `VITE_INTERNAL_API_KEY` and `INTERNAL_API_KEY`: shared secret used to authenticate frontend-to-backend requests. Use the same random value in both files.
-- `VITE_ALLOWED_ORIGINS` and `ALLOWED_ORIGINS`: comma-separated browser origins allowed to access the backend if it is reached directly.
-- `CLIENT_HEALTH_DB_PATH` or `CLIENT_HEALTH_DATABASE_URL`: backend SQLite location. Defaults to `client-health-backend/client_health.db`, but tests should point this at an isolated file.
-- `COURSEDOG_BASE_URL` or `VITE_COURSEDOG_PRD_URL`: Coursedog base URL. Defaults to `https://app.coursedog.com`.
-- `COURSEDOG_EMAIL` or `VITE_COURSEDOG_EMAIL`: login email for Coursedog API access.
-- `COURSEDOG_PASSWORD` or `VITE_COURSEDOG_PASSWORD`: login password for Coursedog API access.
 
-If credentials are missing, the backend will still start, but live Coursedog fetches may fail or return limited data.
-If `INTERNAL_API_KEY` is missing, the backend will reject `/api/*` requests until it is configured.
+If Coursedog credentials are missing, the backend will start but syncs will fail.
+If `VITE_INTERNAL_API_KEY` is missing, the backend will reject all `/api/*` requests.
 
 ## Local Development
+
+### Quick start (recommended for new contributors)
+
+Run the setup script once from the repo root:
+
+```bash
+bash scripts/setup-dev.sh
+```
+
+This creates the single `.env` from `.env.example`, generates `VITE_INTERNAL_API_KEY`, and prints the next steps. You only need to fill in your Coursedog credentials afterward.
+
+If you prefer to configure things manually, copy `.env.example` to `.env` and fill in the values.
+
+---
 
 ### 1. Install frontend dependencies
 

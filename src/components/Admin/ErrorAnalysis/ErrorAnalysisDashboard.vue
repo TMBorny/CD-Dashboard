@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { useQuery } from '@tanstack/vue-query';
+import { keepPreviousData, useQuery } from '@tanstack/vue-query';
 import VueApexCharts from 'vue3-apexcharts';
 import { downloadErrorAnalysisDetailedExport, downloadErrorAnalysisExport, getErrorAnalysis, getErrorAnalysisErrors } from '@/api';
 import Card from '@/components/ui/Card.vue';
@@ -47,7 +47,6 @@ interface SisSignatureContext {
 }
 
 const selectedWindow = ref<WindowOption>('7');
-const selectedSchool = ref('all');
 const selectedSis = ref('all');
 const activeView = ref<ErrorViewMode>('aggregate');
 const selectedErrorDetail = ref<ErrorDetailContext | null>(null);
@@ -73,16 +72,15 @@ const { data, isLoading, error } = useQuery({
     'errorAnalysis',
     {
       days: daysParam.value ?? 'all',
-      school: selectedSchool.value,
       sisPlatform: selectedSis.value,
     },
   ]),
   queryFn: () =>
     getErrorAnalysis({
       days: daysParam.value,
-      school: selectedSchool.value === 'all' ? undefined : selectedSchool.value,
       sisPlatform: selectedSis.value === 'all' ? undefined : selectedSis.value,
     }).then((res) => res.data as ErrorAnalysisResponse),
+  placeholderData: keepPreviousData,
 });
 
 const response = computed(() => data.value);
@@ -92,7 +90,6 @@ const { data: detailData, isLoading: isLoadingDetails } = useQuery({
     'errorAnalysisDetails',
     {
       days: daysParam.value ?? 'all',
-      school: selectedSchool.value,
       sisPlatform: selectedSis.value,
       q: detailSearch.value,
       page: detailPage.value,
@@ -104,7 +101,6 @@ const { data: detailData, isLoading: isLoadingDetails } = useQuery({
   queryFn: () =>
     getErrorAnalysisErrors({
       days: daysParam.value,
-      school: selectedSchool.value === 'all' ? undefined : selectedSchool.value,
       sisPlatform: selectedSis.value === 'all' ? undefined : selectedSis.value,
       q: detailSearch.value || undefined,
       page: detailPage.value,
@@ -112,42 +108,35 @@ const { data: detailData, isLoading: isLoadingDetails } = useQuery({
       sortBy: detailSortBy.value,
       sortDir: detailSortDir.value,
     }).then((res) => res.data as ErrorDetailTableResponse),
+  placeholderData: keepPreviousData,
 });
 
 const detailResponse = computed(() => detailData.value);
 
-const sisOptions = computed(() => [
-  { value: 'all', label: 'All SIS Platforms' },
-  ...(response.value?.filterOptions.sisPlatforms ?? []).map((value) => ({
-    value,
-    label: value,
-  })),
-]);
+const formatCountLabel = (value?: number | null) => new Intl.NumberFormat('en-US').format(value ?? 0);
 
-const schoolOptions = computed(() => {
-  const schools = response.value?.filterOptions.schools ?? [];
-  const filtered = selectedSis.value === 'all'
-    ? schools
-    : schools.filter((school) => school.sisPlatform === selectedSis.value);
+const sisOptions = computed(() => {
+  const countsBySis = new Map(
+    (response.value?.sisBreakdowns ?? []).map((row) => [row.key, row.totalErrors] as const),
+  );
+
+  const sisPlatforms = response.value?.filterOptions.sisPlatforms ?? [];
+  const sortedSisPlatforms = [...sisPlatforms].sort((left, right) => {
+    const countDiff = (countsBySis.get(right) ?? 0) - (countsBySis.get(left) ?? 0);
+    if (countDiff !== 0) return countDiff;
+    return left.localeCompare(right, undefined, { sensitivity: 'base' });
+  });
 
   return [
-    { value: 'all', label: 'All schools' },
-    ...filtered.map((school) => ({
-      value: school.value,
-      label: formatSchoolLabel(school.value, school.label),
+    { value: 'all', label: 'All SIS Platforms' },
+    ...sortedSisPlatforms.map((value) => ({
+      value,
+      label: `${value} (${formatCountLabel(countsBySis.get(value))})`,
     })),
   ];
 });
 
-watch([selectedSis, response], () => {
-  if (selectedSchool.value === 'all') return;
-  const exists = schoolOptions.value.some((option) => option.value === selectedSchool.value);
-  if (!exists) {
-    selectedSchool.value = 'all';
-  }
-}, { immediate: true });
-
-watch([selectedWindow, selectedSchool, selectedSis, detailSearch], () => {
+watch([selectedWindow, selectedSis, detailSearch], () => {
   detailPage.value = 1;
 });
 
@@ -221,7 +210,7 @@ const detailTotalPages = computed(() => Math.max(1, Math.ceil(detailTotal.value 
 const hasDetailRows = computed(() => detailRows.value.length > 0);
 
 const viewOptions: Array<{ value: ErrorViewMode; label: string }> = [
-  { value: 'aggregate', label: 'Aggregate' },
+  { value: 'aggregate', label: 'Signatures' },
   { value: 'all', label: 'All Errors' },
   { value: 'school', label: 'By School' },
   { value: 'sis', label: 'By SIS' },
@@ -232,6 +221,41 @@ const windowOptions: Array<{ value: WindowOption; label: string }> = [
   { value: '30', label: '30d' },
   { value: 'all', label: 'All captured' },
 ];
+
+const activeViewDescription = computed(() => {
+  switch (activeView.value) {
+    case 'aggregate':
+      return 'Groups recurring merge errors into normalized signatures so you can spot the biggest patterns quickly.';
+    case 'all':
+      return 'Shows each captured merge-error row individually, including search, sorting, and pagination.';
+    case 'school':
+      return 'Rolls grouped error patterns up by school so you can compare concentration and dominant signatures.';
+    case 'sis':
+      return 'Rolls grouped error patterns up by SIS platform to compare impact and shared themes.';
+    default:
+      return '';
+  }
+});
+
+const isSignaturePatternDetail = computed(() =>
+  Boolean(selectedErrorDetail.value?.impactedSchools?.length || selectedErrorDetail.value?.exampleMergeReports?.length),
+);
+
+const errorDetailHeading = computed(() =>
+  isSignaturePatternDetail.value ? 'Signature pattern' : 'Captured error',
+);
+
+const errorDetailMessageLabel = computed(() =>
+  isSignaturePatternDetail.value ? 'Sample upstream message' : 'Captured upstream message',
+);
+
+const errorDetailContextLabel = computed(() =>
+  isSignaturePatternDetail.value ? 'Pattern context' : 'Context',
+);
+
+const errorDetailLinksLabel = computed(() =>
+  isSignaturePatternDetail.value ? 'Sample links' : 'Links',
+);
 
 const getIntegrationHubUrl = (school: string) => `${coursedogBaseUrl}/#/int/${school}`;
 const getMergeReportUrl = (reference: MergeReportReference) =>
@@ -270,7 +294,7 @@ const getDominantDrilldownLabel = (signature: ErrorSignatureCluster) => {
   return signature.dominantSisPlatform || 'Mixed schools';
 };
 
-const formatCount = (value?: number | null) => `${value ?? 0}`;
+const formatCount = (value?: number | null) => formatCountLabel(value);
 
 const schoolRoute = (school: string) => ({
   name: 'AdminClientHealthDetail',
@@ -563,7 +587,6 @@ const handleExport = async () => {
   try {
     const exportParams = {
       days: daysParam.value,
-      school: selectedSchool.value === 'all' ? undefined : selectedSchool.value,
       sisPlatform: selectedSis.value === 'all' ? undefined : selectedSis.value,
     };
     const { blob, filename } = activeView.value === 'all'
@@ -615,53 +638,6 @@ const handleExport = async () => {
           </button>
         </div>
 
-        <div class="mt-8 border-t border-slate-200 pt-6">
-          <div class="grid gap-4 xl:grid-cols-[max-content_max-content_minmax(220px,1fr)_minmax(260px,1.2fr)]">
-            <div>
-              <label class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">View</label>
-              <div class="flex flex-wrap gap-2" data-testid="view-toggle">
-                <button
-                  v-for="option in viewOptions"
-                  :key="option.value"
-                  class="rounded-full px-4 py-2 text-sm font-semibold transition"
-                  :class="activeView === option.value ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
-                  @click="activeView = option.value"
-                >
-                  {{ option.label }}
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Window</label>
-              <div class="flex rounded-full border border-slate-200 bg-slate-50 p-1">
-                <button
-                  v-for="option in windowOptions"
-                  :key="option.value"
-                  class="rounded-full px-3 py-1.5 text-sm font-medium transition"
-                  :class="selectedWindow === option.value ? 'bg-slate-900 text-white' : 'text-slate-600 hover:text-slate-900'"
-                  @click="selectedWindow = option.value"
-                >
-                  {{ option.label }}
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">SIS</label>
-              <select v-model="selectedSis" data-testid="sis-filter" class="w-full rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm focus:border-slate-400 focus:outline-none">
-                <option v-for="option in sisOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-              </select>
-            </div>
-
-            <div>
-              <label class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">School</label>
-              <select v-model="selectedSchool" data-testid="school-filter" class="w-full rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm focus:border-slate-400 focus:outline-none">
-                <option v-for="option in schoolOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-              </select>
-            </div>
-          </div>
-        </div>
       </div>
 
       <div v-if="isLoading" class="rounded-[28px] border border-slate-200 bg-white p-8 text-slate-700 shadow-sm">Loading detailed error analysis...</div>
@@ -688,34 +664,76 @@ const handleExport = async () => {
           </Card>
         </div>
 
-        <template v-if="activeView === 'aggregate'">
-          <div class="grid gap-6 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
-            <Card subtitle="Trend" title="Open error intensity over time">
-              <p class="mt-1 text-xs text-slate-500">Track captured open-error volume against the number of recurring signatures seen on each day.</p>
-              <div class="mt-6 min-h-[300px]">
-                <VueApexCharts type="line" :options="trendOptions" :series="trendSeries" height="300" />
-              </div>
-            </Card>
+        <div class="grid gap-6 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+          <Card subtitle="Trend" title="Open error intensity over time">
+            <p class="mt-1 text-xs text-slate-500">Track captured open-error volume against the number of recurring signatures seen on each day.</p>
+            <div class="mt-6 min-h-[300px]">
+              <VueApexCharts type="line" :options="trendOptions" :series="trendSeries" height="300" />
+            </div>
+          </Card>
 
-            <Card subtitle="Coverage" title="Captured scope">
-              <div class="space-y-4">
-                <div class="rounded-2xl bg-slate-50 p-4">
-                  <p class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Latest snapshot</p>
-                  <p class="mt-2 text-2xl font-semibold text-slate-950">{{ response?.summary.latestSnapshotDate || 'Unavailable' }}</p>
+          <Card subtitle="Coverage" title="Captured scope">
+            <div class="space-y-4">
+              <div class="rounded-2xl bg-slate-50 p-4">
+                <p class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Latest snapshot</p>
+                <p class="mt-2 text-2xl font-semibold text-slate-950">{{ response?.summary.latestSnapshotDate || 'Unavailable' }}</p>
+              </div>
+              <div class="rounded-2xl bg-slate-50 p-4">
+                <p class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Filter result</p>
+                <p class="mt-2 text-base text-slate-700">{{ response?.metadata.filteredGroupCount }} grouped rows across {{ response?.summary.captureDays }} captured days.</p>
+              </div>
+              <div class="rounded-2xl bg-slate-50 p-4">
+                <p class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Trend note</p>
+                <p class="mt-2 text-sm leading-6 text-slate-600">
+                  Historical detail begins on {{ response?.metadata.historyStartsOn || 'the next sync' }}. Earlier dates remain intentionally blank rather than inferred.
+                </p>
+              </div>
+            </div>
+          </Card>
+        </div>
+
+        <template v-if="activeView === 'aggregate'">
+          <Card subtitle="Filters" title="Refine this view">
+            <div class="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_max-content_minmax(220px,1fr)]">
+              <div>
+                <label class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">View</label>
+                <div class="flex flex-wrap gap-2" data-testid="view-toggle">
+                  <button
+                    v-for="option in viewOptions"
+                    :key="option.value"
+                    class="rounded-full px-4 py-2 text-sm font-semibold transition"
+                    :class="activeView === option.value ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
+                    @click="activeView = option.value"
+                  >
+                    {{ option.label }}
+                  </button>
                 </div>
-                <div class="rounded-2xl bg-slate-50 p-4">
-                  <p class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Filter result</p>
-                  <p class="mt-2 text-base text-slate-700">{{ response?.metadata.filteredGroupCount }} grouped rows across {{ response?.summary.captureDays }} captured days.</p>
-                </div>
-                <div class="rounded-2xl bg-slate-50 p-4">
-                  <p class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Trend note</p>
-                  <p class="mt-2 text-sm leading-6 text-slate-600">
-                    Historical detail begins on {{ response?.metadata.historyStartsOn || 'the next sync' }}. Earlier dates remain intentionally blank rather than inferred.
-                  </p>
+                <p class="mt-3 max-w-2xl text-sm leading-6 text-slate-500">{{ activeViewDescription }}</p>
+              </div>
+
+              <div>
+                <label class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Window</label>
+                <div class="inline-flex flex-wrap rounded-full border border-slate-200 bg-slate-50 p-1">
+                  <button
+                    v-for="option in windowOptions"
+                    :key="option.value"
+                    class="rounded-full px-3 py-1.5 text-sm font-medium transition"
+                    :class="selectedWindow === option.value ? 'bg-slate-900 text-white' : 'text-slate-600 hover:text-slate-900'"
+                    @click="selectedWindow = option.value"
+                  >
+                    {{ option.label }}
+                  </button>
                 </div>
               </div>
-            </Card>
-          </div>
+
+              <div>
+                <label class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">SIS</label>
+                <select v-model="selectedSis" data-testid="sis-filter" class="w-full rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm focus:border-slate-400 focus:outline-none">
+                  <option v-for="option in sisOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+                </select>
+              </div>
+            </div>
+          </Card>
 
           <Card subtitle="Recurring Patterns" title="Top error signatures">
             <p class="mb-4 text-sm text-slate-500">Use the actions column to inspect a representative error without crowding the table with raw payload text.</p>
@@ -808,6 +826,48 @@ const handleExport = async () => {
         </template>
 
         <template v-else-if="activeView === 'all'">
+          <Card subtitle="Filters" title="Refine this view">
+            <div class="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_max-content_minmax(220px,1fr)]">
+              <div>
+                <label class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">View</label>
+                <div class="flex flex-wrap gap-2" data-testid="view-toggle">
+                  <button
+                    v-for="option in viewOptions"
+                    :key="option.value"
+                    class="rounded-full px-4 py-2 text-sm font-semibold transition"
+                    :class="activeView === option.value ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
+                    @click="activeView = option.value"
+                  >
+                    {{ option.label }}
+                  </button>
+                </div>
+                <p class="mt-3 max-w-2xl text-sm leading-6 text-slate-500">{{ activeViewDescription }}</p>
+              </div>
+
+              <div>
+                <label class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Window</label>
+                <div class="inline-flex flex-wrap rounded-full border border-slate-200 bg-slate-50 p-1">
+                  <button
+                    v-for="option in windowOptions"
+                    :key="option.value"
+                    class="rounded-full px-3 py-1.5 text-sm font-medium transition"
+                    :class="selectedWindow === option.value ? 'bg-slate-900 text-white' : 'text-slate-600 hover:text-slate-900'"
+                    @click="selectedWindow = option.value"
+                  >
+                    {{ option.label }}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">SIS</label>
+                <select v-model="selectedSis" data-testid="sis-filter" class="w-full rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm focus:border-slate-400 focus:outline-none">
+                  <option v-for="option in sisOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+                </select>
+              </div>
+            </div>
+          </Card>
+
           <Card subtitle="Detailed Search" title="All captured merge errors">
             <div class="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div class="max-w-xl">
@@ -921,6 +981,48 @@ const handleExport = async () => {
         </template>
 
         <template v-else-if="activeView === 'school'">
+          <Card subtitle="Filters" title="Refine this view">
+            <div class="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_max-content_minmax(220px,1fr)]">
+              <div>
+                <label class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">View</label>
+                <div class="flex flex-wrap gap-2" data-testid="view-toggle">
+                  <button
+                    v-for="option in viewOptions"
+                    :key="option.value"
+                    class="rounded-full px-4 py-2 text-sm font-semibold transition"
+                    :class="activeView === option.value ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
+                    @click="activeView = option.value"
+                  >
+                    {{ option.label }}
+                  </button>
+                </div>
+                <p class="mt-3 max-w-2xl text-sm leading-6 text-slate-500">{{ activeViewDescription }}</p>
+              </div>
+
+              <div>
+                <label class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Window</label>
+                <div class="inline-flex flex-wrap rounded-full border border-slate-200 bg-slate-50 p-1">
+                  <button
+                    v-for="option in windowOptions"
+                    :key="option.value"
+                    class="rounded-full px-3 py-1.5 text-sm font-medium transition"
+                    :class="selectedWindow === option.value ? 'bg-slate-900 text-white' : 'text-slate-600 hover:text-slate-900'"
+                    @click="selectedWindow = option.value"
+                  >
+                    {{ option.label }}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">SIS</label>
+                <select v-model="selectedSis" data-testid="sis-filter" class="w-full rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm focus:border-slate-400 focus:outline-none">
+                  <option v-for="option in sisOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+                </select>
+              </div>
+            </div>
+          </Card>
+
           <Card subtitle="School Comparison" title="Where recurring errors concentrate">
             <div class="overflow-x-auto">
               <table class="min-w-full table-fixed border-separate border-spacing-y-3 text-left text-sm text-slate-600">
@@ -998,6 +1100,48 @@ const handleExport = async () => {
         </template>
 
         <template v-else>
+          <Card subtitle="Filters" title="Refine this view">
+            <div class="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_max-content_minmax(220px,1fr)]">
+              <div>
+                <label class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">View</label>
+                <div class="flex flex-wrap gap-2" data-testid="view-toggle">
+                  <button
+                    v-for="option in viewOptions"
+                    :key="option.value"
+                    class="rounded-full px-4 py-2 text-sm font-semibold transition"
+                    :class="activeView === option.value ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
+                    @click="activeView = option.value"
+                  >
+                    {{ option.label }}
+                  </button>
+                </div>
+                <p class="mt-3 max-w-2xl text-sm leading-6 text-slate-500">{{ activeViewDescription }}</p>
+              </div>
+
+              <div>
+                <label class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Window</label>
+                <div class="inline-flex flex-wrap rounded-full border border-slate-200 bg-slate-50 p-1">
+                  <button
+                    v-for="option in windowOptions"
+                    :key="option.value"
+                    class="rounded-full px-3 py-1.5 text-sm font-medium transition"
+                    :class="selectedWindow === option.value ? 'bg-slate-900 text-white' : 'text-slate-600 hover:text-slate-900'"
+                    @click="selectedWindow = option.value"
+                  >
+                    {{ option.label }}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">SIS</label>
+                <select v-model="selectedSis" data-testid="sis-filter" class="w-full rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm focus:border-slate-400 focus:outline-none">
+                  <option v-for="option in sisOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+                </select>
+              </div>
+            </div>
+          </Card>
+
           <Card subtitle="SIS Comparison" title="Recurring patterns by SIS">
             <div class="overflow-x-auto">
               <table class="min-w-full border-separate border-spacing-y-3 text-left text-sm text-slate-600">
@@ -1121,7 +1265,7 @@ const handleExport = async () => {
         <div class="flex items-start justify-between gap-4">
           <div>
             <p class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{{ selectedErrorDetail.title }}</p>
-            <h2 class="mt-2 text-2xl font-semibold text-slate-950">Full upstream error</h2>
+            <h2 class="mt-2 text-2xl font-semibold text-slate-950">{{ errorDetailHeading }}</h2>
             <p class="mt-3 text-sm leading-6 text-slate-600">{{ selectedErrorDetail.signatureLabel }}</p>
           </div>
           <button
@@ -1137,22 +1281,25 @@ const handleExport = async () => {
         <div class="mt-6 flex flex-wrap gap-2 text-xs text-slate-600">
           <span v-if="selectedErrorDetail.entityType" class="rounded-full bg-slate-100 px-3 py-1.5">{{ selectedErrorDetail.entityType }}</span>
           <span v-if="selectedErrorDetail.errorCode" class="rounded-full bg-slate-100 px-3 py-1.5">{{ selectedErrorDetail.errorCode }}</span>
-          <span v-if="selectedErrorDetail.schoolLabel" class="rounded-full bg-slate-100 px-3 py-1.5">{{ selectedErrorDetail.schoolLabel }}</span>
           <span v-if="selectedErrorDetail.sisPlatform" class="rounded-full bg-slate-100 px-3 py-1.5">{{ selectedErrorDetail.sisPlatform }}</span>
           <span v-if="selectedErrorDetail.termCode" class="rounded-full bg-slate-100 px-3 py-1.5">Term {{ selectedErrorDetail.termCode }}</span>
           <span v-if="selectedErrorDetail.scheduleType" class="rounded-full bg-slate-100 px-3 py-1.5">{{ selectedErrorDetail.scheduleType }}</span>
         </div>
 
-        <div class="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(260px,0.9fr)]">
-          <div class="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-            <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Captured upstream message</p>
+        <div class="mt-6 grid gap-4 lg:items-start lg:grid-cols-[minmax(0,1.5fr)_minmax(260px,0.9fr)]">
+          <div class="self-start rounded-3xl border border-slate-200 bg-slate-50 p-5">
+            <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{{ errorDetailMessageLabel }}</p>
             <pre class="mt-3 whitespace-pre-wrap break-words font-sans text-sm leading-6 text-slate-800">{{ selectedErrorDetail.fullErrorText }}</pre>
           </div>
 
           <div class="space-y-4">
             <div class="rounded-3xl border border-slate-200 bg-white p-5">
-              <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Context</p>
+              <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{{ errorDetailContextLabel }}</p>
               <dl class="mt-3 space-y-3 text-sm text-slate-700">
+                <div v-if="selectedErrorDetail.schoolLabel">
+                  <dt class="text-xs uppercase tracking-[0.1em] text-slate-500">{{ isSignaturePatternDetail ? 'Sample school' : 'School' }}</dt>
+                  <dd class="mt-1 text-slate-900">{{ selectedErrorDetail.schoolLabel }}</dd>
+                </div>
                 <div v-if="selectedErrorDetail.entityDisplayName">
                   <dt class="text-xs uppercase tracking-[0.1em] text-slate-500">Entity</dt>
                   <dd class="mt-1 text-slate-900">{{ selectedErrorDetail.entityDisplayName }}</dd>
@@ -1165,7 +1312,7 @@ const handleExport = async () => {
             </div>
 
             <div class="rounded-3xl border border-slate-200 bg-white p-5">
-              <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Links</p>
+              <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{{ errorDetailLinksLabel }}</p>
               <div class="mt-3 flex flex-wrap gap-2">
                 <router-link
                   v-if="selectedErrorDetail.school"
@@ -1184,7 +1331,7 @@ const handleExport = async () => {
                   Integration Hub
                 </a>
                 <a
-                  v-if="selectedErrorDetail.mergeReport"
+                  v-if="selectedErrorDetail.mergeReport && !selectedErrorDetail.exampleMergeReports?.length"
                   :href="getMergeReportUrl(selectedErrorDetail.mergeReport)"
                   target="_blank"
                   rel="noopener noreferrer"
@@ -1197,14 +1344,16 @@ const handleExport = async () => {
 
             <div v-if="selectedErrorDetail.impactedSchools?.length" class="rounded-3xl border border-slate-200 bg-white p-5">
               <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Impacted schools</p>
-              <div class="mt-3 flex flex-wrap gap-2">
-                <span
-                  v-for="school in selectedErrorDetail.impactedSchools"
-                  :key="school.school"
-                  class="inline-flex rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700"
-                >
-                  {{ formatSchoolLabel(school.school, school.label) }} · {{ school.count }}
-                </span>
+              <div class="mt-3 max-h-56 overflow-y-auto pr-1">
+                <div class="flex flex-wrap gap-2">
+                  <span
+                    v-for="school in selectedErrorDetail.impactedSchools"
+                    :key="school.school"
+                    class="inline-flex rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700"
+                  >
+                    {{ formatSchoolLabel(school.school, school.label) }} · {{ school.count }}
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -1227,7 +1376,7 @@ const handleExport = async () => {
         </div>
 
         <details v-if="selectedErrorDetail.rawPayload" class="mt-6 rounded-3xl border border-slate-200 bg-slate-50 p-5">
-          <summary class="cursor-pointer text-sm font-semibold text-slate-900">Raw sample payload</summary>
+          <summary class="cursor-pointer text-sm font-semibold text-slate-900">{{ isSignaturePatternDetail ? 'Raw sample payload' : 'Raw captured payload' }}</summary>
           <pre class="mt-4 overflow-x-auto whitespace-pre-wrap break-words text-xs leading-5 text-slate-700">{{ selectedErrorDetail.rawPayload }}</pre>
         </details>
       </div>

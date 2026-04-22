@@ -17,7 +17,10 @@ from sqlalchemy.orm import sessionmaker, Session
 
 from app.models import Base
 
-load_dotenv()
+# All configuration lives in the single root .env.
+# The backend reads VITE_* variable names as fallbacks throughout.
+_root_env = Path(__file__).parent.parent.parent / ".env"
+load_dotenv(_root_env)
 
 # --- Coursedog API client ---
 

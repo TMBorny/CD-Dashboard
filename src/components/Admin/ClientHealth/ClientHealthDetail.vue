@@ -846,8 +846,8 @@ watch([currentErrorCategoryFilter, currentErrorEntityTypeFilter, currentErrorSig
               <span v-if="selectedErrorDetail.scheduleType" class="rounded-full bg-slate-100 px-3 py-1.5">{{ selectedErrorDetail.scheduleType }}</span>
             </div>
 
-            <div class="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(260px,0.9fr)]">
-              <div class="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+            <div class="mt-6 grid gap-4 lg:items-start lg:grid-cols-[minmax(0,1.5fr)_minmax(260px,0.9fr)]">
+              <div class="self-start rounded-3xl border border-slate-200 bg-slate-50 p-5">
                 <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Captured upstream message</p>
                 <pre class="mt-3 whitespace-pre-wrap break-words font-sans text-sm leading-6 text-slate-800">{{ selectedErrorDetail.fullErrorText }}</pre>
               </div>
