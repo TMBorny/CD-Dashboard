@@ -173,9 +173,10 @@ const currentErrorSignatureOptions = computed(() =>
   currentErrorSignatures.value
     .map((signature) => ({
       value: signature.signatureKey,
-      label: buildSignatureHeadline(signature.signatureLabel),
+      count: signature.totalCount,
+      label: `(${signature.totalCount}) ${buildSignatureHeadline(signature.signatureLabel)}`,
     }))
-    .sort((left, right) => left.label.localeCompare(right.label)),
+    .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label)),
 );
 const hasCurrentErrorContent = computed(() => currentErrorSignatures.value.length > 0 || currentErrorDetailRows.value.length > 0);
 const recentFailedMerges = computed(() => (latestSnapshot.value?.recentFailedMerges as FailedMerge[] | undefined) ?? []);

@@ -399,6 +399,10 @@ describe('ClientHealthDetail', () => {
     const entityTypeFilter = wrapper.get('[data-testid="current-error-entity-type-filter"]');
     const signatureFilter = wrapper.get('[data-testid="current-error-signature-filter"]');
 
+    const signatureOptions = signatureFilter.findAll('option').map((option) => option.text());
+    expect(signatureOptions).toContain('(2) sections | missing_course | course <num> missing dependency <num>');
+    expect(signatureOptions).toContain('(1) courses | duplicate_course | duplicate course <num>');
+
     await categoryFilter.setValue('duplicate_conflict');
     await nextTick();
     expect(wrapper.findAll('[data-testid="current-error-row"]')).toHaveLength(10);
