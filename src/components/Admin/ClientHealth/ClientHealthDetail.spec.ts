@@ -278,6 +278,10 @@ describe('ClientHealthDetail', () => {
     });
 
     expect(wrapper.findAll('.chart-stub').some((node) => node.text().includes('Halted'))).toBe(true);
+    const recentFailuresTab = wrapper.get('[data-testid="current-error-tabs"]').findAll('button').find((node) => node.text() === 'Recent Failed Merges');
+    expect(recentFailuresTab).toBeTruthy();
+    await recentFailuresTab!.trigger('click');
+    expect(wrapper.find('[data-testid="current-error-panel-recent-failures"]').exists()).toBe(true);
     expect(wrapper.text()).toContain('Halted: Change Threshold Exceeded');
   });
 
@@ -293,10 +297,30 @@ describe('ClientHealthDetail', () => {
     });
 
     expect(wrapper.text()).toContain('Current detailed error snapshot: 2026-04-12');
+    expect(wrapper.get('[data-testid="current-error-tabs"]').text()).toContain('Categories');
+    expect(wrapper.get('[data-testid="current-error-tabs"]').text()).toContain('Signatures');
+    expect(wrapper.get('[data-testid="current-error-tabs"]').text()).toContain('Captured Errors');
+    expect(wrapper.get('[data-testid="current-error-tabs"]').text()).toContain('Recent Failed Merges');
+    expect(wrapper.find('[data-testid="current-error-panel-signatures"]').exists()).toBe(true);
+    expect(wrapper.findAll('[data-testid="current-error-signature"]')).toHaveLength(2);
+
+    const tabButtons = wrapper.get('[data-testid="current-error-tabs"]').findAll('button');
+    await tabButtons[0].trigger('click');
+    expect(wrapper.find('[data-testid="current-error-panel-categories"]').exists()).toBe(true);
     expect(wrapper.text()).toContain('Missing reference');
     expect(wrapper.text()).toContain('Duplicate conflict');
-    expect(wrapper.findAll('[data-testid="current-error-signature"]')).toHaveLength(2);
+
+    const capturedErrorsTab = wrapper.get('[data-testid="current-error-tabs"]').findAll('button').find((node) => node.text() === 'Captured Errors');
+    expect(capturedErrorsTab).toBeTruthy();
+    await capturedErrorsTab!.trigger('click');
+    expect(wrapper.find('[data-testid="current-error-panel-rows"]').exists()).toBe(true);
     expect(wrapper.findAll('[data-testid="current-error-row"]')).toHaveLength(1);
     expect(wrapper.text()).toContain('Course 202602 missing dependency 987654');
+
+    const recentFailuresTab = wrapper.get('[data-testid="current-error-tabs"]').findAll('button').find((node) => node.text() === 'Recent Failed Merges');
+    expect(recentFailuresTab).toBeTruthy();
+    await recentFailuresTab!.trigger('click');
+    expect(wrapper.find('[data-testid="current-error-panel-recent-failures"]').exists()).toBe(true);
+    expect(wrapper.findAll('[data-testid="recent-failed-merge-row"]')).toHaveLength(1);
   });
 });

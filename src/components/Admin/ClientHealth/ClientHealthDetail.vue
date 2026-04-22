@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { useQuery } from '@tanstack/vue-query';
 import { getClientHealthHistory, getClientHealthActiveUsers, getClientHealthSyncMetadata, getErrorAnalysis, getErrorAnalysisErrors } from '@/api';
@@ -95,6 +95,7 @@ const currentErrorSnapshotLabel = computed(() => {
 const currentErrorSignatures = computed(() => currentErrorAnalysis.value?.signatures ?? []);
 const currentErrorDetailRows = computed(() => currentErrorRows.value?.rows ?? []);
 const currentErrorTotals = computed(() => currentErrorAnalysis.value?.summary.totalErrorInstances ?? 0);
+const currentErrorTab = ref<'categories' | 'signatures' | 'rows' | 'recent-failures'>('signatures');
 const currentErrorCategories = computed(() => {
   const categories = new Map<string, { key: string; title: string; action: string; bucket: string; count: number; signatures: number }>();
   currentErrorSignatures.value.forEach((signature) => {
@@ -118,6 +119,14 @@ const currentErrorCategories = computed(() => {
   return [...categories.values()].sort((left, right) => right.count - left.count || left.title.localeCompare(right.title));
 });
 const hasCurrentErrorContent = computed(() => currentErrorSignatures.value.length > 0 || currentErrorDetailRows.value.length > 0);
+const recentFailedMerges = computed(() => (latestSnapshot.value?.recentFailedMerges as FailedMerge[] | undefined) ?? []);
+const hasIssueTabsContent = computed(() => hasCurrentErrorContent.value || recentFailedMerges.value.length > 0);
+const currentErrorTabs = [
+  { key: 'categories', label: 'Categories' },
+  { key: 'signatures', label: 'Signatures' },
+  { key: 'rows', label: 'Captured Errors' },
+  { key: 'recent-failures', label: 'Recent Failed Merges' },
+] as const;
 
 const nightlySuccessChartSeries = computed(() => {
   if (!history.value) return [];
@@ -346,30 +355,9 @@ const getRowSummary = (row: ErrorDetailRow) => {
             <div v-if="!activeUsers?.users?.length" class="text-sm text-slate-500">No active users</div>
           </div>
         </Card>
-        <Card subtitle="Issues" title="Recent Failed Merges">
-          <div class="mt-6 space-y-2">
-            <div
-              v-for="merge in (latestSnapshot?.recentFailedMerges as FailedMerge[] | undefined)"
-              :key="merge.id"
-              class="flex items-start gap-3 rounded-lg bg-slate-50 p-3"
-            >
-              <div class="mt-1 h-2 w-2 rounded-full bg-rose-500 flex-shrink-0"></div>
-              <div class="flex flex-col text-sm">
-                <span class="font-medium text-slate-900">{{ merge.id }}</span>
-                <span v-if="merge.type" class="text-xs text-slate-500">Type: {{ merge.type }}</span>
-                <span v-if="merge.scheduleType" class="text-xs text-slate-500 capitalize">{{ merge.scheduleType }} merge</span>
-                <span v-if="merge.haltReason || merge.statusDetail" class="text-xs font-medium text-yellow-700">{{ merge.haltReason || merge.statusDetail }}</span>
-                <span v-if="merge.timestampEnd" class="text-xs text-slate-400">
-                  {{ formatLocalDateTime(merge.timestampEnd) }}
-                </span>
-              </div>
-            </div>
-            <div v-if="!latestSnapshot?.recentFailedMerges?.length" class="text-sm text-slate-500">No recent failed merges</div>
-          </div>
-        </Card>
         </div>
 
-        <Card subtitle="Current Errors" title="Current Error Categories">
+        <Card subtitle="Current Errors" title="Current Error Details">
           <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <p class="text-sm text-slate-500">Grouped from the latest captured detailed error snapshot for this school only.</p>
@@ -378,45 +366,50 @@ const getRowSummary = (row: ErrorDetailRow) => {
             <p v-if="hasCurrentErrorContent" class="text-sm font-medium text-slate-700">{{ currentErrorTotals }} current captured error{{ currentErrorTotals === 1 ? '' : 's' }}</p>
           </div>
 
+          <div v-if="hasIssueTabsContent" class="mt-6 flex flex-wrap gap-2 border-t border-slate-200 pt-5" data-testid="current-error-tabs">
+            <button
+              v-for="tab in currentErrorTabs"
+              :key="tab.key"
+              type="button"
+              class="rounded-full px-4 py-2 text-sm font-semibold transition"
+              :class="currentErrorTab === tab.key ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
+              @click="currentErrorTab = tab.key"
+            >
+              {{ tab.label }}
+            </button>
+          </div>
+
           <div v-if="isLoadingCurrentErrorAnalysis" class="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
             Loading current error categories...
           </div>
           <div v-else-if="currentErrorAnalysisError" class="mt-6 rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700">
             Failed to load current error categories.
           </div>
-          <div v-else-if="!hasCurrentErrorContent" class="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
-            No detailed captured errors are present in the latest local snapshot for this school yet.
+          <div v-else-if="!hasIssueTabsContent" class="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+            No detailed captured errors or recent failed merges are present in the latest local snapshot for this school yet.
           </div>
-          <div v-else class="mt-6 grid gap-4 lg:grid-cols-3">
-            <div v-for="category in currentErrorCategories" :key="category.key" class="rounded-3xl border border-slate-200 bg-slate-50 p-5" data-testid="current-error-category">
-              <div class="flex items-start justify-between gap-4">
-                <div>
-                  <span class="inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em]" :class="getResolutionToneClass(category)">
-                    {{ category.title }}
-                  </span>
-                  <p class="mt-3 text-sm leading-6 text-slate-600">{{ category.action }}</p>
-                </div>
-                <div class="text-right">
-                  <p class="text-2xl font-semibold text-slate-950">{{ category.count }}</p>
-                  <p class="text-xs text-slate-500">{{ category.signatures }} signature{{ category.signatures === 1 ? '' : 's' }}</p>
+          <div v-else class="mt-6">
+            <div v-if="currentErrorTab === 'categories'" class="grid gap-4 lg:grid-cols-2" data-testid="current-error-panel-categories">
+              <div v-for="category in currentErrorCategories" :key="category.key" class="rounded-3xl border border-slate-200 bg-slate-50 p-5" data-testid="current-error-category">
+                <div class="flex items-start justify-between gap-4">
+                  <div>
+                    <span class="inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em]" :class="getResolutionToneClass(category)">
+                      {{ category.title }}
+                    </span>
+                    <p class="mt-3 text-sm leading-6 text-slate-600">{{ category.action }}</p>
+                  </div>
+                  <div class="text-right">
+                    <p class="text-2xl font-semibold text-slate-950">{{ category.count }}</p>
+                    <p class="text-xs text-slate-500">{{ category.signatures }} signature{{ category.signatures === 1 ? '' : 's' }}</p>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        </Card>
 
-        <div class="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-          <Card subtitle="Current Errors" title="Current Error Signatures">
-            <div v-if="isLoadingCurrentErrorAnalysis" class="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
-              Loading current signatures...
-            </div>
-            <div v-else-if="currentErrorAnalysisError" class="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700">
-              Failed to load current error signatures.
-            </div>
-            <div v-else-if="!currentErrorSignatures.length" class="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
-              No current captured error signatures for this school.
-            </div>
-            <div v-else class="space-y-3">
+            <div v-else-if="currentErrorTab === 'signatures'" class="space-y-3" data-testid="current-error-panel-signatures">
+              <div v-if="!currentErrorSignatures.length" class="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+                No current captured error signatures for this school.
+              </div>
               <div v-for="signature in currentErrorSignatures" :key="signature.signatureKey" class="rounded-3xl border border-slate-200 bg-slate-50 p-5" data-testid="current-error-signature">
                 <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div class="min-w-0">
@@ -443,19 +436,18 @@ const getRowSummary = (row: ErrorDetailRow) => {
                 </div>
               </div>
             </div>
-          </Card>
 
-          <Card subtitle="Current Errors" title="Current Captured Errors">
-            <div v-if="isLoadingCurrentErrorRows" class="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
-              Loading current captured errors...
-            </div>
-            <div v-else-if="currentErrorRowsError" class="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700">
-              Failed to load current captured errors.
-            </div>
-            <div v-else-if="!currentErrorDetailRows.length" class="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
-              No individual captured errors are available for the current snapshot.
-            </div>
-            <div v-else class="space-y-3">
+            <div v-else-if="currentErrorTab === 'rows'" data-testid="current-error-panel-rows">
+              <div v-if="isLoadingCurrentErrorRows" class="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+                Loading current captured errors...
+              </div>
+              <div v-else-if="currentErrorRowsError" class="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700">
+                Failed to load current captured errors.
+              </div>
+              <div v-else-if="!currentErrorDetailRows.length" class="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+                No individual captured errors are available for the current snapshot.
+              </div>
+              <div v-else class="space-y-3">
               <div v-for="row in currentErrorDetailRows" :key="row.id" class="rounded-3xl border border-slate-200 bg-slate-50 p-5" data-testid="current-error-row">
                 <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div class="min-w-0">
@@ -476,10 +468,34 @@ const getRowSummary = (row: ErrorDetailRow) => {
                     </a>
                   </div>
                 </div>
+                </div>
               </div>
             </div>
-          </Card>
-        </div>
+
+            <div v-else class="space-y-3" data-testid="current-error-panel-recent-failures">
+              <div
+                v-for="merge in recentFailedMerges"
+                :key="merge.id"
+                class="flex items-start gap-3 rounded-3xl border border-slate-200 bg-slate-50 p-5"
+                data-testid="recent-failed-merge-row"
+              >
+                <div class="mt-1 h-2 w-2 rounded-full bg-rose-500 flex-shrink-0"></div>
+                <div class="flex flex-col text-sm">
+                  <span class="font-medium text-slate-900">{{ merge.id }}</span>
+                  <span v-if="merge.type" class="text-xs text-slate-500">Type: {{ merge.type }}</span>
+                  <span v-if="merge.scheduleType" class="text-xs text-slate-500 capitalize">{{ merge.scheduleType }} merge</span>
+                  <span v-if="merge.haltReason || merge.statusDetail" class="text-xs font-medium text-yellow-700">{{ merge.haltReason || merge.statusDetail }}</span>
+                  <span v-if="merge.timestampEnd" class="text-xs text-slate-400">
+                    {{ formatLocalDateTime(merge.timestampEnd) }}
+                  </span>
+                </div>
+              </div>
+              <div v-if="!recentFailedMerges.length" class="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+                No recent failed merges.
+              </div>
+            </div>
+          </div>
+        </Card>
       </div>
     </div>
   </div>
