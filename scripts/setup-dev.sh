@@ -18,6 +18,62 @@ echo "║   Client Health Dashboard — Dev Setup        ║"
 echo "╚══════════════════════════════════════════════╝"
 echo ""
 
+# ── 0. Check prerequisites ─────────────────────────────────────────────────────
+
+MISSING_PREREQS=0
+
+check_cmd() {
+  local cmd="$1" label="$2" hint="$3"
+  if ! command -v "$cmd" &>/dev/null; then
+    echo "✗  $label not found"
+    echo "   → $hint"
+    MISSING_PREREQS=1
+  else
+    echo "✓  $label found ($(\"$cmd\" --version 2>&1 | head -1))"
+  fi
+}
+
+check_cmd node "Node.js" "Install from https://nodejs.org (v18+)"
+check_cmd npm  "npm"     "Comes with Node.js"
+
+# Python — require 3.9+
+if command -v python3 &>/dev/null; then
+  PY_VER=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
+  PY_MAJOR=$(echo "$PY_VER" | cut -d. -f1)
+  PY_MINOR=$(echo "$PY_VER" | cut -d. -f2)
+  if [[ "$PY_MAJOR" -ge 3 && "$PY_MINOR" -ge 9 ]]; then
+    echo "✓  Python $PY_VER found"
+  else
+    echo "✗  Python $PY_VER found — need 3.9+"
+    echo "   → Install from https://python.org or use pyenv"
+    MISSING_PREREQS=1
+  fi
+else
+  echo "✗  python3 not found"
+  echo "   → Install from https://python.org (3.9+)"
+  MISSING_PREREQS=1
+fi
+
+# Poetry
+if ! command -v poetry &>/dev/null; then
+  echo "✗  Poetry not found"
+  echo "   → Recommended: pipx install poetry  (https://python-poetry.org/docs/)"
+  echo "     Or via pip:   pip3 install poetry"
+  echo "     NOTE: the backend uses fastapi[standard] — do NOT install packages"
+  echo "           manually with pip; let 'poetry install' handle everything."
+  MISSING_PREREQS=1
+else
+  echo "✓  Poetry found ($(poetry --version))"
+fi
+
+if [[ "$MISSING_PREREQS" -ne 0 ]]; then
+  echo ""
+  echo "✗  One or more prerequisites are missing. Install them and re-run this script."
+  exit 1
+fi
+
+echo ""
+
 # ── 1. Create .env from example ───────────────────────────────────────────────
 
 if [[ -f "$ENV_FILE" ]]; then

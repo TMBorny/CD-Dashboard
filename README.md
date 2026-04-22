@@ -59,11 +59,21 @@ Backend:
 
 ## Prerequisites
 
-- Node.js 18+
-- npm
-- Python 3.9+
-- Poetry for backend dependency management
-- Valid Coursedog credentials for live syncs/backfills
+- **Node.js 18+** and **npm** — install from https://nodejs.org
+- **Python 3.9+** — install from https://python.org or via `pyenv`
+- **Poetry** — the backend's dependency manager:
+  ```bash
+  # Recommended (isolates Poetry from your system Python):
+  pipx install poetry
+
+  # Alternative if pipx isn't available:
+  pip3 install poetry
+  ```
+  > **Important:** the backend declares `fastapi[standard]` as its dependency,
+  > which bundles `uvicorn`, `python-multipart`, and other runtime extras that
+  > plain `pip install fastapi` does **not** include. Always let `poetry install`
+  > handle backend packages — do not install them manually with `pip`.
+- **Valid Coursedog credentials** for live syncs/backfills
 
 ## Environment Variables
 
