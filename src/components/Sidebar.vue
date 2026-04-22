@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router';
 
 const route = useRoute();
 const isOpen = ref(true);
+const buildLabel = import.meta.env.VITE_APP_BUILD ?? 'local';
 
 const navItems = [
   {
@@ -82,7 +83,7 @@ const isActive = (itemPath: string) => {
 
       <!-- Footer -->
       <div v-if="isOpen" class="px-4 py-6 border-t border-slate-800">
-        <p class="text-xs text-slate-400">v1.0.0</p>
+        <p class="text-xs text-slate-400">{{ buildLabel }}</p>
       </div>
     </div>
 

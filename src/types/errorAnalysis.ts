@@ -99,6 +99,11 @@ export interface ErrorDetailRow {
   createdAt?: string | null;
 }
 
+export interface ErrorDetailFilterOption {
+  value: string;
+  label: string;
+}
+
 export interface ErrorDetailTableResponse {
   rows: ErrorDetailRow[];
   total: number;
@@ -112,9 +117,17 @@ export interface ErrorDetailTableResponse {
       school: string | null;
       sisPlatform: string | null;
       latestOnly: boolean;
+      category?: string | null;
+      entityType?: string | null;
+      signature?: string | null;
       q: string | null;
     };
     resolvedSnapshotDate: string | null;
+    filterOptions?: {
+      categories?: ErrorDetailFilterOption[];
+      entityTypes?: ErrorDetailFilterOption[];
+      signatures?: ErrorDetailFilterOption[];
+    };
   };
 }
 

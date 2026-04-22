@@ -1,14 +1,54 @@
-import { ref } from 'vue';
+import { computed, nextTick, ref } from 'vue';
 import { describe, expect, it, vi } from 'vitest';
 import { mount, RouterLinkStub } from '@vue/test-utils';
+
+const paginatedCurrentErrorRows = Array.from({ length: 21 }, (_, index) => {
+  const isMissingDependency = index < 11;
+
+  return {
+    id: index + 1,
+    snapshotDate: '2026-04-12',
+    school: 'bar01',
+    displayName: 'Baruch College',
+    sisPlatform: 'Banner',
+    entityType: isMissingDependency ? 'sections' : 'courses',
+    errorCode: isMissingDependency ? 'missing_course' : 'duplicate_course',
+    signatureKey: isMissingDependency ? 'sig-a' : 'sig-b',
+    signatureLabel: isMissingDependency
+      ? `sections | missing_course | course <num> missing dependency <num> | ${index + 1}`
+      : `courses | duplicate_course | duplicate course <num> | ${index + 1}`,
+    normalizedMessage: isMissingDependency ? 'course <num> missing dependency <num>' : 'duplicate course <num>',
+    fullErrorText: isMissingDependency
+      ? `Course 202602 missing dependency ${987654 + index}`
+      : `Duplicate course ${123450 + index} already exists in CourseDog`,
+    entityDisplayName: isMissingDependency
+      ? `BIO-101-${String(index + 1).padStart(2, '0')}`
+      : `Course-${String(index + 1).padStart(2, '0')}`,
+    mergeReport: {
+      school: 'bar01',
+      mergeReportId: `${isMissingDependency ? 'report-a' : 'report-b'}${index + 1}`,
+      scheduleType: 'nightly',
+      snapshotDate: '2026-04-12',
+    },
+    termCodes: ['202602'],
+    rawError: {
+      message: isMissingDependency
+        ? `Course 202602 missing dependency ${987654 + index}`
+        : `Duplicate course ${123450 + index} already exists in CourseDog`,
+    },
+    createdAt: '2026-04-12T00:00:00Z',
+  };
+});
 
 vi.mock('vue-router', () => ({
   useRoute: () => ({ params: { school: 'bar01' } }),
 }));
 
+const getResolvedQueryKey = (queryKey: unknown) => (Array.isArray(queryKey) ? queryKey : (queryKey as { value?: unknown[] } | undefined)?.value ?? []);
+
 vi.mock('@tanstack/vue-query', () => ({
   useQuery: vi.fn(({ queryKey }) => {
-    const resolvedQueryKey = Array.isArray(queryKey) ? queryKey : queryKey?.value ?? [];
+    const resolvedQueryKey = getResolvedQueryKey(queryKey);
     const key = resolvedQueryKey[0];
 
     if (key === 'clientHealthHistory') {
@@ -29,6 +69,7 @@ vi.mock('@tanstack/vue-query', () => ({
               recentFailedMerges: [
                 {
                   id: 'nightly-3',
+                  mergeReportId: 'nightly-3',
                   scheduleType: 'nightly',
                   status: 'finishedWithIssues',
                   haltReason: 'Halted: Change Threshold Exceeded',
@@ -86,7 +127,7 @@ vi.mock('@tanstack/vue-query', () => ({
           },
           summary: {
             totalGroupedErrors: 2,
-            totalErrorInstances: 3,
+            totalErrorInstances: 21,
             distinctSignatures: 2,
             affectedSchools: 1,
             affectedSisPlatforms: 1,
@@ -173,48 +214,46 @@ vi.mock('@tanstack/vue-query', () => ({
     }
 
     if (key === 'clientHealthCurrentErrorRows') {
+      const pageSize = 20;
+
       return {
-        data: ref({
-          rows: [
-            {
-              id: 1,
-              snapshotDate: '2026-04-12',
-              school: 'bar01',
-              displayName: 'Baruch College',
-              sisPlatform: 'Banner',
-              entityType: 'sections',
-              errorCode: 'missing_course',
-              signatureKey: 'sig-a',
-              signatureLabel: 'sections | missing_course | course <num> missing dependency <num>',
-              normalizedMessage: 'course <num> missing dependency <num>',
-              fullErrorText: 'Course 202602 missing dependency 987654',
-              entityDisplayName: 'BIO-101-01',
-              mergeReport: {
+        data: computed(() => {
+          const activeQueryKey = getResolvedQueryKey(queryKey);
+          const page = Number(activeQueryKey[2] ?? 1);
+          const category = String(activeQueryKey[3] ?? '');
+          const entityType = String(activeQueryKey[4] ?? '');
+          const signature = String(activeQueryKey[5] ?? '');
+          const start = (page - 1) * pageSize;
+          const filteredRows = paginatedCurrentErrorRows.filter((row) => {
+            const matchesCategory = !category
+              || (category === 'missing_reference' && row.signatureKey === 'sig-a')
+              || (category === 'duplicate_conflict' && row.signatureKey === 'sig-b');
+            const matchesEntityType = !entityType || row.entityType === entityType;
+            const matchesSignature = !signature || row.signatureKey === signature;
+            return matchesCategory && matchesEntityType && matchesSignature;
+          });
+
+          return {
+            rows: filteredRows.slice(start, start + pageSize),
+            total: filteredRows.length,
+            page,
+            pageSize,
+            sortBy: 'signatureLabel',
+            sortDir: 'asc',
+            metadata: {
+              appliedFilters: {
+                days: null,
                 school: 'bar01',
-                mergeReportId: 'report-a1',
-                scheduleType: 'nightly',
-                snapshotDate: '2026-04-12',
+                sisPlatform: null,
+                latestOnly: true,
+                category: category || null,
+                entityType: entityType || null,
+                signature: signature || null,
+                q: null,
               },
-              termCodes: ['202602'],
-              rawError: { message: 'Course 202602 missing dependency 987654' },
-              createdAt: '2026-04-12T00:00:00Z',
+              resolvedSnapshotDate: '2026-04-12',
             },
-          ],
-          total: 1,
-          page: 1,
-          pageSize: 8,
-          sortBy: 'signatureLabel',
-          sortDir: 'asc',
-          metadata: {
-            appliedFilters: {
-              days: null,
-              school: 'bar01',
-              sisPlatform: null,
-              latestOnly: true,
-              q: null,
-            },
-            resolvedSnapshotDate: '2026-04-12',
-          },
+          };
         }),
         isLoading: ref(false),
         error: ref(null),
@@ -278,7 +317,7 @@ describe('ClientHealthDetail', () => {
     });
 
     expect(wrapper.findAll('.chart-stub').some((node) => node.text().includes('Halted'))).toBe(true);
-    const recentFailuresTab = wrapper.get('[data-testid="current-error-tabs"]').findAll('button').find((node) => node.text() === 'Recent Failed Merges');
+    const recentFailuresTab = wrapper.get('[data-testid="current-error-tabs"]').findAll('button').find((node) => node.text() === 'Recent Failed Merges (1)');
     expect(recentFailuresTab).toBeTruthy();
     await recentFailuresTab!.trigger('click');
     expect(wrapper.find('[data-testid="current-error-panel-recent-failures"]').exists()).toBe(true);
@@ -297,30 +336,98 @@ describe('ClientHealthDetail', () => {
     });
 
     expect(wrapper.text()).toContain('Current detailed error snapshot: 2026-04-12');
-    expect(wrapper.get('[data-testid="current-error-tabs"]').text()).toContain('Categories');
-    expect(wrapper.get('[data-testid="current-error-tabs"]').text()).toContain('Signatures');
-    expect(wrapper.get('[data-testid="current-error-tabs"]').text()).toContain('Captured Errors');
-    expect(wrapper.get('[data-testid="current-error-tabs"]').text()).toContain('Recent Failed Merges');
-    expect(wrapper.find('[data-testid="current-error-panel-signatures"]').exists()).toBe(true);
-    expect(wrapper.findAll('[data-testid="current-error-signature"]')).toHaveLength(2);
+    expect(wrapper.get('[data-testid="current-error-tabs"]').text()).toContain('Categories (2)');
+    expect(wrapper.get('[data-testid="current-error-tabs"]').text()).toContain('Signatures (2)');
+    expect(wrapper.get('[data-testid="current-error-tabs"]').text()).toContain('Errors (21)');
+    expect(wrapper.get('[data-testid="current-error-tabs"]').text()).toContain('Recent Failed Merges (1)');
+    expect(wrapper.find('[data-testid="current-error-panel-rows"]').exists()).toBe(true);
+    expect(wrapper.findAll('[data-testid="current-error-row"]')).toHaveLength(20);
+    await wrapper.get('[data-testid="current-error-row"]').trigger('click');
+    expect(wrapper.find('[data-testid="current-error-detail-modal"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain('Course 202602 missing dependency 987654');
 
-    const tabButtons = wrapper.get('[data-testid="current-error-tabs"]').findAll('button');
-    await tabButtons[0].trigger('click');
+    const categoriesTab = wrapper.get('[data-testid="current-error-tabs"]').findAll('button').find((node) => node.text() === 'Categories (2)');
+    expect(categoriesTab).toBeTruthy();
+    await categoriesTab!.trigger('click');
     expect(wrapper.find('[data-testid="current-error-panel-categories"]').exists()).toBe(true);
     expect(wrapper.text()).toContain('Missing reference');
     expect(wrapper.text()).toContain('Duplicate conflict');
 
-    const capturedErrorsTab = wrapper.get('[data-testid="current-error-tabs"]').findAll('button').find((node) => node.text() === 'Captured Errors');
+    const capturedErrorsTab = wrapper.get('[data-testid="current-error-tabs"]').findAll('button').find((node) => node.text() === 'Errors (21)');
     expect(capturedErrorsTab).toBeTruthy();
     await capturedErrorsTab!.trigger('click');
     expect(wrapper.find('[data-testid="current-error-panel-rows"]').exists()).toBe(true);
-    expect(wrapper.findAll('[data-testid="current-error-row"]')).toHaveLength(1);
+    expect(wrapper.findAll('[data-testid="current-error-row"]')).toHaveLength(20);
+    expect(wrapper.get('[data-testid="current-error-pagination-top"]').text()).toContain('21 error rows total');
+    expect(wrapper.get('[data-testid="current-error-page-label-top"]').text()).toBe('Page 1 of 2');
+    expect(wrapper.get('[data-testid="current-error-page-label"]').text()).toBe('Page 1 of 2');
+    await wrapper.get('[data-testid="current-error-row"]').trigger('click');
+    expect(wrapper.find('[data-testid="current-error-detail-modal"]').exists()).toBe(true);
     expect(wrapper.text()).toContain('Course 202602 missing dependency 987654');
+    await wrapper.get('[data-testid="current-error-page-next"]').trigger('click');
+    await nextTick();
+    expect(wrapper.get('[data-testid="current-error-page-label-top"]').text()).toBe('Page 2 of 2');
+    expect(wrapper.get('[data-testid="current-error-page-label"]').text()).toBe('Page 2 of 2');
+    expect(wrapper.findAll('[data-testid="current-error-row"]')).toHaveLength(1);
+    expect(wrapper.text()).toContain('Duplicate course 123470 already exists in CourseDog');
 
-    const recentFailuresTab = wrapper.get('[data-testid="current-error-tabs"]').findAll('button').find((node) => node.text() === 'Recent Failed Merges');
+    const recentFailuresTab = wrapper.get('[data-testid="current-error-tabs"]').findAll('button').find((node) => node.text() === 'Recent Failed Merges (1)');
     expect(recentFailuresTab).toBeTruthy();
     await recentFailuresTab!.trigger('click');
     expect(wrapper.find('[data-testid="current-error-panel-recent-failures"]').exists()).toBe(true);
     expect(wrapper.findAll('[data-testid="recent-failed-merge-row"]')).toHaveLength(1);
+    expect(wrapper.get('[data-testid="recent-failed-merge-id-link"]').text()).toBe('nightly-3');
+    expect(wrapper.get('[data-testid="recent-failed-merge-id-link"]').attributes('href')).toContain('/#/int/bar01/merge-history/nightly-3');
+  });
+
+  it('filters captured errors by category, entity type, and signature', async () => {
+    const { default: ClientHealthDetail } = await import('./ClientHealthDetail.vue');
+    const wrapper = mount(ClientHealthDetail, {
+      global: {
+        stubs: {
+          RouterLink: RouterLinkStub,
+          Card: CardStub,
+        },
+      },
+    });
+
+    const capturedErrorsTab = wrapper.get('[data-testid="current-error-tabs"]').findAll('button').find((node) => node.text() === 'Errors (21)');
+    expect(capturedErrorsTab).toBeTruthy();
+    await capturedErrorsTab!.trigger('click');
+
+    const categoryFilter = wrapper.get('[data-testid="current-error-category-filter"]');
+    const entityTypeFilter = wrapper.get('[data-testid="current-error-entity-type-filter"]');
+    const signatureFilter = wrapper.get('[data-testid="current-error-signature-filter"]');
+
+    await categoryFilter.setValue('duplicate_conflict');
+    await nextTick();
+    expect(wrapper.findAll('[data-testid="current-error-row"]')).toHaveLength(10);
+    expect(wrapper.text()).toContain('Duplicate course 123461 already exists in CourseDog');
+    expect(wrapper.get('[data-testid="current-error-pagination-top"]').text()).toContain('10 error rows total');
+    expect(wrapper.get('[data-testid="current-error-page-label-top"]').text()).toBe('Page 1 of 1');
+    expect(wrapper.get('[data-testid="current-error-page-label"]').text()).toBe('Page 1 of 1');
+
+    await entityTypeFilter.setValue('sections');
+    await nextTick();
+    expect(wrapper.findAll('[data-testid="current-error-row"]')).toHaveLength(0);
+    expect(wrapper.text()).toContain('No captured errors match the selected category, entity type, and signature filters.');
+
+    await categoryFilter.setValue('');
+    await entityTypeFilter.setValue('sections');
+    await nextTick();
+    expect(wrapper.findAll('[data-testid="current-error-row"]')).toHaveLength(11);
+    expect(wrapper.get('[data-testid="current-error-pagination-top"]').text()).toContain('11 error rows total');
+
+    await signatureFilter.setValue('sig-a');
+    await nextTick();
+    expect(wrapper.findAll('[data-testid="current-error-row"]')).toHaveLength(11);
+    expect(wrapper.text()).toContain('Course 202602 missing dependency 987654');
+    expect(wrapper.get('[data-testid="current-error-page-label"]').text()).toBe('Page 1 of 1');
+
+    await categoryFilter.setValue('missing_reference');
+    await entityTypeFilter.setValue('courses');
+    await nextTick();
+    expect(wrapper.findAll('[data-testid="current-error-row"]')).toHaveLength(0);
+    expect(wrapper.text()).toContain('No captured errors match the selected category, entity type, and signature filters.');
   });
 });

@@ -1,6 +1,7 @@
 /** A single failed merge entry as returned by the integrations-hub health endpoint */
 export interface FailedMerge {
   id: string;
+  mergeReportId?: string;
   type?: string;
   scheduleType?: string;
   timestampEnd?: string;

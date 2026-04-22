@@ -212,7 +212,16 @@ def write_error_analysis_export(db) -> Path:
     return export_path
 
 
-def apply_error_analysis_detail_filters(query, *, days: Optional[int], school: Optional[str], sis_platform: Optional[str], search: Optional[str]):
+def apply_error_analysis_detail_filters(
+    query,
+    *,
+    days: Optional[int],
+    school: Optional[str],
+    sis_platform: Optional[str],
+    entity_type: Optional[str],
+    signature: Optional[str],
+    search: Optional[str],
+):
     """Apply the shared detail-table filters to a SQLAlchemy query."""
     if days is not None:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
@@ -221,6 +230,10 @@ def apply_error_analysis_detail_filters(query, *, days: Optional[int], school: O
         query = query.filter(ErrorAnalysisDetail.school == school)
     if sis_platform:
         query = query.filter(ErrorAnalysisDetail.sis_platform == sis_platform)
+    if entity_type:
+        query = query.filter(ErrorAnalysisDetail.entity_type == entity_type)
+    if signature:
+        query = query.filter(ErrorAnalysisDetail.signature_key == signature)
     if search:
         pattern = f"%{search.strip()}%"
         query = query.filter(
@@ -791,6 +804,9 @@ async def export_error_analysis(
     school: Optional[str] = Query(default=None),
     sis_platform: Optional[str] = Query(default=None, alias="sisPlatform"),
     view: Optional[str] = Query(default="grouped"),
+    category: Optional[str] = Query(default=None),
+    entity_type: Optional[str] = Query(default=None, alias="entityType"),
+    signature: Optional[str] = Query(default=None),
     q: Optional[str] = Query(default=None),
 ):
     """Download the currently filtered error-analysis groups or details as JSON."""
@@ -814,13 +830,25 @@ async def export_error_analysis(
                 days=days,
                 school=school,
                 sis_platform=sis_platform,
+                entity_type=entity_type,
+                signature=signature,
                 search=q,
             )
-            rows = query.order_by(
+            ordered_rows = query.order_by(
                 ErrorAnalysisDetail.snapshot_date.desc(),
                 ErrorAnalysisDetail.school.asc(),
                 ErrorAnalysisDetail.id.asc(),
             ).all()
+            rows = [
+                row
+                for row in ordered_rows
+                if not category
+                or build_resolution_hint(
+                    row.normalized_message,
+                    row.entity_type,
+                    row.error_code,
+                )["bucket"] == category
+            ]
         else:
             query = db.query(ErrorAnalysisGroup)
             if days is not None:
@@ -856,6 +884,9 @@ async def export_error_analysis(
                     "days": days,
                     "school": school,
                     "sisPlatform": sis_platform,
+                    "category": category,
+                    "entityType": entity_type,
+                    "signature": signature,
                     "q": q,
                     "view": view,
                 },
@@ -881,6 +912,9 @@ async def get_error_analysis_errors(
     school: Optional[str] = Query(default=None),
     sis_platform: Optional[str] = Query(default=None, alias="sisPlatform"),
     latest_only: bool = Query(default=False, alias="latestOnly"),
+    category: Optional[str] = Query(default=None),
+    entity_type: Optional[str] = Query(default=None, alias="entityType"),
+    signature: Optional[str] = Query(default=None),
     q: Optional[str] = Query(default=None),
     sort_by: str = Query(default="snapshotDate", alias="sortBy"),
     sort_dir: str = Query(default="desc", alias="sortDir"),
@@ -906,17 +940,30 @@ async def get_error_analysis_errors(
             days=days,
             school=school,
             sis_platform=sis_platform,
+            entity_type=entity_type,
+            signature=signature,
             search=q,
         )
         resolved_snapshot_date = resolve_latest_snapshot_date(query, ErrorAnalysisDetail.snapshot_date) if latest_only else None
         if resolved_snapshot_date:
             query = query.filter(ErrorAnalysisDetail.snapshot_date == resolved_snapshot_date)
-        total = query.count()
-        ordered_query = query.order_by(
+        ordered_rows = query.order_by(
             order_column.asc() if sort_dir == "asc" else order_column.desc(),
             ErrorAnalysisDetail.id.desc() if sort_dir == "desc" else ErrorAnalysisDetail.id.asc(),
-        )
-        rows = ordered_query.offset((page - 1) * page_size).limit(page_size).all()
+        ).all()
+        filtered_rows = [
+            row
+            for row in ordered_rows
+            if not category
+            or build_resolution_hint(
+                row.normalized_message,
+                row.entity_type,
+                row.error_code,
+            )["bucket"] == category
+        ]
+        total = len(filtered_rows)
+        start = (page - 1) * page_size
+        rows = filtered_rows[start : start + page_size]
 
         return {
             "rows": [row.to_dict() for row in rows],
@@ -931,6 +978,9 @@ async def get_error_analysis_errors(
                     "school": school,
                     "sisPlatform": sis_platform,
                     "latestOnly": latest_only,
+                    "category": category,
+                    "entityType": entity_type,
+                    "signature": signature,
                     "q": q,
                 },
                 "resolvedSnapshotDate": resolved_snapshot_date,
@@ -3057,6 +3107,7 @@ def build_snapshot_from_merge_history(
 
         merge_entry = {
             "id": _normalize_merge_identifier(report),
+            "mergeReportId": _normalize_merge_identifier(report),
             "type": report.get("type"),
             "scheduleType": report.get("scheduleType"),
             "timestampEnd": report.get("timestampEnd"),

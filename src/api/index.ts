@@ -148,6 +148,9 @@ export async function getErrorAnalysisErrors(params: {
   school?: string;
   sisPlatform?: string;
   latestOnly?: boolean;
+  category?: string;
+  entityType?: string;
+  signature?: string;
   q?: string;
   sortBy?: string;
   sortDir?: 'asc' | 'desc';
@@ -160,6 +163,9 @@ export async function getErrorAnalysisErrors(params: {
       ...(params.school ? { school: params.school } : {}),
       ...(params.sisPlatform ? { sisPlatform: params.sisPlatform } : {}),
       ...(params.latestOnly ? { latestOnly: true } : {}),
+      ...(params.category ? { category: params.category } : {}),
+      ...(params.entityType ? { entityType: params.entityType } : {}),
+      ...(params.signature ? { signature: params.signature } : {}),
       ...(params.q ? { q: params.q } : {}),
       ...(params.sortBy ? { sortBy: params.sortBy } : {}),
       ...(params.sortDir ? { sortDir: params.sortDir } : {}),
