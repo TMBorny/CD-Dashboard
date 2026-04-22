@@ -223,6 +223,85 @@ const getRowTone = (school: ClientHealthSnapshot) => {
   if (status === 'amber') return 'bg-amber-50/45';
   return 'bg-emerald-50/35';
 };
+
+const escapeCsvValue = (value: string | number) => {
+  const stringValue = String(value);
+  if (/[",\n]/.test(stringValue)) {
+    return `"${stringValue.replace(/"/g, '""')}"`;
+  }
+
+  return stringValue;
+};
+
+const buildExportRows = () => {
+  return sortedSchools.value.map((school) => ({
+    schoolId: school.school,
+    schoolName: formatSchoolLabel(school.school, school.displayName),
+    sisPlatform: school.sisPlatform || 'Unknown',
+    status: getStatusBadge(school).label,
+    healthScore: getHealthScore(school),
+    nightlySuccessPct: nightlyRate(school) === null ? 'N/A' : nightlyRate(school)!.toFixed(1),
+    nightlySucceeded: school.merges.nightly.succeeded,
+    nightlyTotal: school.merges.nightly.total,
+    nightlyIssues: school.merges.nightly.finishedWithIssues,
+    nightlyNoData: school.merges.nightly.noData,
+    nightlyHalts: school.merges.nightly.halted ?? 0,
+    nightlyDuration: formatDuration(school.merges.nightly.mergeTimeMs),
+    realtimeSuccessPct: realtimeRate(school) === null ? 'N/A' : realtimeRate(school)!.toFixed(1),
+    realtimeSucceeded: school.merges.realtime.succeeded,
+    realtimeTotal: school.merges.realtime.total,
+    realtimeIssues: school.merges.realtime.finishedWithIssues,
+    realtimeNoData: school.merges.realtime.noData,
+    openErrors: school.mergeErrorsCount ?? 0,
+    recentFailures: school.recentFailedMerges.length,
+    activeUsers24h: school.activeUsers24h,
+    products: school.products.join(', '),
+  }));
+};
+
+const exportSchools = () => {
+  const rows = buildExportRows();
+  const headers = Object.keys(rows[0] ?? {
+    schoolId: '',
+    schoolName: '',
+    sisPlatform: '',
+    status: '',
+    healthScore: '',
+    nightlySuccessPct: '',
+    nightlySucceeded: '',
+    nightlyTotal: '',
+    nightlyIssues: '',
+    nightlyNoData: '',
+    nightlyHalts: '',
+    nightlyDuration: '',
+    realtimeSuccessPct: '',
+    realtimeSucceeded: '',
+    realtimeTotal: '',
+    realtimeIssues: '',
+    realtimeNoData: '',
+    openErrors: '',
+    recentFailures: '',
+    activeUsers24h: '',
+    products: '',
+  });
+
+  const csvContent = [
+    headers.join(','),
+    ...rows.map((row) => headers.map((header) => escapeCsvValue(row[header as keyof typeof row] ?? '')).join(',')),
+  ].join('\n');
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const dateStamp = new Date().toISOString().slice(0, 10);
+
+  link.href = url;
+  link.download = `client-health-export-${dateStamp}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
 </script>
 
 <template>
@@ -286,6 +365,14 @@ const getRowTone = (school: ClientHealthSnapshot) => {
           :aria-label="`Toggle sort order for ${sortLabels[sortBy]}`"
         >
           {{ sortLabels[sortBy] }} {{ sortOrder === 'asc' ? '↑' : '↓' }}
+        </button>
+        <button
+          type="button"
+          @click="exportSchools"
+          class="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.24em] text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+          aria-label="Export visible client table data as CSV"
+        >
+          Export CSV
         </button>
       </div>
     </div>
