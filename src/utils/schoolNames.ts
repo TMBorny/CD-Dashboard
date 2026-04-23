@@ -1,10 +1,9 @@
 /**
  * Derives the best possible human-readable school name from the school slug.
  *
- * The Coursedog admin API does not expose a displayName field for schools —
- * the school slug is the only identifier available. We strip well-known SIS/
- * integration suffixes and apply a curated set of aliases and acronym rules
- * to produce a clean label.
+ * The Coursedog admin API is not always authoritative for human-readable
+ * school names, so we strip well-known SIS/integration suffixes and apply a
+ * curated set of aliases and acronym rules as a fallback.
  */
 
 // ------------------------------------------------------------------
@@ -48,7 +47,6 @@ const SCHOOL_NAME_ALIASES: Record<string, string> = {
   tacomacc: 'Tacoma Community College',
   swc: 'Southwestern College',
   sbccd: 'San Bernardino CCD',
-  scsu: 'Southern Connecticut State University',
   ucsb: 'UC Santa Barbara',
   ucsc: 'UC Santa Cruz',
   ucci: 'UC Irvine',

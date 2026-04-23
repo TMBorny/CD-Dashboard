@@ -61,6 +61,7 @@ from app.routes import (
     summarize_recent_merge_activity,
     write_error_analysis_export,
 )
+from app.school_names import backfill_school_display_names, resolve_school_display_name
 
 TEST_INTERNAL_API_KEY = "test-internal-key"
 AUTH_HEADERS = {"X-Internal-API-Key": TEST_INTERNAL_API_KEY}
@@ -2063,6 +2064,144 @@ class SchoolExclusionTests(unittest.TestCase):
             get_school_exclusion_reason("demo01", "Demo School", {"demo01"}),
             "Manually excluded in Operations",
         )
+
+
+class SchoolNameResolutionTests(unittest.TestCase):
+    def test_resolve_school_display_name_prefers_verified_display_name(self):
+        self.assertEqual(
+            resolve_school_display_name("scsu", verified_display_name="St. Cloud State University"),
+            "St. Cloud State University",
+        )
+
+    def test_normalize_school_catalog_merges_products_and_verified_display_names(self):
+        schools = normalize_school_catalog(
+            {
+                "scsu": {"_id": "scsu", "products": ["catalog"]},
+                "bar01": {"_id": "bar01", "products": []},
+            },
+            {
+                "scsu": {"_id": "scsu", "displayName": "St. Cloud State University", "showDisplayName": True},
+                "bar01": {"_id": "bar01", "displayName": "Baruch College", "showDisplayName": False},
+            },
+        )
+
+        self.assertEqual(
+            [school["displayName"] for school in schools],
+            ["Baruch College", "St. Cloud State University"],
+        )
+
+    def test_backfill_school_display_names_updates_all_persisted_school_name_tables(self):
+        init_db()
+        db = get_db()
+        try:
+            db.add(
+                SchoolSnapshot.from_dict(
+                    {
+                        "snapshotDate": "2026-04-22",
+                        "school": "scsu",
+                        "displayName": "scsu",
+                        "sisPlatform": "SCSU",
+                        "products": [],
+                        "merges": {
+                            "nightly": {
+                                "total": 0,
+                                "succeeded": 0,
+                                "failed": 0,
+                                "finishedWithIssues": 0,
+                                "noData": 0,
+                                "halted": 0,
+                                "mergeTimeMs": 0,
+                            },
+                            "realtime": {
+                                "total": 0,
+                                "succeeded": 0,
+                                "failed": 0,
+                                "finishedWithIssues": 0,
+                                "noData": 0,
+                            },
+                            "manual": {
+                                "total": 0,
+                                "succeeded": 0,
+                                "failed": 0,
+                                "finishedWithIssues": 0,
+                                "noData": 0,
+                            },
+                        },
+                        "recentFailedMerges": [],
+                        "mergeErrorsCount": 0,
+                        "activeUsers24h": 0,
+                        "activeUsers": [],
+                    }
+                )
+            )
+            db.add(
+                ErrorAnalysisGroup.from_dict(
+                    {
+                        "snapshotDate": "2026-04-22",
+                        "school": "scsu",
+                        "displayName": "scsu",
+                        "sisPlatform": "SCSU",
+                        "signatureKey": "sig-1",
+                        "normalizedMessage": "sample",
+                        "sampleMessage": "sample",
+                        "count": 1,
+                        "sampleErrors": [],
+                        "termCodes": [],
+                    }
+                )
+            )
+            db.add(
+                ErrorAnalysisDetail.from_dict(
+                    {
+                        "snapshotDate": "2026-04-22",
+                        "school": "scsu",
+                        "displayName": "scsu",
+                        "sisPlatform": "SCSU",
+                        "signatureKey": "sig-1",
+                        "signatureLabel": "sig-1",
+                        "normalizedMessage": "sample",
+                        "fullErrorText": "sample",
+                        "rawError": {},
+                        "termCodes": [],
+                    }
+                )
+            )
+            db.add(
+                BackfillWorkUnit(
+                    job_id="job-1",
+                    school="scsu",
+                    display_name="scsu",
+                    snapshot_date="2026-04-22",
+                    products_json=json.dumps([]),
+                    status="pending",
+                )
+            )
+            db.commit()
+
+            updated = backfill_school_display_names(
+                db,
+                verified_display_names={"scsu": "St. Cloud State University"},
+            )
+
+            self.assertGreater(updated, 0)
+            self.assertEqual(
+                db.query(SchoolSnapshot).filter(SchoolSnapshot.school == "scsu").one().display_name,
+                "St. Cloud State University",
+            )
+            self.assertEqual(
+                db.query(ErrorAnalysisGroup).filter(ErrorAnalysisGroup.school == "scsu").one().display_name,
+                "St. Cloud State University",
+            )
+            self.assertEqual(
+                db.query(ErrorAnalysisDetail).filter(ErrorAnalysisDetail.school == "scsu").one().display_name,
+                "St. Cloud State University",
+            )
+            self.assertEqual(
+                db.query(BackfillWorkUnit).filter(BackfillWorkUnit.school == "scsu").one().display_name,
+                "St. Cloud State University",
+            )
+        finally:
+            db.close()
 
 
 class InternalAuthTests(unittest.IsolatedAsyncioTestCase):

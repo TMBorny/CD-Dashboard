@@ -33,6 +33,7 @@ from app.models import (
     SyncRun,
     serialize_datetime,
 )
+from app.school_names import resolve_school_display_name
 
 router = APIRouter(prefix="/api")
 logger = logging.getLogger(__name__)
@@ -123,28 +124,57 @@ def get_additional_excluded_schools(db) -> set[str]:
     }
 
 
-def normalize_school_catalog(data) -> list[dict]:
+def normalize_school_catalog(products_data, display_names_data=None) -> list[dict]:
     """Normalize the admin schools response into a flat school list without exclusions."""
     schools: list[dict] = []
-    if isinstance(data, list):
-        for item in data:
+    display_name_map: dict[str, str] = {}
+    if isinstance(display_names_data, list):
+        for item in display_names_data:
+            school = item.get("_id", item.get("id", item.get("school", "")))
+            display_name = item.get("displayName") or item.get("fullName") or school
+            if school:
+                display_name_map[school] = display_name
+    elif isinstance(display_names_data, dict):
+        for key, val in display_names_data.items():
+            if isinstance(val, dict):
+                display_name_map[key] = val.get("displayName") or val.get("fullName") or key
+            elif isinstance(val, str):
+                display_name_map[key] = val
+
+    if isinstance(products_data, list):
+        for item in products_data:
             school = item.get("_id", item.get("school", ""))
-            display_name = item.get("displayName", item.get("_id", ""))
             schools.append({
                 "school": school,
-                "displayName": display_name,
+                "displayName": resolve_school_display_name(
+                    school,
+                    verified_display_name=display_name_map.get(school),
+                    fallback_display_name=item.get("displayName", item.get("_id", "")),
+                ),
                 "products": item.get("products", []),
             })
-    elif isinstance(data, dict):
-        for key, val in data.items():
+    elif isinstance(products_data, dict):
+        for key, val in products_data.items():
             if isinstance(val, dict):
                 schools.append({
                     "school": key,
-                    "displayName": val.get("displayName", key),
+                    "displayName": resolve_school_display_name(
+                        key,
+                        verified_display_name=display_name_map.get(key),
+                        fallback_display_name=val.get("displayName", key),
+                    ),
                     "products": val.get("products", []),
                 })
             else:
-                schools.append({"school": key, "displayName": key, "products": []})
+                schools.append({
+                    "school": key,
+                    "displayName": resolve_school_display_name(
+                        key,
+                        verified_display_name=display_name_map.get(key),
+                        fallback_display_name=key,
+                    ),
+                    "products": [],
+                })
     schools.sort(key=lambda s: s["school"])
     return schools
 
@@ -284,8 +314,11 @@ async def list_schools():
     """List all schools from the Coursedog admin API."""
     db = get_db()
     try:
-        data = await api_get("/api/v1/admin/schools/products")
-        all_schools = normalize_school_catalog(data)
+        products_data, display_names_data = await asyncio.gather(
+            api_get("/api/v1/admin/schools/products"),
+            api_get("/api/v1/admin/schools/displayNames"),
+        )
+        all_schools = normalize_school_catalog(products_data, display_names_data)
         additional_excluded_schools = get_additional_excluded_schools(db)
         included_schools, excluded_schools = split_school_catalog(
             all_schools, additional_excluded_schools
