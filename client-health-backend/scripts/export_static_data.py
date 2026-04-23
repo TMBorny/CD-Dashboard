@@ -165,20 +165,15 @@ async def hydrate_missing_active_users(latest_by_school: dict[str, SchoolSnapsho
 def build_error_summary_export(db, exported_at: str) -> dict[str, Any]:
     history_start = db.query(ErrorAnalysisGroup.snapshot_date).order_by(ErrorAnalysisGroup.snapshot_date.asc()).first()
     last_capture = db.query(ErrorAnalysisGroup.created_at).order_by(ErrorAnalysisGroup.created_at.desc()).first()
-    latest_snapshot = db.query(ErrorAnalysisGroup.snapshot_date).order_by(ErrorAnalysisGroup.snapshot_date.desc()).first()
-    
-    if latest_snapshot:
-        groups = (
-            db.query(ErrorAnalysisGroup)
-            .filter(ErrorAnalysisGroup.snapshot_date == latest_snapshot[0])
-            .order_by(
-                ErrorAnalysisGroup.school.asc(),
-                ErrorAnalysisGroup.signature_key.asc(),
-            )
-            .all()
+    groups = (
+        db.query(ErrorAnalysisGroup)
+        .order_by(
+            ErrorAnalysisGroup.snapshot_date.asc(),
+            ErrorAnalysisGroup.school.asc(),
+            ErrorAnalysisGroup.signature_key.asc(),
         )
-    else:
-        groups = []
+        .all()
+    )
 
     groups_list = []
     for group in groups:

@@ -1,4 +1,5 @@
 import unittest
+import importlib.util
 import os
 import atexit
 import json
@@ -62,6 +63,12 @@ from app.routes import (
     write_error_analysis_export,
 )
 from app.school_names import backfill_school_display_names, resolve_school_display_name
+
+EXPORT_STATIC_DATA_PATH = os.path.join(os.path.dirname(__file__), "..", "scripts", "export_static_data.py")
+EXPORT_STATIC_DATA_SPEC = importlib.util.spec_from_file_location("export_static_data", EXPORT_STATIC_DATA_PATH)
+assert EXPORT_STATIC_DATA_SPEC and EXPORT_STATIC_DATA_SPEC.loader
+export_static_data = importlib.util.module_from_spec(EXPORT_STATIC_DATA_SPEC)
+EXPORT_STATIC_DATA_SPEC.loader.exec_module(export_static_data)
 
 TEST_INTERNAL_API_KEY = "test-internal-key"
 AUTH_HEADERS = {"X-Internal-API-Key": TEST_INTERNAL_API_KEY}
@@ -3354,6 +3361,92 @@ class ErrorAnalysisEndpointTests(unittest.TestCase):
         self.assertEqual(payload["metadata"]["rowCount"], 1)
         self.assertEqual(payload["rows"][0]["school"], "foo01")
         self.assertEqual(payload["rows"][0]["mergeReport"]["mergeReportId"], "report-b1")
+
+
+class StaticErrorExportTests(unittest.TestCase):
+    def test_error_summary_export_keeps_all_historical_groups(self):
+        init_db()
+        db = get_db()
+        try:
+            db.add_all(
+                [
+                    ErrorAnalysisGroup.from_dict(
+                        {
+                            "snapshotDate": "2026-04-12",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": "Banner",
+                            "entityType": "sections",
+                            "errorCode": "missing_course",
+                            "signatureKey": "sig-a",
+                            "normalizedMessage": "course missing dependency",
+                            "sampleMessage": "Older course missing dependency",
+                            "count": 2,
+                            "sampleErrors": [],
+                            "termCodes": ["202505"],
+                        }
+                    ),
+                    ErrorAnalysisGroup.from_dict(
+                        {
+                            "snapshotDate": "2026-04-13",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": "Banner",
+                            "entityType": "sections",
+                            "errorCode": "missing_course",
+                            "signatureKey": "sig-a",
+                            "normalizedMessage": "course missing dependency",
+                            "sampleMessage": "Current course missing dependency",
+                            "count": 1,
+                            "sampleErrors": [],
+                            "termCodes": ["202506"],
+                        }
+                    ),
+                    ErrorAnalysisGroup.from_dict(
+                        {
+                            "snapshotDate": "2026-04-13",
+                            "school": "foo01",
+                            "displayName": "Foo State",
+                            "sisPlatform": "PeopleSoftDirect",
+                            "entityType": "courses",
+                            "errorCode": "duplicate_course",
+                            "signatureKey": "sig-b",
+                            "normalizedMessage": "duplicate course",
+                            "sampleMessage": "Duplicate course",
+                            "count": 4,
+                            "sampleErrors": [],
+                            "termCodes": ["202506"],
+                        }
+                    ),
+                    ErrorAnalysisGroup.from_dict(
+                        {
+                            "snapshotDate": "2026-04-14",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": "Banner",
+                            "entityType": "courses",
+                            "errorCode": "duplicate_course",
+                            "signatureKey": "sig-b",
+                            "normalizedMessage": "duplicate course",
+                            "sampleMessage": "Newest duplicate course",
+                            "count": 1,
+                            "sampleErrors": [],
+                            "termCodes": ["202507"],
+                        }
+                    ),
+                ]
+            )
+            db.commit()
+
+            payload = export_static_data.build_error_summary_export(db, exported_at="2026-04-15T00:00:00Z")
+        finally:
+            db.close()
+
+        self.assertEqual(
+            [group["snapshotDate"] for group in payload["groups"]],
+            ["2026-04-12", "2026-04-13", "2026-04-13", "2026-04-14"],
+        )
+        self.assertEqual(len(payload["groups"]), 4)
 
 
 class SyncRunListEndpointTests(unittest.TestCase):
