@@ -1,0 +1,42 @@
+{
+  "lastAttemptedSync": {
+    "attemptedAt": "2026-04-12T20:07:21.508428+00:00",
+    "checkpointState": null,
+    "completedUnits": 0,
+    "currentSchool": null,
+    "currentSnapshotDate": null,
+    "dateCount": 102,
+    "endDate": "2026-04-12",
+    "errorCount": 0,
+    "errorMessage": null,
+    "errors": [],
+    "failedUnits": 0,
+    "failedUnitsSample": [],
+    "failureReason": null,
+    "finishedAt": "2026-04-12T20:07:46.250534+00:00",
+    "jobId": "f79dd133-a2f0-4992-970b-552361f1dec6",
+    "lastHeartbeatAt": null,
+    "lastProgressAt": null,
+    "school": "smu_peoplesoft",
+    "schoolsProcessed": 102,
+    "scope": "history-backfill-single",
+    "skippedUnits": 0,
+    "snapshotDate": "2026-04-12",
+    "startDate": "2026-01-01",
+    "startedAt": "2026-04-12T20:07:21.508428+00:00",
+    "status": "completed",
+    "statusDetail": null,
+    "timing": {
+      "fetchHealthSec": 24.52,
+      "listSchoolsSec": 0.23,
+      "persistDbSec": 0.0,
+      "totalSec": 24.74
+    },
+    "totalSchools": 102
+  },
+  "lastSuccessfulSync": {
+    "createdAt": "2026-04-22T21:46:30.997450+00:00",
+    "school": "smu_peoplesoft",
+    "snapshotDate": "2026-04-22"
+  }
+}

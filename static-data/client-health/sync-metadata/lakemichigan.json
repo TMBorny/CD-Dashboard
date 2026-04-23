@@ -1,0 +1,37 @@
+{
+  "lastAttemptedSync": {
+    "attemptedAt": "2026-04-11T21:42:31.108149+00:00",
+    "checkpointState": null,
+    "completedUnits": 0,
+    "currentSchool": null,
+    "currentSnapshotDate": null,
+    "dateCount": null,
+    "endDate": null,
+    "errorCount": 0,
+    "errorMessage": null,
+    "errors": [],
+    "failedUnits": 0,
+    "failedUnitsSample": [],
+    "failureReason": null,
+    "finishedAt": "2026-04-11T21:42:36.828150+00:00",
+    "jobId": "53e31198-7a0f-4ec2-8ed4-7fb6fb9cbf1d",
+    "lastHeartbeatAt": null,
+    "lastProgressAt": null,
+    "school": "lakemichigan",
+    "schoolsProcessed": 0,
+    "scope": "history-backfill",
+    "skippedUnits": 0,
+    "snapshotDate": "2026-04-11",
+    "startDate": null,
+    "startedAt": null,
+    "status": "completed",
+    "statusDetail": null,
+    "timing": null,
+    "totalSchools": 0
+  },
+  "lastSuccessfulSync": {
+    "createdAt": "2026-04-22T21:46:30.997423+00:00",
+    "school": "lakemichigan",
+    "snapshotDate": "2026-04-22"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "lastAttemptedSync": {
+    "attemptedAt": "2026-04-12T00:06:00.906447+00:00",
+    "checkpointState": null,
+    "completedUnits": 0,
+    "currentSchool": null,
+    "currentSnapshotDate": null,
+    "dateCount": null,
+    "endDate": null,
+    "errorCount": 0,
+    "errorMessage": null,
+    "errors": [],
+    "failedUnits": 0,
+    "failedUnitsSample": [],
+    "failureReason": null,
+    "finishedAt": "2026-04-12T00:06:04.163010+00:00",
+    "jobId": "e4e492bd-a5b9-43e7-9e42-c0207c8379fd",
+    "lastHeartbeatAt": null,
+    "lastProgressAt": null,
+    "school": "galen_colleague_ethos",
+    "schoolsProcessed": 0,
+    "scope": "history-backfill",
+    "skippedUnits": 0,
+    "snapshotDate": "2026-04-12",
+    "startDate": null,
+    "startedAt": null,
+    "status": "completed",
+    "statusDetail": null,
+    "timing": null,
+    "totalSchools": 0
+  },
+  "lastSuccessfulSync": {
+    "createdAt": "2026-04-22T21:46:30.997415+00:00",
+    "school": "galen_colleague_ethos",
+    "snapshotDate": "2026-04-22"
+  }
+}

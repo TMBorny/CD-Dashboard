@@ -1,0 +1,51 @@
+{
+  "lastAttemptedSync": {
+    "attemptedAt": "2026-04-13T15:41:49.126180+00:00",
+    "checkpointState": {
+      "completedUnits": 14,
+      "currentSchool": "nsc_peoplesoft",
+      "currentSnapshotDate": "2026-04-13",
+      "failedUnits": 0,
+      "remainingUnits": 0,
+      "skippedUnits": 0,
+      "status": "completed"
+    },
+    "completedUnits": 14,
+    "currentSchool": "nsc_peoplesoft",
+    "currentSnapshotDate": "2026-04-13",
+    "dateCount": 14,
+    "endDate": "2026-04-13",
+    "errorCount": 0,
+    "errorMessage": null,
+    "errors": [],
+    "failedUnits": 0,
+    "failedUnitsSample": [],
+    "failureReason": null,
+    "finishedAt": "2026-04-13T15:42:08.573101+00:00",
+    "jobId": "4f7c5e60-9793-4eb7-955a-06c2fbdf66d5",
+    "lastHeartbeatAt": "2026-04-13T15:42:08.573104+00:00",
+    "lastProgressAt": "2026-04-13T15:42:08.572194+00:00",
+    "school": "nsc_peoplesoft",
+    "schoolsProcessed": 14,
+    "scope": "history-backfill-single",
+    "skippedUnits": 0,
+    "snapshotDate": "2026-04-13",
+    "stallThresholdSeconds": 600,
+    "startDate": "2026-03-31",
+    "startedAt": "2026-04-13T15:41:49.126180+00:00",
+    "status": "completed",
+    "statusDetail": "completed",
+    "timing": {
+      "fetchHealthSec": 18.98,
+      "listSchoolsSec": 0.47,
+      "persistDbSec": 0.0,
+      "totalSec": 19.45
+    },
+    "totalSchools": 14
+  },
+  "lastSuccessfulSync": {
+    "createdAt": "2026-04-22T21:46:30.997436+00:00",
+    "school": "nsc_peoplesoft",
+    "snapshotDate": "2026-04-22"
+  }
+}

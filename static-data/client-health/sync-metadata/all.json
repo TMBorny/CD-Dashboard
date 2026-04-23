@@ -1,0 +1,42 @@
+{
+  "lastAttemptedSync": {
+    "attemptedAt": "2026-04-22T21:43:52.159281+00:00",
+    "checkpointState": null,
+    "completedUnits": 0,
+    "currentSchool": null,
+    "currentSnapshotDate": null,
+    "dateCount": null,
+    "endDate": null,
+    "errorCount": 0,
+    "errorMessage": null,
+    "errors": [],
+    "failedUnits": 0,
+    "failedUnitsSample": [],
+    "failureReason": null,
+    "finishedAt": "2026-04-22T21:46:31.925608+00:00",
+    "jobId": "fe9e3788-baec-404e-a47c-b09ecb99af8a",
+    "lastHeartbeatAt": null,
+    "lastProgressAt": null,
+    "school": null,
+    "schoolsProcessed": 294,
+    "scope": "bulk",
+    "skippedUnits": 0,
+    "snapshotDate": "2026-04-22",
+    "startDate": null,
+    "startedAt": "2026-04-22T21:43:52.159281+00:00",
+    "status": "completed",
+    "statusDetail": null,
+    "timing": {
+      "fetchHealthSec": 158.1,
+      "listSchoolsSec": 0.24,
+      "persistDbSec": 1.42,
+      "totalSec": 159.77
+    },
+    "totalSchools": 294
+  },
+  "lastSuccessfulSync": {
+    "createdAt": "2026-04-22T21:46:30.997467+00:00",
+    "school": "wsutech_banner_sql",
+    "snapshotDate": "2026-04-22"
+  }
+}
