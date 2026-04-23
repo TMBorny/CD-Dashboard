@@ -89,7 +89,7 @@ const localTimeZoneLabel = getLocalTimeZoneLabel();
 </script>
 
 <template>
-  <div class="px-8 py-8 w-full max-w-7xl mx-auto">
+  <div class="px-8 py-8 w-full max-w-78xl mx-auto">
     <div class="mb-8 flex items-center justify-between">
       <div>
         <h1 class="text-2xl font-semibold tracking-tight text-slate-950">Background Jobs</h1>
@@ -101,16 +101,16 @@ const localTimeZoneLabel = getLocalTimeZoneLabel();
     <div v-if="isLoading" class="text-sm text-slate-500">Loading jobs...</div>
     <div v-else-if="error && !hasSyncRunsData" class="text-sm text-rose-500">Failed to load job history.</div>
     <div v-else class="space-y-4">
-      <div v-if="error" class="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+      <div v-if="error" class="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-base text-amber-800">
         {{ isStaticDataMode ? 'Showing the exported snapshot of job history from the static build.' : 'Live updates are temporarily unavailable. Showing the most recent job history we already loaded.' }}
       </div>
-      <div v-if="isStaticDataMode" class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+      <div v-if="isStaticDataMode" class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base text-slate-700">
         This hosted view is read-only. Resume and retry actions stay available in the live dashboard only.
       </div>
-      <div v-if="mutationError" class="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+      <div v-if="mutationError" class="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-base text-rose-700">
         {{ mutationError }}
       </div>
-      <div class="flex flex-wrap items-center justify-between gap-3 px-1 text-sm text-slate-500">
+      <div class="flex flex-wrap items-center justify-between gap-3 px-1 text-base text-slate-500">
         <p>
           Showing {{ showingFrom }}-{{ showingTo }} of {{ totalCount }} job{{ totalCount === 1 ? '' : 's' }}.
         </p>
@@ -134,7 +134,7 @@ const localTimeZoneLabel = getLocalTimeZoneLabel();
       </div>
 
       <div class="rounded-[24px] border border-slate-200 bg-white p-3 shadow-sm">
-      <table class="w-full border-separate border-spacing-y-3 text-left text-sm">
+      <table class="w-full border-separate border-spacing-y-3 text-left text-[1.02rem]">
         <thead class="text-xs uppercase tracking-[0.1em] text-slate-500">
           <tr>
             <th class="px-6 py-4 font-semibold text-slate-600">
@@ -201,28 +201,28 @@ const localTimeZoneLabel = getLocalTimeZoneLabel();
           >
             <td class="rounded-l-3xl border-y border-l border-slate-200 bg-slate-50/70 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300 group-hover:bg-white">
               <div class="font-medium text-slate-900">{{ run.jobId.slice(0, 8) }}...</div>
-              <div class="mt-1 text-xs text-slate-500">{{ formatDateTime(run.attemptedAt) }}</div>
+              <div class="mt-1 text-sm text-slate-500">{{ formatDateTime(run.attemptedAt) }}</div>
             </td>
             <td class="border-y border-slate-200 bg-slate-50/70 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300 group-hover:bg-white">
               <div class="font-medium text-slate-900 capitalize">{{ formatJobScope(run.scope) }}</div>
-              <div v-if="run.school" class="mt-1 text-xs text-slate-500">Target: {{ run.school }}</div>
+              <div v-if="run.school" class="mt-1 text-sm text-slate-500">Target: {{ run.school }}</div>
             </td>
             <td class="border-y border-slate-200 bg-slate-50/70 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300 group-hover:bg-white">
               <Badge :tone="getJobStatusTone(run.status)">{{ run.status }}</Badge>
-              <div v-if="formatJobRuntime(run)" class="mt-2 text-xs text-slate-500">
+              <div v-if="formatJobRuntime(run)" class="mt-2 text-sm text-slate-500">
                 {{ formatJobRuntime(run) }}
               </div>
-              <div v-if="run.statusDetail" class="mt-2 text-xs text-slate-500">
+              <div v-if="run.statusDetail" class="mt-2 text-sm text-slate-500">
                 {{ run.statusDetail.replaceAll('_', ' ') }}
               </div>
             </td>
             <td class="border-y border-slate-200 bg-slate-50/70 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300 group-hover:bg-white">
               <div v-if="formatJobProgress(run)" class="font-medium text-slate-900" :title="run.scope.includes('backfill') ? 'Completed snapshots out of total school-day snapshots in this backfill' : 'Completed schools out of total schools in this sync'">{{ formatJobProgress(run) }}</div>
-              <div v-else class="text-xs text-slate-400">No progress data</div>
-              <div v-if="run.startedAt" class="mt-2 text-xs text-slate-500">
+              <div v-else class="text-sm text-slate-400">No progress data</div>
+              <div v-if="run.startedAt" class="mt-2 text-sm text-slate-500">
                 Started {{ formatDateTime(run.startedAt) }}
               </div>
-              <div v-if="run.scope.includes('backfill')" class="mt-2 space-y-1 text-xs text-slate-500">
+              <div v-if="run.scope.includes('backfill')" class="mt-2 space-y-1 text-sm text-slate-500">
                 <div>Completed: {{ run.completedUnits ?? 0 }}</div>
                 <div>Failed: {{ run.failedUnits ?? 0 }}</div>
                 <div>Skipped: {{ run.skippedUnits ?? 0 }}</div>
@@ -231,17 +231,17 @@ const localTimeZoneLabel = getLocalTimeZoneLabel();
             <td class="border-y border-slate-200 bg-slate-50/70 px-6 py-5 align-top shadow-sm transition group-hover:border-slate-300 group-hover:bg-white">
               <div v-if="formatBackfillRange(run)" class="font-medium text-slate-900" title="Inclusive historical date range requested by the job">{{ formatBackfillRange(run) }}</div>
               <div v-else-if="run.snapshotDate" class="font-medium text-slate-900" title="Snapshot date written by this daily sync">{{ run.snapshotDate }}</div>
-              <div v-else class="text-xs text-slate-400">No snapshot data</div>
-              <div v-if="run.scope.includes('backfill')" class="mt-2 text-xs text-slate-500">Historical backfill</div>
-              <div v-else class="mt-2 text-xs text-slate-500">Daily sync</div>
-              <div v-if="run.currentSchool || run.currentSnapshotDate" class="mt-2 text-xs text-slate-500">
+              <div v-else class="text-sm text-slate-400">No snapshot data</div>
+              <div v-if="run.scope.includes('backfill')" class="mt-2 text-sm text-slate-500">Historical backfill</div>
+              <div v-else class="mt-2 text-sm text-slate-500">Daily sync</div>
+              <div v-if="run.currentSchool || run.currentSnapshotDate" class="mt-2 text-sm text-slate-500">
                 Current: {{ run.currentSchool ?? 'Unknown school' }}<span v-if="run.currentSnapshotDate"> on {{ run.currentSnapshotDate }}</span>
               </div>
-              <div v-if="run.lastHeartbeatAt" class="mt-2 text-xs text-slate-500">
+              <div v-if="run.lastHeartbeatAt" class="mt-2 text-sm text-slate-500">
                 <div>Heartbeat: {{ formatRelativeAge(run.lastHeartbeatAt) }}</div>
                 <div class="mt-1 text-slate-400">{{ formatDateTime(run.lastHeartbeatAt) }}</div>
               </div>
-              <div v-if="run.lastProgressAt" class="mt-1 text-xs text-slate-500">
+              <div v-if="run.lastProgressAt" class="mt-1 text-sm text-slate-500">
                 <div>Last progress: {{ formatRelativeAge(run.lastProgressAt) }}</div>
                 <div class="mt-1 text-slate-400">{{ formatDateTime(run.lastProgressAt) }}</div>
               </div>
@@ -253,21 +253,21 @@ const localTimeZoneLabel = getLocalTimeZoneLabel();
               >
                 View details
               </RouterLink>
-              <div v-if="run.errorCount" class="mb-2 text-xs text-slate-600" title="Count of warnings and errors captured during execution">
+              <div v-if="run.errorCount" class="mb-2 text-sm text-slate-600" title="Count of warnings and errors captured during execution">
                 {{ run.errorCount }} captured issue{{ run.errorCount === 1 ? '' : 's' }}
               </div>
-              <div v-if="run.failureReason" class="mb-2 text-xs text-amber-700">
+              <div v-if="run.failureReason" class="mb-2 text-sm text-amber-700">
                 {{ run.failureReason }}
               </div>
-              <div v-if="run.errorMessage" class="text-xs text-rose-600 font-mono bg-rose-50 p-2 rounded max-w-md overflow-x-auto">
+              <div v-if="run.errorMessage" class="text-sm text-rose-600 font-mono bg-rose-50 p-2 rounded max-w-md overflow-x-auto">
                 {{ run.errorMessage }}
               </div>
-              <div v-else class="text-xs text-slate-400">No errors</div>
+              <div v-else class="text-sm text-slate-400">No errors</div>
               <div v-if="run.failedUnitsSample?.length" class="mt-3 space-y-2">
                 <div
                   v-for="sample in run.failedUnitsSample.slice(0, 3)"
                   :key="`${sample.school}-${sample.snapshotDate}-${sample.attemptCount}`"
-                  class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+                  class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800"
                 >
                   <div class="font-medium">{{ sample.school }} • {{ sample.snapshotDate }}</div>
                   <div v-if="sample.error" class="mt-1 break-words">{{ sample.error }}</div>

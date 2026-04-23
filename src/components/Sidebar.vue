@@ -25,12 +25,14 @@ const navItems = [
     path: '/admin/jobs',
     icon: '⚙️',
     name: 'AdminJobsMonitoring',
+    labelClass: 'text-[1.02rem]',
   },
   {
     label: 'Operations',
     path: '/admin/operations',
     icon: '🛠️',
     name: 'AdminOperations',
+    labelClass: 'text-[1.02rem]',
   },
   {
     label: 'Feedback',
@@ -83,7 +85,7 @@ const isActive = (itemPath: string) => {
             ]"
           >
             <span class="text-xl flex-shrink-0">{{ item.icon }}</span>
-            <span v-if="isOpen" class="truncate">{{ item.label }}</span>
+            <span v-if="isOpen" :class="['truncate', item.labelClass]">{{ item.label }}</span>
           </router-link>
           <a
             v-else

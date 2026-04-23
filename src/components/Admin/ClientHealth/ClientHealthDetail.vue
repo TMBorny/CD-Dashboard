@@ -541,7 +541,7 @@ watch([currentErrorCategoryFilter, currentErrorEntityTypeFilter, currentErrorSig
 
 <template>
   <div class="min-h-screen bg-slate-50">
-    <div class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+    <div class="mx-auto w-full px-4 py-6 sm:px-6 lg:px-8">
       <div class="mb-8 rounded-[28px] border border-slate-200 bg-white/95 p-8 shadow-sm">
         <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>

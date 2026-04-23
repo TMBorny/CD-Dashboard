@@ -357,12 +357,12 @@ async function unexcludeSchool(school: string) {
             <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <h2 class="text-xl font-semibold text-slate-950">Excluded schools</h2>
-                <p class="mt-2 text-sm text-slate-500">
+                <p class="mt-2 text-base text-slate-500">
                   Default term filters: {{ excludedTerms.join(', ') }}.
                   The static snapshot includes the current excluded-school list for reference.
                 </p>
               </div>
-              <p class="text-sm font-medium text-slate-900">{{ excludedSchools.length }} excluded</p>
+              <p class="text-base font-medium text-slate-900">{{ excludedSchools.length }} excluded</p>
             </div>
 
             <div class="grid gap-4 xl:grid-cols-2 2xl:grid-cols-3">
@@ -371,8 +371,8 @@ async function unexcludeSchool(school: string) {
                 :key="`static-manual-${school.school}`"
                 class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4"
               >
-                <p class="truncate text-sm font-semibold text-slate-900">{{ formatSchoolLabel(school.school, school.displayName) }}</p>
-                <p class="mt-1 truncate text-xs text-slate-500">
+                <p class="truncate text-base font-semibold text-slate-900">{{ formatSchoolLabel(school.school, school.displayName) }}</p>
+                <p class="mt-1 truncate text-sm text-slate-500">
                   <span class="font-medium text-slate-600">{{ school.school }}</span>
                   <span v-if="getCompactReason(school.reason)"> · {{ getCompactReason(school.reason) }}</span>
                 </p>
@@ -407,7 +407,7 @@ async function unexcludeSchool(school: string) {
 
         <aside class="rounded-[28px] border border-slate-200 bg-white p-8 shadow-sm">
           <h2 class="text-xl font-semibold text-slate-950">Read-only snapshot</h2>
-          <p class="mt-2 text-sm leading-7 text-slate-600">
+          <p class="mt-2 text-base leading-7 text-slate-600">
             The static site mirrors the current exclusion list for visibility only. To add or remove exclusions,
             use the private Operations dashboard.
           </p>
@@ -424,7 +424,7 @@ async function unexcludeSchool(school: string) {
               custom runs process selected schools one at a time. Excluded schools are skipped from the selectable list and bulk runs.
             </p>
           </div>
-          <div class="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-sm text-slate-600">
+          <div class="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-base text-slate-600">
             <p class="font-medium text-slate-900">{{ selectedSchoolLabels }}</p>
             <p class="mt-1">Backfill range: {{ startDate }} to {{ endDate }}</p>
           </div>
@@ -436,7 +436,7 @@ async function unexcludeSchool(school: string) {
           <div class="flex flex-col gap-6">
             <div>
               <h2 class="text-xl font-semibold text-slate-950">Scope</h2>
-              <p class="mt-2 text-sm text-slate-500">Choose all schools or build a custom selection for targeted sync and backfill runs.</p>
+              <p class="mt-2 text-base text-slate-500">Choose all schools or build a custom selection for targeted sync and backfill runs.</p>
             </div>
 
             <label class="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
@@ -485,7 +485,7 @@ async function unexcludeSchool(school: string) {
                     />
                     <div class="min-w-0">
                       <p class="font-medium text-slate-900">{{ formatSchoolLabel(school.school, school.displayName) }}</p>
-                      <p class="mt-1 text-xs text-slate-500">{{ school.school }}</p>
+                      <p class="mt-1 text-sm text-slate-500">{{ school.school }}</p>
                     </div>
                   </div>
                   <button
@@ -508,12 +508,12 @@ async function unexcludeSchool(school: string) {
               <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <h3 class="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Excluded schools</h3>
-                  <p class="mt-2 text-sm text-slate-600">
+                  <p class="mt-2 text-base text-slate-600">
                     Default term filters: {{ excludedTerms.join(', ') }}.
                     Additional exclusions are stored locally and skipped by bulk operations.
                   </p>
                 </div>
-                <p class="text-sm font-medium text-slate-900">{{ excludedSchools.length }} excluded</p>
+                <p class="text-base font-medium text-slate-900">{{ excludedSchools.length }} excluded</p>
               </div>
 
               <div class="mt-4 grid gap-4 2xl:grid-cols-[minmax(0,1.35fr)_minmax(20rem,0.65fr)]">
@@ -526,8 +526,8 @@ async function unexcludeSchool(school: string) {
                       class="flex items-start justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3"
                     >
                       <div class="min-w-0 flex-1">
-                        <p class="truncate text-sm font-semibold text-slate-900">{{ formatSchoolLabel(school.school, school.displayName) }}</p>
-                        <p class="mt-1 truncate text-xs text-slate-500">
+                        <p class="truncate text-base font-semibold text-slate-900">{{ formatSchoolLabel(school.school, school.displayName) }}</p>
+                        <p class="mt-1 truncate text-sm text-slate-500">
                           <span class="font-medium text-slate-600">{{ school.school }}</span>
                           <span v-if="getCompactReason(school.reason)"> · {{ getCompactReason(school.reason) }}</span>
                         </p>
@@ -556,8 +556,8 @@ async function unexcludeSchool(school: string) {
                       :key="`rule-${school.school}`"
                       class="rounded-xl border border-slate-200 bg-white px-4 py-3"
                     >
-                      <p class="truncate text-sm font-semibold text-slate-900">{{ formatSchoolLabel(school.school, school.displayName) }}</p>
-                      <p class="mt-1 truncate text-xs text-slate-500">
+                      <p class="truncate text-base font-semibold text-slate-900">{{ formatSchoolLabel(school.school, school.displayName) }}</p>
+                      <p class="mt-1 truncate text-sm text-slate-500">
                         <span class="font-medium text-slate-600">{{ school.school }}</span>
                         <span v-if="getCompactReason(school.reason)"> · {{ getCompactReason(school.reason) }}</span>
                       </p>
@@ -578,7 +578,7 @@ async function unexcludeSchool(school: string) {
           <div class="flex flex-col gap-6">
             <div>
               <h2 class="text-xl font-semibold text-slate-950">Actions</h2>
-              <p class="mt-2 text-sm text-slate-500">Sync refreshes the latest snapshot. Backfill writes historical daily snapshots for the selected inclusive range.</p>
+              <p class="mt-2 text-base text-slate-500">Sync refreshes the latest snapshot. Backfill writes historical daily snapshots for the selected inclusive range.</p>
             </div>
 
             <div class="rounded-2xl border border-slate-200 bg-slate-50 p-5">
@@ -587,7 +587,7 @@ async function unexcludeSchool(school: string) {
                   <h3 class="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Daily sync</h3>
                   <Badge :tone="schedulerStatusTone" :label="schedulerStatusLabel" />
                 </div>
-                <p class="text-sm text-slate-600">Control the automatic daily sync schedule for the backend service in America/New_York.</p>
+                <p class="text-base text-slate-600">Control the automatic daily sync schedule for the backend service in America/New_York.</p>
 
                 <div v-if="isLoadingSchedulerSettings" class="text-sm text-slate-500">Loading daily sync settings...</div>
                 <div v-else class="grid gap-4 sm:grid-cols-[minmax(0,1fr)_12rem_auto] sm:items-end">
@@ -626,7 +626,7 @@ async function unexcludeSchool(school: string) {
                 </div>
               </div>
 
-              <p v-if="schedulerMessage" class="mt-4 text-sm text-slate-600">{{ schedulerMessage }}</p>
+              <p v-if="schedulerMessage" class="mt-4 text-base text-slate-600">{{ schedulerMessage }}</p>
               <p v-if="schedulerError" class="mt-2 text-sm text-rose-500">{{ schedulerError }}</p>
             </div>
 
@@ -688,24 +688,24 @@ async function unexcludeSchool(school: string) {
 
             <div class="rounded-2xl border border-slate-200 bg-slate-50 p-5">
               <h3 class="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Run status</h3>
-              <p v-if="statusMessage" class="mt-3 text-sm text-slate-700">{{ statusMessage }}</p>
-              <p v-if="queueProgress" class="mt-2 text-sm text-slate-500">
+              <p v-if="statusMessage" class="mt-3 text-base text-slate-700">{{ statusMessage }}</p>
+              <p v-if="queueProgress" class="mt-2 text-base text-slate-500">
                 Queue progress: {{ queueProgress.completed }} / {{ queueProgress.total }}
               </p>
               <div v-if="currentJob" class="mt-4 rounded-xl border border-slate-200 bg-white p-4">
                 <p class="font-medium text-slate-900">
                   {{ currentJob.school ? formatSchoolLabel(currentJob.school) : 'All schools' }}
                 </p>
-                <p class="mt-1 text-sm text-slate-600">Status: {{ currentJob.status }}</p>
-                <p class="mt-1 text-xs text-slate-500">Started: {{ formatTimestamp(currentJob.startedAt) }}</p>
-                <p class="mt-1 text-xs text-slate-500">Ended: {{ formatTimestamp(currentJob.finishedAt) }}</p>
-                <p v-if="getElapsedSeconds(currentJob) !== null" class="mt-1 text-xs text-slate-500">
+                <p class="mt-1 text-base text-slate-600">Status: {{ currentJob.status }}</p>
+                <p class="mt-1 text-sm text-slate-500">Started: {{ formatTimestamp(currentJob.startedAt) }}</p>
+                <p class="mt-1 text-sm text-slate-500">Ended: {{ formatTimestamp(currentJob.finishedAt) }}</p>
+                <p v-if="getElapsedSeconds(currentJob) !== null" class="mt-1 text-sm text-slate-500">
                   Total time: {{ getElapsedSeconds(currentJob) }}s
                 </p>
-                <p v-if="currentJob.totalSchools" class="mt-1 text-xs text-slate-500">
+                <p v-if="currentJob.totalSchools" class="mt-1 text-sm text-slate-500">
                   {{ currentJob.schoolsProcessed ?? 0 }} / {{ currentJob.totalSchools }} processed
                 </p>
-                <p v-if="currentJob.errors?.length" class="mt-2 text-xs text-amber-600">
+                <p v-if="currentJob.errors?.length" class="mt-2 text-sm text-amber-600">
                   {{ currentJob.errors.slice(0, 2).join(' | ') }}
                 </p>
               </div>
@@ -713,7 +713,7 @@ async function unexcludeSchool(school: string) {
                 <div
                   v-for="job in completedJobs"
                   :key="`${job.school ?? 'all'}-${job.totalSec ?? 0}-${job.status}`"
-                  class="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm"
+                  class="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-base"
                 >
                   <p class="font-medium text-emerald-800">
                     {{ job.school ? formatSchoolLabel(job.school) : 'All schools' }}

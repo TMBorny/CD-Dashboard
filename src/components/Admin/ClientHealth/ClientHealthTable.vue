@@ -350,7 +350,7 @@ const exportSchools = () => {
             v-model="searchQuery"
             type="text"
             placeholder="Filter by school or ID…"
-            class="h-9 w-56 rounded-full border border-slate-200 bg-slate-50 pl-8 pr-8 text-xs font-medium text-slate-700 placeholder-slate-400 outline-none ring-0 transition focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200"
+            class="h-8 w-52 rounded-full border border-slate-200 bg-slate-50 pl-8 pr-8 text-[11px] font-medium text-slate-700 placeholder-slate-400 outline-none ring-0 transition focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200"
           />
           <button
             v-if="searchQuery"
@@ -367,7 +367,7 @@ const exportSchools = () => {
           <select
             :value="sortBy"
             @change="updateSortBy(($event.target as HTMLSelectElement).value as typeof sortBy)"
-            class="h-9 appearance-none rounded-full border border-slate-200 bg-slate-50 pl-4 pr-10 text-xs font-semibold uppercase tracking-[0.24em] text-slate-600 outline-none transition focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200"
+            class="h-8 appearance-none rounded-full border border-slate-200 bg-slate-50 pl-4 pr-10 text-[11px] font-medium tracking-[0.04em] text-slate-600 outline-none transition focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200"
             aria-label="Sort schools by"
           >
             <option
@@ -390,15 +390,15 @@ const exportSchools = () => {
         <button
           type="button"
           @click="sortOrder = sortOrder === 'asc' ? 'desc' : 'asc'"
-          class="rounded-full bg-slate-950 px-3 py-2 text-xs font-semibold uppercase tracking-[0.24em] text-white transition hover:bg-slate-800"
+          class="rounded-full bg-slate-950 px-3 py-1.5 text-[11px] font-medium tracking-[0.04em] text-white transition hover:bg-slate-800"
           :aria-label="`Toggle sort order for ${sortLabels[sortBy]}`"
         >
-          {{ sortLabels[sortBy] }} {{ sortOrder === 'asc' ? '↑' : '↓' }}
+         {{ sortOrder === 'asc' ? '↑' : '↓' }}
         </button>
         <button
           type="button"
           @click="exportSchools"
-          class="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.24em] text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+          class="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-medium tracking-[0.04em] text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
           aria-label="Export visible client table data as CSV"
         >
           Export CSV
@@ -406,7 +406,7 @@ const exportSchools = () => {
       </div>
     </div>
 
-    <div class="w-full max-h-[70vh] overflow-x-auto overflow-y-auto">
+    <div class="w-full max-h-[85vh] overflow-x-auto overflow-y-auto">
       <table class="client-health-table relative min-w-[1500px] w-full border-separate border-spacing-y-3 px-3 text-left text-sm text-slate-600">
         <thead class="bg-slate-50 border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
           <tr>
