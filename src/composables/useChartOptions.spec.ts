@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { useChartOptions } from './useChartOptions';
+import { useChartOptions, useStackedBarChartOptions } from './useChartOptions';
 
 describe('useChartOptions', () => {
   it('returns default options', () => {
@@ -38,5 +38,16 @@ describe('useChartOptions', () => {
     const formatter = yaxis?.labels?.formatter;
     expect(formatter?.(100, { seriesIndex: 0, dataPointIndex: 0, w: {} as any })).toBe('100');
     expect(formatter?.(94.25, { seriesIndex: 0, dataPointIndex: 0, w: {} as any })).toBe('94.3');
+  });
+});
+
+describe('useStackedBarChartOptions', () => {
+  it('uses a shared non-intersecting tooltip so hovering shows all stacked segments', () => {
+    const options = useStackedBarChartOptions({
+      categories: ['2026-03-09'],
+    });
+
+    expect(options.tooltip?.shared).toBe(true);
+    expect(options.tooltip?.intersect).toBe(false);
   });
 });

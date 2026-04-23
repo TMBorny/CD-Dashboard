@@ -74,58 +74,79 @@ const filteredHistory = computed(() => {
   });
 });
 
+const chartDates = computed(() => {
+  const dates = new Set<string>();
+  filteredHistory.value.forEach((snapshot: ClientHealthSnapshot) => dates.add(snapshot.snapshotDate));
+  return Array.from(dates).sort();
+});
+
+const aggregateMergeOutcomesByDate = (
+  getMerges: (snapshot: ClientHealthSnapshot) => {
+    total: number;
+    succeeded: number;
+    finishedWithIssues?: number;
+    noData?: number;
+    failed: number;
+    halted?: number;
+  },
+) => {
+  const byDate = new Map<string, { succeeded: number; issues: number; noData: number; halted: number; failed: number; total: number }>();
+
+  filteredHistory.value.forEach((snapshot: ClientHealthSnapshot) => {
+    const existing = byDate.get(snapshot.snapshotDate) ?? { succeeded: 0, issues: 0, noData: 0, halted: 0, failed: 0, total: 0 };
+    const merges = getMerges(snapshot);
+
+    byDate.set(snapshot.snapshotDate, {
+      succeeded: existing.succeeded + merges.succeeded,
+      issues: existing.issues + (merges.finishedWithIssues || 0),
+      noData: existing.noData + (merges.noData || 0),
+      halted: existing.halted + (merges.halted || 0),
+      failed: existing.failed + merges.failed,
+      total: existing.total + merges.total,
+    });
+  });
+
+  return byDate;
+};
+
 // Stacked bar chart: nightly success breakdown as % rates over time
 // Using percentages so days with different numbers of schools contributing
 // are directly comparable (4/10 had 508 schools, other days have ~7-11).
 const nightlyBreakdownSeries = computed(() => {
-  const byDate = new Map<string, { succeeded: number; issues: number; noData: number; halted: number; failed: number; total: number }>();
-  filteredHistory.value.forEach((s: ClientHealthSnapshot) => {
-    const d = s.snapshotDate;
-    const existing = byDate.get(d) ?? { succeeded: 0, issues: 0, noData: 0, halted: 0, failed: 0, total: 0 };
-    const n = s.merges.nightly;
-    byDate.set(d, {
-      succeeded: existing.succeeded + n.succeeded,
-      issues:    existing.issues    + (n.finishedWithIssues || 0),
-      noData:    existing.noData    + (n.noData || 0),
-      halted:    existing.halted    + (n.halted || 0),
-      failed:    existing.failed    + n.failed,
-      total:     existing.total     + n.total,
-    });
-  });
-  const sortedDates = Array.from(byDate.keys()).sort();
+  const byDate = aggregateMergeOutcomesByDate((snapshot) => snapshot.merges.nightly);
   const pct = (val: number, total: number) => total > 0 ? parseFloat(((val / total) * 100).toFixed(1)) : 0;
   return [
-    { name: 'Success',            data: sortedDates.map((d) => pct(byDate.get(d)!.succeeded, byDate.get(d)!.total)) },
-    { name: 'Finished w/ Issues', data: sortedDates.map((d) => pct(byDate.get(d)!.issues,    byDate.get(d)!.total)) },
-    { name: 'No Data',            data: sortedDates.map((d) => pct(byDate.get(d)!.noData,    byDate.get(d)!.total)) },
-    { name: 'Halted',             data: sortedDates.map((d) => pct(byDate.get(d)!.halted,    byDate.get(d)!.total)) },
-    { name: 'Failed',             data: sortedDates.map((d) => pct(byDate.get(d)!.failed,    byDate.get(d)!.total)) },
+    { name: 'Success',            data: chartDates.value.map((date) => pct(byDate.get(date)?.succeeded ?? 0, byDate.get(date)?.total ?? 0)) },
+    { name: 'Finished w/ Issues', data: chartDates.value.map((date) => pct(byDate.get(date)?.issues ?? 0, byDate.get(date)?.total ?? 0)) },
+    { name: 'No Data',            data: chartDates.value.map((date) => pct(byDate.get(date)?.noData ?? 0, byDate.get(date)?.total ?? 0)) },
+    { name: 'Halted',             data: chartDates.value.map((date) => pct(byDate.get(date)?.halted ?? 0, byDate.get(date)?.total ?? 0)) },
+    { name: 'Failed',             data: chartDates.value.map((date) => pct(byDate.get(date)?.failed ?? 0, byDate.get(date)?.total ?? 0)) },
   ];
 });
 
-const nightlyBreakdownDates = computed(() => {
-  const dates = new Set<string>();
-  filteredHistory.value.forEach((s: ClientHealthSnapshot) => dates.add(s.snapshotDate));
-  return Array.from(dates).sort();
-});
-
 const nightlyBreakdownOptions = computed(() => ({
-  ...useStackedBarChartOptions({
-    categories: nightlyBreakdownDates.value,
-    colors: ['#10b981', '#f59e0b', '#94a3b8', '#a16207', '#ef4444'],
-  }),
-  yaxis: {
-    min: 0,
-    max: 100,
-    labels: {
-      style: { colors: '#64748b', fontSize: '12px' },
-      formatter: (v: number) => `${v}%`,
-    },
-  },
-  tooltip: {
-    theme: 'light',
-    y: { formatter: (v: number) => `${v}%` },
-  },
+  ...(() => {
+    const baseOptions = useStackedBarChartOptions({
+      categories: chartDates.value,
+      colors: ['#10b981', '#f59e0b', '#94a3b8', '#a16207', '#ef4444'],
+    });
+
+    return {
+      ...baseOptions,
+      yaxis: {
+        min: 0,
+        max: 100,
+        labels: {
+          style: { colors: '#64748b', fontSize: '12px' },
+          formatter: (v: number) => `${v}%`,
+        },
+      },
+      tooltip: {
+        ...baseOptions.tooltip,
+        y: { formatter: (v: number) => `${v}%` },
+      },
+    };
+  })(),
 }));
 
 // Helper: aggregate a single numeric field per date across filtered history
@@ -137,7 +158,61 @@ const aggregateByDate = (field: (s: ClientHealthSnapshot) => number) => {
   return Array.from(byDate.entries()).sort(([a], [b]) => a.localeCompare(b));
 };
 
-const chartDates = computed(() => nightlyBreakdownDates.value);
+const realtimeActivitySeries = computed(() => {
+  const byDate = aggregateMergeOutcomesByDate((snapshot) => snapshot.merges.realtime);
+
+  return [
+    { name: 'Succeeded', data: chartDates.value.map((date) => byDate.get(date)?.succeeded ?? 0) },
+    { name: 'Finished With Issues', data: chartDates.value.map((date) => byDate.get(date)?.issues ?? 0) },
+    { name: 'No Data', data: chartDates.value.map((date) => byDate.get(date)?.noData ?? 0) },
+    { name: 'Failed', data: chartDates.value.map((date) => byDate.get(date)?.failed ?? 0) },
+  ];
+});
+
+const realtimeActivityOptions = computed(() => useStackedBarChartOptions({
+  categories: chartDates.value,
+  colors: ['#10b981', '#f59e0b', '#94a3b8', '#ef4444'],
+}));
+
+const realtimeBreakdownSeries = computed(() => {
+  const byDate = aggregateMergeOutcomesByDate((snapshot) => snapshot.merges.realtime);
+  const pct = (val: number, total: number) => total > 0 ? parseFloat(((val / total) * 100).toFixed(1)) : 0;
+
+  return [
+    { name: 'Succeeded', data: chartDates.value.map((date) => pct(byDate.get(date)?.succeeded ?? 0, byDate.get(date)?.total ?? 0)) },
+    { name: 'Finished With Issues', data: chartDates.value.map((date) => pct(byDate.get(date)?.issues ?? 0, byDate.get(date)?.total ?? 0)) },
+    { name: 'No Data', data: chartDates.value.map((date) => pct(byDate.get(date)?.noData ?? 0, byDate.get(date)?.total ?? 0)) },
+    { name: 'Failed', data: chartDates.value.map((date) => pct(byDate.get(date)?.failed ?? 0, byDate.get(date)?.total ?? 0)) },
+  ];
+});
+
+const realtimeBreakdownOptions = computed(() => ({
+  ...(() => {
+    const baseOptions = useStackedBarChartOptions({
+      categories: chartDates.value,
+      colors: ['#10b981', '#f59e0b', '#94a3b8', '#ef4444'],
+    });
+
+    return {
+      ...baseOptions,
+      yaxis: {
+        min: 0,
+        max: 100,
+        labels: {
+          style: { colors: '#64748b', fontSize: '12px' },
+          formatter: (value: number) => `${value}%`,
+        },
+      },
+      tooltip: {
+        ...baseOptions.tooltip,
+        y: {
+          formatter: (value: number | undefined) =>
+            typeof value === 'number' ? `${value}%` : '',
+        },
+      },
+    };
+  })(),
+}));
 
 // Open merge errors over time
 const mergeErrorsSeries = computed(() => {
@@ -234,7 +309,7 @@ const handleRowClick = (school: ClientHealthSnapshot) => {
         <div class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between py-2">
           <div>
             <h2 class="text-lg font-semibold text-slate-950">Trend Analytics</h2>
-            <p class="mt-1 text-sm text-slate-500">Historical trends across the full stored snapshot range for the selected cohort.</p>
+            <p class="mt-1 text-sm text-slate-500">Historical nightly and realtime trends across the full stored snapshot range for the selected cohort.</p>
           </div>
           <div class="flex flex-wrap items-center gap-3">
             <div class="flex items-center gap-2">
@@ -288,6 +363,24 @@ const handleRowClick = (school: ClientHealthSnapshot) => {
             <p class="mt-1 text-xs text-slate-500">Count of schools with a computed health score below 65, excluding schools with no valid nightly merge data on that date.</p>
             <div class="mt-4 flex-1 min-h-[250px]">
               <VueApexCharts type="line" :options="atRiskOptions" :series="atRiskSeries" height="100%" />
+            </div>
+          </div>
+          <!-- Chart 5: Realtime Activity -->
+          <div class="flex flex-col rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+            <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Performance</p>
+            <h3 class="mt-2 text-base font-semibold text-slate-950">Realtime Merge Activity (Last 24h)</h3>
+            <p class="mt-1 text-xs text-slate-500">Aggregated realtime merge counts for the selected schools, matching the school detail activity view but rolled up by snapshot date.</p>
+            <div class="mt-4 flex-1 min-h-[250px]">
+              <VueApexCharts type="bar" :options="realtimeActivityOptions" :series="realtimeActivitySeries" height="100%" />
+            </div>
+          </div>
+          <!-- Chart 6: Realtime Outcome Mix -->
+          <div class="flex flex-col rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+            <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Performance</p>
+            <h3 class="mt-2 text-base font-semibold text-slate-950">Realtime Merge Outcomes</h3>
+            <p class="mt-1 text-xs text-slate-500">Each bar shows the share of realtime merges that succeeded, finished with issues, had no data, or failed on that date: bucket total divided by all realtime merges for the selected schools.</p>
+            <div class="mt-4 flex-1 min-h-[250px]">
+              <VueApexCharts type="bar" :options="realtimeBreakdownOptions" :series="realtimeBreakdownSeries" height="100%" />
             </div>
           </div>
         </div>

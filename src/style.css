@@ -36,3 +36,16 @@ textarea {
 ::selection {
   background: rgba(148, 163, 184, 0.35);
 }
+
+.apexcharts-legend {
+  flex-wrap: nowrap !important;
+  justify-content: flex-start !important;
+  gap: 0 !important;
+  padding-right: 8.5rem !important;
+}
+
+.apexcharts-legend-series {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  white-space: nowrap !important;
+}

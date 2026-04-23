@@ -1,5 +1,13 @@
 import type { ApexOptions } from 'apexcharts';
 
+function formatLegendLabel(seriesName: string): string {
+  if (seriesName === 'Finished With Issues' || seriesName === 'Finished w/ Issues') {
+    return 'Issues';
+  }
+
+  return seriesName;
+}
+
 function formatChartValue(value: number): string {
   if (Number.isInteger(value)) {
     return String(value);
@@ -107,6 +115,12 @@ export function useChartOptions(opts: { categories?: string[]; colors?: string[]
     },
     legend: {
       position: 'top',
+      horizontalAlign: 'left',
+      formatter: formatLegendLabel,
+      itemMargin: {
+        horizontal: 10,
+        vertical: 6,
+      },
       labels: { colors: '#334155' },
     },
     noData: {
@@ -167,6 +181,8 @@ export function useStackedBarChartOptions(opts: { categories?: string[]; colors?
     },
     tooltip: {
       theme: 'light',
+      shared: true,
+      intersect: false,
       x: { format: 'MMM d, yyyy' },
       y: {
         formatter: (value: number | undefined) =>
@@ -175,6 +191,12 @@ export function useStackedBarChartOptions(opts: { categories?: string[]; colors?
     },
     legend: {
       position: 'top',
+      horizontalAlign: 'left',
+      formatter: formatLegendLabel,
+      itemMargin: {
+        horizontal: 10,
+        vertical: 6,
+      },
       labels: { colors: '#334155' },
     },
     dataLabels: {

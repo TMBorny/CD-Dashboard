@@ -56,8 +56,24 @@ vi.mock('@tanstack/vue-query', () => ({
             },
             recentFailedMerges: [{ id: 'nightly-3', haltReason: 'Halted: Change Threshold Exceeded' }],
             mergeErrorsCount: 0,
-            activeUsers24h: 0,
-            createdAt: new Date('2026-04-12T00:00:00Z'),
+              activeUsers24h: 0,
+              createdAt: new Date('2026-04-12T00:00:00Z'),
+          },
+          {
+            snapshotDate: '2026-04-13',
+            school: 'bar01',
+            displayName: 'Baruch College',
+            sisPlatform: 'Banner',
+            products: [],
+            merges: {
+              nightly: { total: 0, succeeded: 0, failed: 0, finishedWithIssues: 0, noData: 0, halted: 0, mergeTimeMs: 0 },
+              realtime: { total: 10, succeeded: 6, failed: 1, finishedWithIssues: 2, noData: 1 },
+              manual: { total: 0, succeeded: 0, failed: 0, finishedWithIssues: 0, noData: 0 },
+            },
+            recentFailedMerges: [],
+            mergeErrorsCount: 1,
+            activeUsers24h: 4,
+            createdAt: new Date('2026-04-13T00:00:00Z'),
           },
         ]),
         isLoading: ref(false),
@@ -119,5 +135,26 @@ describe('ClientHealthDashboard', () => {
 
     expect(wrapper.text()).toContain('were halted by change threshold');
     expect(wrapper.findAll('.chart-stub').some((node) => node.text().includes('Halted'))).toBe(true);
+  });
+
+  it('renders aggregated realtime activity and outcome charts on the main page', async () => {
+    const { default: ClientHealthDashboard } = await import('./ClientHealthDashboard.vue');
+    const wrapper = mount(ClientHealthDashboard, {
+      global: {
+        stubs: {
+          ClientHealthSummaryCards: true,
+          ClientHealthTable: true,
+        },
+      },
+    });
+
+    expect(wrapper.text()).toContain('Realtime Merge Activity (Last 24h)');
+    expect(wrapper.text()).toContain('Realtime Merge Outcomes');
+    expect(wrapper.text()).toContain('matching the school detail activity view');
+    expect(wrapper.text()).toContain('share of realtime merges that succeeded');
+
+    const chartTexts = wrapper.findAll('.chart-stub').map((node) => node.text());
+    expect(chartTexts).toContain('Succeeded,Finished With Issues,No Data,Failed');
+    expect(chartTexts.filter((text) => text === 'Succeeded,Finished With Issues,No Data,Failed')).toHaveLength(2);
   });
 });
