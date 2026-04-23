@@ -773,8 +773,9 @@ export async function getSchools() {
   return {
     data: {
       schools,
-      excludedSchools: [],
-      excludedTerms: [],
+      excludedSchools: latest.excludedSchools ?? [],
+      excludedTerms: latest.excludedTerms ?? [],
+      additionalExcludedSchools: latest.additionalExcludedSchools ?? [],
     },
   };
 }

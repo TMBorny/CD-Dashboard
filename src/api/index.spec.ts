@@ -177,7 +177,13 @@ describe('client health api helpers', () => {
     vi.stubEnv('VITE_DATA_MODE', 'static');
     fetchMock.mockResolvedValue({
       ok: true,
-      json: async () => ({ snapshotDate: '2026-04-22', schools: [] }),
+      json: async () => ({
+        snapshotDate: '2026-04-22',
+        schools: [],
+        excludedSchools: [{ school: 'demo01', displayName: 'Demo School', products: [], reason: 'Matches excluded term: demo' }],
+        excludedTerms: ['demo', 'test'],
+        additionalExcludedSchools: ['demo01'],
+      }),
     });
     const { getClientHealth } = await import('./index');
 
@@ -187,6 +193,36 @@ describe('client health api helpers', () => {
       headers: { Accept: 'application/json' },
     });
     expect(response.data.snapshotDate).toBe('2026-04-22');
+  });
+
+  it('loads excluded schools from static json when fetching schools in static mode', async () => {
+    vi.stubEnv('VITE_DATA_MODE', 'static');
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        snapshotDate: '2026-04-22',
+        schools: [
+          { snapshotDate: '2026-04-22', school: 'bar01', displayName: 'Baruch College', products: [] },
+        ],
+        excludedSchools: [
+          { school: 'demo01', displayName: 'Demo School', products: [], reason: 'Matches excluded term: demo' },
+        ],
+        excludedTerms: ['demo', 'test'],
+        additionalExcludedSchools: ['demo01'],
+      }),
+    });
+    const { getSchools } = await import('./index');
+
+    const response = await getSchools();
+
+    expect(fetchMock).toHaveBeenCalledWith('/static-data/client-health/latest.json', {
+      headers: { Accept: 'application/json' },
+    });
+    expect(response.data.excludedSchools).toEqual([
+      { school: 'demo01', displayName: 'Demo School', products: [], reason: 'Matches excluded term: demo' },
+    ]);
+    expect(response.data.excludedTerms).toEqual(['demo', 'test']);
+    expect(response.data.additionalExcludedSchools).toEqual(['demo01']);
   });
 
   it('loads sync runs from static json when static mode is enabled', async () => {

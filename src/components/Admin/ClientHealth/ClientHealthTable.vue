@@ -406,8 +406,8 @@ const exportSchools = () => {
       </div>
     </div>
 
-    <div class="w-full max-h-[70vh] overflow-auto">
-      <table class="client-health-table relative min-w-max w-full border-separate border-spacing-y-3 px-3 text-left text-sm text-slate-600">
+    <div class="w-full max-h-[70vh] overflow-x-auto overflow-y-auto">
+      <table class="client-health-table relative min-w-[1500px] w-full border-separate border-spacing-y-3 px-3 text-left text-sm text-slate-600">
         <thead class="bg-slate-50 border-b border-slate-200 text-xs uppercase tracking-[0.1em] text-slate-500">
           <tr>
             <th scope="col" class="sticky top-0 z-20 bg-slate-50 px-6 py-4 font-semibold shadow-[inset_0_-1px_0_0_rgba(226,232,240,1)]">

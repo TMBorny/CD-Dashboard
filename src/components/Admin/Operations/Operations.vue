@@ -46,7 +46,7 @@ const schedulerTime = ref('07:30');
 const { data, isLoading, error } = useQuery({
   queryKey: ['schools'],
   queryFn: () => getSchools().then((res) => res.data),
-  enabled: !isStaticDataMode,
+  enabled: true,
 });
 
 const { data: schedulerSettings, isLoading: isLoadingSchedulerSettings } = useQuery({
@@ -350,6 +350,68 @@ async function unexcludeSchool(school: string) {
         <div class="mt-6 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900">
           Use the live internal deployment when you need to run or manage operations.
         </div>
+      </div>
+      <div v-if="isStaticDataMode" class="mt-8 grid gap-6 2xl:grid-cols-[minmax(0,1.35fr)_minmax(20rem,0.65fr)]">
+        <section class="rounded-[28px] border border-slate-200 bg-white p-8 shadow-sm">
+          <div class="flex flex-col gap-6">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 class="text-xl font-semibold text-slate-950">Excluded schools</h2>
+                <p class="mt-2 text-sm text-slate-500">
+                  Default term filters: {{ excludedTerms.join(', ') }}.
+                  The static snapshot includes the current excluded-school list for reference.
+                </p>
+              </div>
+              <p class="text-sm font-medium text-slate-900">{{ excludedSchools.length }} excluded</p>
+            </div>
+
+            <div class="grid gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+              <div
+                v-for="school in manualExcludedSchools"
+                :key="`static-manual-${school.school}`"
+                class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4"
+              >
+                <p class="truncate text-sm font-semibold text-slate-900">{{ formatSchoolLabel(school.school, school.displayName) }}</p>
+                <p class="mt-1 truncate text-xs text-slate-500">
+                  <span class="font-medium text-slate-600">{{ school.school }}</span>
+                  <span v-if="getCompactReason(school.reason)"> · {{ getCompactReason(school.reason) }}</span>
+                </p>
+              </div>
+
+              <p v-if="manualExcludedSchools.length === 0" class="rounded-2xl border border-dashed border-slate-200 px-4 py-5 text-sm text-slate-500">
+                No manual exclusions are present in the static snapshot.
+              </p>
+            </div>
+
+            <div>
+              <p class="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">Excluded by default rules</p>
+              <div class="mt-3 grid max-h-80 gap-2 overflow-y-auto pr-1">
+                <div
+                  v-for="school in termExcludedSchools"
+                  :key="`static-rule-${school.school}`"
+                  class="rounded-xl border border-slate-200 bg-white px-4 py-3"
+                >
+                  <p class="truncate text-sm font-semibold text-slate-900">{{ formatSchoolLabel(school.school, school.displayName) }}</p>
+                  <p class="mt-1 truncate text-xs text-slate-500">
+                    <span class="font-medium text-slate-600">{{ school.school }}</span>
+                    <span v-if="getCompactReason(school.reason)"> · {{ getCompactReason(school.reason) }}</span>
+                  </p>
+                </div>
+                <p v-if="termExcludedSchools.length === 0" class="rounded-xl border border-dashed border-slate-200 px-4 py-5 text-sm text-slate-500">
+                  No schools currently match the default exclusion rules.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="rounded-[28px] border border-slate-200 bg-white p-8 shadow-sm">
+          <h2 class="text-xl font-semibold text-slate-950">Read-only snapshot</h2>
+          <p class="mt-2 text-sm leading-7 text-slate-600">
+            The static site mirrors the current exclusion list for visibility only. To add or remove exclusions,
+            use the private Operations dashboard.
+          </p>
+        </aside>
       </div>
       <template v-else>
       <div class="mb-8 rounded-[28px] border border-slate-200 bg-white/95 p-8 shadow-sm">

@@ -21,9 +21,13 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.db import api_get, close_api, connect_api, get_db, init_db  # noqa: E402
 from app.models import ErrorAnalysisDetail, ErrorAnalysisGroup, SchoolSnapshot, SyncRun, serialize_datetime  # noqa: E402
 from app.routes import (  # noqa: E402
+    EXCLUDED_SCHOOL_TERMS,
     exclude_demo_school_snapshots,
     extract_unique_activity_users,
+    get_additional_excluded_schools,
+    normalize_school_catalog,
     serialize_persisted_sync_run,
+    split_school_catalog,
     snapshot_has_measured_merge_errors,
 )
 
@@ -40,10 +44,16 @@ def write_json(path: Path, payload: Any, bundle_root: Path) -> dict[str, Any]:
     }
 
 
-def build_latest_client_health(db) -> dict[str, Any]:
+async def build_latest_client_health(db) -> dict[str, Any]:
     latest = db.query(SchoolSnapshot.snapshot_date).order_by(SchoolSnapshot.snapshot_date.desc()).first()
     if not latest:
-        return {"snapshotDate": None, "schools": []}
+        return {
+            "snapshotDate": None,
+            "schools": [],
+            "excludedSchools": [],
+            "excludedTerms": list(EXCLUDED_SCHOOL_TERMS),
+            "additionalExcludedSchools": [],
+        }
 
     latest_date = latest[0]
     snapshots = (
@@ -52,9 +62,20 @@ def build_latest_client_health(db) -> dict[str, Any]:
         .order_by(SchoolSnapshot.school)
         .all()
     )
+
+    products_data, display_names_data = await asyncio.gather(
+        api_get("/api/v1/admin/schools/products"),
+        api_get("/api/v1/admin/schools/displayNames"),
+    )
+    all_schools = normalize_school_catalog(products_data, display_names_data)
+    additional_excluded_schools = get_additional_excluded_schools(db)
+    _, excluded_schools = split_school_catalog(all_schools, additional_excluded_schools)
     return {
         "snapshotDate": latest_date,
         "schools": [snapshot.to_dict() for snapshot in snapshots],
+        "excludedSchools": excluded_schools,
+        "excludedTerms": list(EXCLUDED_SCHOOL_TERMS),
+        "additionalExcludedSchools": sorted(additional_excluded_schools),
     }
 
 
@@ -259,7 +280,7 @@ def export_static_data(output_dir: Path) -> None:
     db = get_db()
     try:
         files: dict[str, dict[str, Any]] = {}
-        latest_client_health = build_latest_client_health(db)
+        latest_client_health = asyncio.run(build_latest_client_health(db))
         client_health_history = build_client_health_history(db)
         latest_by_school = find_latest_snapshot_by_school(db)
         hydrated_active_users = asyncio.run(hydrate_missing_active_users(latest_by_school))

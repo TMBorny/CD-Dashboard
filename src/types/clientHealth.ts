@@ -47,6 +47,9 @@ export interface ClientHealthSnapshot {
 export interface ClientHealthResponse {
   snapshotDate: string;
   schools: ClientHealthSnapshot[];
+  excludedSchools?: ExcludedSchoolOption[];
+  excludedTerms?: string[];
+  additionalExcludedSchools?: string[];
 }
 
 export interface ClientHealthHistoryResponse {

@@ -1,9 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount, RouterLinkStub } from '@vue/test-utils';
 
+const route = {
+  query: {},
+};
+const replace = vi.fn();
+const push = vi.fn();
+
+vi.mock('vue-router', () => ({
+  useRoute: () => route,
+  useRouter: () => ({ replace, push }),
+}));
+
 describe('ClientHealthTable', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    route.query = {};
+    replace.mockReset();
+    push.mockReset();
   });
 
   it('renders halted nightly badges and keeps halted merges out of the success numerator', async () => {
