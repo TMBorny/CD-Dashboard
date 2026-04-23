@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount, RouterLinkStub } from '@vue/test-utils';
-import { ref } from 'vue';
+import { nextTick, ref } from 'vue';
 import type { ErrorAnalysisResponse, ErrorDetailTableResponse } from '@/types/errorAnalysis';
 
 const queryData = ref<ErrorAnalysisResponse | null>(null);
+const sisCountsQueryData = ref<ErrorAnalysisResponse | null>(null);
 const detailQueryData = ref<ErrorDetailTableResponse | null>(null);
 const queryLoading = ref(false);
 const queryError = ref<Error | null>(null);
@@ -17,12 +18,20 @@ const downloadErrorAnalysisDetailedExportMock = vi.fn().mockResolvedValue({
 });
 
 vi.mock('@tanstack/vue-query', () => ({
+  keepPreviousData: Symbol('keepPreviousData'),
   useQuery: vi.fn((options) => {
     const keyValue = options.queryKey?.value ?? options.queryKey;
     const queryName = Array.isArray(keyValue) ? keyValue[0] : null;
     if (queryName === 'errorAnalysisDetails') {
       return {
         data: detailQueryData,
+        isLoading: queryLoading,
+        error: queryError,
+      };
+    }
+    if (queryName === 'errorAnalysisSisCounts') {
+      return {
+        data: sisCountsQueryData,
         isLoading: queryLoading,
         error: queryError,
       };
@@ -389,6 +398,7 @@ describe('ErrorAnalysisDashboard', () => {
     queryLoading.value = false;
     queryError.value = null;
     queryData.value = buildResponse();
+    sisCountsQueryData.value = buildResponse();
     detailQueryData.value = buildDetailResponse();
     downloadErrorAnalysisExportMock.mockClear();
     downloadErrorAnalysisDetailedExportMock.mockClear();
@@ -658,5 +668,54 @@ describe('ErrorAnalysisDashboard', () => {
 
     const after = wrapper.findAll('tbody tr td:first-child p.font-semibold').map((node) => node.text());
     expect(after[0]).toBe('Banner');
+  });
+
+  it('keeps SIS option counts visible after selecting a SIS filter', async () => {
+    const { default: ErrorAnalysisDashboard } = await import('./ErrorAnalysisDashboard.vue');
+    const wrapper = mount(ErrorAnalysisDashboard, {
+      global: {
+        stubs: {
+          RouterLink: RouterLinkStub,
+          VueApexCharts: { template: '<div class="chart-stub" />' },
+        },
+      },
+    });
+
+    await wrapper.get('[data-testid="sis-filter"]').setValue('PeopleSoftDirect');
+
+    queryData.value = {
+      ...buildResponse(),
+      metadata: {
+        ...buildResponse().metadata,
+        appliedFilters: {
+          days: 7,
+          school: null,
+          sisPlatform: 'PeopleSoftDirect',
+          latestOnly: false,
+        },
+      },
+      summary: {
+        ...buildResponse().summary,
+        totalGroupedErrors: 1,
+        totalErrorInstances: 4,
+        distinctSignatures: 1,
+        affectedSchools: 1,
+        affectedSisPlatforms: 1,
+      },
+      trends: [
+        { snapshotDate: '2026-04-13', totalErrors: 4, distinctSignatures: 1, affectedSchools: 1 },
+      ],
+      signatures: [buildResponse().signatures[0]],
+      schoolBreakdowns: [buildResponse().schoolBreakdowns[0]],
+      sisBreakdowns: [buildResponse().sisBreakdowns[0]],
+    };
+    await nextTick();
+
+    const sisOptions = wrapper.get('[data-testid="sis-filter"]').findAll('option').map((option) => option.text());
+    expect(sisOptions).toEqual([
+      'All SIS Platforms',
+      'PeopleSoftDirect (4)',
+      'Banner (3)',
+    ]);
   });
 });

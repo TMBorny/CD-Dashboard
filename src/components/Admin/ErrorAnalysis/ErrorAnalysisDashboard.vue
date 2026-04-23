@@ -85,6 +85,22 @@ const { data, isLoading, error } = useQuery({
 
 const response = computed(() => data.value);
 
+const { data: sisCountsData } = useQuery({
+  queryKey: computed(() => [
+    'errorAnalysisSisCounts',
+    {
+      days: daysParam.value ?? 'all',
+    },
+  ]),
+  queryFn: () =>
+    getErrorAnalysis({
+      days: daysParam.value,
+    }).then((res) => res.data as ErrorAnalysisResponse),
+  placeholderData: keepPreviousData,
+});
+
+const sisCountsResponse = computed(() => sisCountsData.value);
+
 const { data: detailData, isLoading: isLoadingDetails } = useQuery({
   queryKey: computed(() => [
     'errorAnalysisDetails',
@@ -116,11 +132,12 @@ const detailResponse = computed(() => detailData.value);
 const formatCountLabel = (value?: number | null) => new Intl.NumberFormat('en-US').format(value ?? 0);
 
 const sisOptions = computed(() => {
+  const optionSource = sisCountsResponse.value ?? response.value;
   const countsBySis = new Map(
-    (response.value?.sisBreakdowns ?? []).map((row) => [row.key, row.totalErrors] as const),
+    (optionSource?.sisBreakdowns ?? []).map((row) => [row.key, row.totalErrors] as const),
   );
 
-  const sisPlatforms = response.value?.filterOptions.sisPlatforms ?? [];
+  const sisPlatforms = optionSource?.filterOptions.sisPlatforms ?? [];
   const sortedSisPlatforms = [...sisPlatforms].sort((left, right) => {
     const countDiff = (countsBySis.get(right) ?? 0) - (countsBySis.get(left) ?? 0);
     if (countDiff !== 0) return countDiff;
@@ -1286,13 +1303,13 @@ const handleExport = async () => {
           <span v-if="selectedErrorDetail.scheduleType" class="rounded-full bg-slate-100 px-3 py-1.5">{{ selectedErrorDetail.scheduleType }}</span>
         </div>
 
-        <div class="mt-6 grid gap-4 lg:items-start lg:grid-cols-[minmax(0,1.5fr)_minmax(260px,0.9fr)]">
-          <div class="self-start rounded-3xl border border-slate-200 bg-slate-50 p-5">
+        <div class="mt-6 space-y-4">
+          <div class="rounded-3xl border border-slate-200 bg-slate-50 p-5">
             <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{{ errorDetailMessageLabel }}</p>
             <pre class="mt-3 whitespace-pre-wrap break-words font-sans text-sm leading-6 text-slate-800">{{ selectedErrorDetail.fullErrorText }}</pre>
           </div>
 
-          <div class="space-y-4">
+          <div class="grid gap-4 lg:grid-cols-2">
             <div class="rounded-3xl border border-slate-200 bg-white p-5">
               <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{{ errorDetailContextLabel }}</p>
               <dl class="mt-3 space-y-3 text-sm text-slate-700">
@@ -1334,7 +1351,7 @@ const handleExport = async () => {
               </div>
             </div>
 
-            <div v-if="selectedErrorDetail.impactedSchools?.length" class="rounded-3xl border border-slate-200 bg-white p-5">
+            <div v-if="selectedErrorDetail.impactedSchools?.length" class="rounded-3xl border border-slate-200 bg-white p-5 lg:col-span-2">
               <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Impacted schools</p>
               <div class="mt-3 max-h-56 overflow-y-auto pr-1">
                 <div class="flex flex-wrap gap-2">
@@ -1349,7 +1366,7 @@ const handleExport = async () => {
               </div>
             </div>
 
-            <div v-if="selectedErrorDetail.exampleMergeReports?.length" class="rounded-3xl border border-slate-200 bg-white p-5">
+            <div v-if="selectedErrorDetail.exampleMergeReports?.length" class="rounded-3xl border border-slate-200 bg-white p-5 lg:col-span-2">
               <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Example merge reports</p>
               <div class="mt-3 flex flex-wrap gap-2">
                 <a
