@@ -343,6 +343,30 @@ describe('ClientHealthDetail', () => {
     expect(wrapper.text()).toContain('Halted: Change Threshold Exceeded');
   });
 
+  it('shows latest table metrics in the top school details card', async () => {
+    const { default: ClientHealthDetail } = await import('./ClientHealthDetail.vue');
+    const wrapper = mount(ClientHealthDetail, {
+      global: {
+        stubs: {
+          RouterLink: RouterLinkStub,
+          Card: CardStub,
+        },
+      },
+    });
+
+    const summaryGrid = wrapper.get('[data-testid="client-detail-summary-grid"]');
+    expect(summaryGrid.text()).toContain('At Risk');
+    expect(summaryGrid.text()).toContain('50.0');
+    expect(summaryGrid.text()).toContain('Banner');
+    expect(summaryGrid.text()).toContain('No products listed');
+    expect(summaryGrid.text()).toContain('50%');
+    expect(summaryGrid.text()).toContain('1 / 2 succeeded');
+    expect(summaryGrid.text()).toContain('1 halted');
+    expect(summaryGrid.text()).toContain('N/A');
+    expect(summaryGrid.text()).toContain('3');
+    expect(summaryGrid.text()).toContain('0 open merge errors, 1 recent failures');
+  });
+
   it('renders current error categories, signatures, and captured rows from the latest snapshot', async () => {
     const { default: ClientHealthDetail } = await import('./ClientHealthDetail.vue');
     const wrapper = mount(ClientHealthDetail, {

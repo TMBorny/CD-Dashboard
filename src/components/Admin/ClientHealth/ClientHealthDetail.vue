@@ -103,6 +103,63 @@ const latestSnapshotCapturedAtLabel = computed(() => {
   const createdAt = latestSnapshot.value?.createdAt;
   return createdAt ? formatLocalDateTime(createdAt) : null;
 });
+const formatDuration = (ms?: number) => {
+  if (!ms) return 'N/A';
+  const totalMinutes = Math.floor(ms / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours === 0) return `${minutes}m`;
+  if (minutes === 0) return `${hours}h`;
+  return `${hours}h ${minutes}m`;
+};
+const latestSisPlatformLabel = computed(() => latestSnapshot.value?.sisPlatform || 'Unknown');
+const latestProducts = computed(() => latestSnapshot.value?.products ?? []);
+const latestNightlyRate = computed(() => {
+  if (!latestSnapshot.value) return null;
+  const { total, succeeded, noData, finishedWithIssues } = latestSnapshot.value.merges.nightly;
+  const validTotal = total - noData;
+  return validTotal > 0 ? ((succeeded + (finishedWithIssues * 0.5)) / validTotal) * 100 : null;
+});
+const latestRealtimeRate = computed(() => {
+  if (!latestSnapshot.value) return null;
+  const { total, succeeded, noData, finishedWithIssues } = latestSnapshot.value.merges.realtime;
+  const validTotal = total - noData;
+  return validTotal > 0 ? ((succeeded + (finishedWithIssues * 0.5)) / validTotal) * 100 : null;
+});
+const latestHealthScore = computed(() => {
+  if (!latestSnapshot.value) return null;
+  const rates = [latestNightlyRate.value, latestRealtimeRate.value].filter(
+    (value): value is number => value !== null,
+  );
+  const baseSuccess = rates.length > 0
+    ? rates.reduce((sum, value) => sum + value, 0) / rates.length
+    : 0;
+  const openErrors = latestSnapshot.value.mergeErrorsCount ?? 0;
+  const errorPenalty = openErrors > 0 ? Math.min(20, Math.log2(openErrors + 1) * 4) : 0;
+  const activeUsers = latestSnapshot.value.activeUsers24h;
+  const activityAdjustment = activeUsers >= 20 ? 4 : activeUsers >= 5 ? 2 : activeUsers >= 1 ? 0 : -3;
+  return Math.max(0, Math.min(100, baseSuccess - errorPenalty + activityAdjustment));
+});
+const latestStatusLabel = computed(() => {
+  const score = latestHealthScore.value;
+  if (score === null) return 'Unknown';
+  if (score >= 85) return 'Healthy';
+  if (score >= 65) return 'Warning';
+  return 'At Risk';
+});
+const latestStatusToneClass = computed(() => {
+  switch (latestStatusLabel.value) {
+    case 'Healthy':
+      return 'bg-emerald-100 text-emerald-700';
+    case 'Warning':
+      return 'bg-amber-100 text-amber-700';
+    case 'At Risk':
+      return 'bg-rose-100 text-rose-700';
+    default:
+      return 'bg-slate-100 text-slate-700';
+  }
+});
 const currentErrorSnapshotDate = computed(() => currentErrorAnalysis.value?.metadata.resolvedSnapshotDate ?? null);
 const currentErrorSnapshotLabel = computed(() => {
   if (!currentErrorSnapshotDate.value) return 'No current detailed error snapshot captured yet.';
@@ -256,7 +313,7 @@ const nightlySuccessChartSeries = computed(() => {
   const noData = history.value.snapshots.map((s: any) => s.merges.nightly.noData);
   const halted = history.value.snapshots.map((s: any) => s.merges.nightly.halted || 0);
   const failed = history.value.snapshots.map((s: any) => s.merges.nightly.failed);
-  
+
   return [
     { name: 'Succeeded', data: succeeded },
     { name: 'Finished With Issues', data: issues },
@@ -547,112 +604,157 @@ watch([currentErrorCategoryFilter, currentErrorEntityTypeFilter, currentErrorSig
           <div>
             <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">School Details</p>
             <div class="mt-4 flex flex-wrap items-center gap-3">
-              <router-link
-                :to="{ name: 'AdminClientHealth' }"
-                class="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-white hover:text-slate-950"
-              >
+              <router-link :to="{ name: 'AdminClientHealth' }"
+                class="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-white hover:text-slate-950">
                 ← Back to Client Health
               </router-link>
 
-              <a
-                :href="mergeReportsUrl"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="inline-flex items-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
-              >
+              <a :href="mergeReportsUrl" target="_blank" rel="noopener noreferrer"
+                class="inline-flex items-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950">
                 Merge Reports ↗
               </a>
             </div>
             <h1 class="mt-3 text-4xl font-semibold tracking-tight text-slate-950 sm:text-5xl">{{ schoolLabel }}</h1>
-            <p class="mt-4 text-base leading-7 text-slate-600">Full local snapshot history with explicit metric windows and current activity.</p>
-            <p class="mt-3 text-xs text-slate-400">Times shown in {{ localTimeZoneLabel }}.</p>
             <p class="mt-3 text-sm text-slate-500">Last successful sync: {{ lastSuccessfulSyncLabel }}</p>
-            <p class="mt-1 text-sm text-slate-500">Last attempted sync: {{ lastAttemptedSyncLabel }}</p>
-            <p v-if="lastAttemptStatusLabel" class="mt-1 text-xs" :class="syncMetadata?.lastAttemptedSync?.status === 'failed' ? 'text-rose-500' : 'text-slate-400'">
-              Last attempt status: {{ lastAttemptStatusLabel }}
-            </p>
-            <p v-if="latestSnapshot?.snapshotDate" class="mt-1 text-xs text-slate-400">Latest successful snapshot date: {{ latestSnapshot.snapshotDate }}</p>
-            <p v-if="latestSnapshotCapturedAtLabel" class="mt-1 text-xs text-slate-400">Latest snapshot captured locally: {{ latestSnapshotCapturedAtLabel }}</p>
-            <p v-if="snapshotCount === 1" class="mt-2 text-xs text-amber-600">Only one local snapshot is available right now, so the charts will show a single point instead of a trend line.</p>
-            <p class="mt-2 max-w-2xl text-xs text-slate-500">Nightly success uses Coursedog's upstream 48-hour health window. Realtime success and active users use the last 24 hours. Open merge errors are shown only for days where that count was captured directly during a local sync. Halted nightly merges are broken out when the Sync Coursedog Updates with SIS stage reports a change-threshold halt.</p>
+            <p class="mt-3 text-sm text-slate-600">SIS: <span class="font-semibold text-slate-900">{{
+              latestSisPlatformLabel }}</span></p>
+
+            <div class="mt-3 flex flex-wrap gap-2">
+              <p class="mt-3 text-sm text-slate-600">Products: 
+              <span v-for="product in latestProducts" :key="product"
+                class="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                {{ product }}
+              </span></p>
+              <span v-if="!latestProducts.length"
+                class="rounded-full border border-dashed border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-400">
+                No products listed
+              </span>
+            </div>
           </div>
-         
+        </div>
+        <div v-if="latestSnapshot" class="mt-8 grid gap-3 border-t border-slate-200 pt-6 sm:grid-cols-2 lg:grid-cols-6 2xl:grid-cols-6"
+          data-testid="client-detail-summary-grid">
+          <div class="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+            <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Health Score</p>
+            <div class="mt-3 flex flex-wrap items-center gap-2">
+              <span class="rounded-full px-2.5 py-1 text-[11px] font-semibold" :class="latestStatusToneClass">
+                {{ latestStatusLabel }}
+              </span>
+              <span class="text-2xl font-semibold text-slate-950">{{ latestHealthScore?.toFixed(1) ?? 'N/A' }}</span>
+            </div>
+          </div>
+
+          <div class="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+            <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Nightly</p>
+            <p class="mt-3 text-2xl font-semibold text-slate-950">{{ latestNightlyRate === null ? 'N/A' :
+              `${latestNightlyRate.toFixed(0)}%` }}</p>
+            <p class="mt-2 text-sm text-slate-600">{{ latestSnapshot.merges.nightly.succeeded }} / {{
+              latestSnapshot.merges.nightly.total }} succeeded</p>
+            <p class="mt-1 text-xs text-slate-500">
+              {{ latestSnapshot.merges.nightly.finishedWithIssues }} issues, {{ latestSnapshot.merges.nightly.noData }}
+              no data, {{ latestSnapshot.merges.nightly.halted || 0 }} halted
+            </p>
+          </div>
+
+          <div class="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+            <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Nightly Duration</p>
+            <p class="mt-3 text-2xl font-semibold text-slate-950">{{
+              formatDuration(latestSnapshot.merges.nightly.mergeTimeMs) }}</p>
+            <p class="mt-2 text-sm text-slate-600">Latest local snapshot run length</p>
+          </div>
+
+          <div class="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+            <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Realtime (24h)</p>
+            <p class="mt-3 text-2xl font-semibold text-slate-950">{{ latestRealtimeRate === null ? 'N/A' :
+              `${latestRealtimeRate.toFixed(0)}%` }}</p>
+            <p class="mt-2 text-sm text-slate-600">{{ latestSnapshot.merges.realtime.succeeded }} / {{
+              latestSnapshot.merges.realtime.total }} succeeded</p>
+            <p class="mt-1 text-xs text-slate-500">
+              {{ latestSnapshot.merges.realtime.finishedWithIssues }} issues, {{ latestSnapshot.merges.realtime.noData
+              }} no data
+            </p>
+          </div>
+
+          <div class="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+            <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Activity</p>
+            <p class="mt-3 text-2xl font-semibold text-slate-950">{{ latestSnapshot.activeUsers24h }}</p>
+            <p class="mt-2 text-sm text-slate-600">Active users in last 24h</p>
+          </div>
+          <div class="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+            <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Open Errors</p>
+            <p class="mt-3 text-2xl font-semibold text-slate-950">{{ latestSnapshot.mergeErrorsCount ?? 0 }}</p>
+            <p class="mt-1 text-xs text-slate-500"> {{latestSnapshot.recentFailedMerges.length }} recent failures</p>
+          </div>
         </div>
       </div>
-      <div v-if="loading" class="rounded-[28px] border border-slate-200 bg-white p-8 text-slate-700 shadow-sm">Loading...</div>
-      <div v-else-if="error" class="rounded-[28px] border border-rose-200 bg-rose-50 p-8 text-rose-700 shadow-sm">{{ error }}</div>
+      <div v-if="loading" class="rounded-[28px] border border-slate-200 bg-white p-8 text-slate-700 shadow-sm">
+        Loading...</div>
+      <div v-else-if="error" class="rounded-[28px] border border-rose-200 bg-rose-50 p-8 text-rose-700 shadow-sm">{{
+        error }}</div>
       <div v-else class="space-y-8">
         <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
-        <Card subtitle="Performance" title="Nightly Merge Activity (48h Upstream Window)">
-          <div class="mt-6 min-h-[260px]">
-            <VueApexCharts type="bar" :options="nightlySuccessChartOptions" :series="nightlySuccessChartSeries" />
-          </div>
-        </Card>
-        <Card subtitle="Duration" title="Nightly Merge Duration Trend">
-          <div class="mt-6 min-h-[260px]">
-            <VueApexCharts type="line" :options="nightlyDurationChartOptions" :series="nightlyDurationChartSeries" />
-          </div>
-        </Card>
-        <Card subtitle="Performance" title="Realtime Merge Activity (Last 24h)">
-          <div class="mt-6 min-h-[260px]">
-            <VueApexCharts type="bar" :options="realtimeSuccessChartOptions" :series="realtimeSuccessChartSeries" />
-          </div>
-        </Card>
-        <Card subtitle="Issues" title="Open Merge Errors Across Local Snapshots">
-          <div class="mt-6 min-h-[260px]">
-            <VueApexCharts type="line" :options="mergeErrorsChartOptions" :series="mergeErrorsChartSeries" />
-          </div>
-        </Card>
-        <Card subtitle="Activity" title="Daily Active Sessions">
-          <div class="mt-6 min-h-[260px]">
-            <VueApexCharts type="line" :options="activeUsersChartOptions" :series="activeUsersChartSeries" />
-          </div>
-        </Card>
-        <Card class="flex flex-col overflow-hidden" subtitle="Users" title="Active Users in Last 24h">
-          <p class="mt-2 text-3xl font-semibold text-slate-950">{{ activeUsers?.count }}</p>
-          <p v-if="activeUsers?.error" class="mt-2 text-xs text-amber-500">{{ activeUsers.error }}</p>
-          <p v-else-if="isStaticDataMode" class="mt-2 text-xs text-slate-500">Static mode shows the cached count from the latest exported snapshot.</p>
-          <div class="mt-6 max-h-[28rem] space-y-2 overflow-y-auto pr-2" data-testid="active-users-list">
-            <div v-for="user in activeUsers?.users" :key="user" class="flex items-center gap-3 rounded-lg bg-slate-50 p-3">
-              <div class="h-2 w-2 rounded-full bg-emerald-500"></div>
-              <span class="text-sm text-slate-900">{{ user }}</span>
+          <Card subtitle="Performance" title="Nightly Merge Activity (48h Upstream Window)">
+            <div class="mt-6 min-h-[260px]">
+              <VueApexCharts type="bar" :options="nightlySuccessChartOptions" :series="nightlySuccessChartSeries" />
             </div>
-            <div v-if="!activeUsers?.users?.length" class="text-sm text-slate-500">No active users</div>
-          </div>
-        </Card>
+          </Card>
+          <Card subtitle="Duration" title="Nightly Merge Duration Trend">
+            <div class="mt-6 min-h-[260px]">
+              <VueApexCharts type="line" :options="nightlyDurationChartOptions" :series="nightlyDurationChartSeries" />
+            </div>
+          </Card>
+          <Card subtitle="Performance" title="Realtime Merge Activity (Last 24h)">
+            <div class="mt-6 min-h-[260px]">
+              <VueApexCharts type="bar" :options="realtimeSuccessChartOptions" :series="realtimeSuccessChartSeries" />
+            </div>
+          </Card>
+          <Card subtitle="Issues" title="Open Merge Errors Across Local Snapshots">
+            <div class="mt-6 min-h-[260px]">
+              <VueApexCharts type="line" :options="mergeErrorsChartOptions" :series="mergeErrorsChartSeries" />
+            </div>
+          </Card>
+          <Card subtitle="Activity" title="Daily Active Sessions">
+            <div class="mt-6 min-h-[260px]">
+              <VueApexCharts type="line" :options="activeUsersChartOptions" :series="activeUsersChartSeries" />
+            </div>
+          </Card>
+          <Card class="flex flex-col overflow-hidden" subtitle="Users" title="Active Users in Last 24h">
+            <p class="mt-2 text-3xl font-semibold text-slate-950">{{ activeUsers?.count }}</p>
+            <p v-if="activeUsers?.error" class="mt-2 text-xs text-amber-500">{{ activeUsers.error }}</p>
+            <p v-else-if="isStaticDataMode" class="mt-2 text-xs text-slate-500">Static mode shows the cached count from
+              the latest exported snapshot.</p>
+            <div class="mt-6 max-h-[28rem] space-y-2 overflow-y-auto pr-2" data-testid="active-users-list">
+              <div v-for="user in activeUsers?.users" :key="user"
+                class="flex items-center gap-3 rounded-lg bg-slate-50 p-3">
+                <div class="h-2 w-2 rounded-full bg-emerald-500"></div>
+                <span class="text-sm text-slate-900">{{ user }}</span>
+              </div>
+              <div v-if="!activeUsers?.users?.length" class="text-sm text-slate-500">No active users</div>
+            </div>
+          </Card>
         </div>
 
         <Card subtitle="Current Errors" title="Current Error Details">
           <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <p class="text-sm text-slate-500">Grouped from the latest captured detailed error snapshot for this school only.</p>
+              <p class="text-sm text-slate-500">Grouped from the latest captured detailed error snapshot for this school
+                only.</p>
               <p class="mt-2 text-xs text-slate-400">{{ currentErrorSnapshotLabel }}</p>
             </div>
-            <p v-if="hasCurrentErrorContent" class="text-sm font-medium text-slate-700">{{ currentErrorTotals }} current captured error{{ currentErrorTotals === 1 ? '' : 's' }}</p>
+            <p v-if="hasCurrentErrorContent" class="text-sm font-medium text-slate-700">{{ currentErrorTotals }} current
+              captured error{{ currentErrorTotals === 1 ? '' : 's' }}</p>
           </div>
 
-          <div v-if="hasIssueTabsContent" class="mt-6 flex flex-wrap gap-2 border-t border-slate-200 pt-5" data-testid="current-error-tabs">
-            <button
-              v-for="tab in currentErrorTabs"
-              :key="tab.key"
-              type="button"
+          <div v-if="hasIssueTabsContent" class="mt-6 flex flex-wrap gap-2 border-t border-slate-200 pt-5"
+            data-testid="current-error-tabs">
+            <button v-for="tab in currentErrorTabs" :key="tab.key" type="button"
               class="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition"
               :class="currentErrorTab === tab.key ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
-              @click="currentErrorTab = tab.key"
-            >
+              @click="currentErrorTab = tab.key">
               <span>{{ tab.label }}</span>
-              <span
-                v-if="tab.key === 'signatures'"
-                :class="descriptorClass"
-                data-testid="signatures-tooltip"
-              >
-                <button
-                  type="button"
-                  class="cursor-help"
-                  :class="descriptorButtonClass"
-                  :aria-label="signaturesTooltipTitle"
-                  @click.stop
-                >
+              <span v-if="tab.key === 'signatures'" :class="descriptorClass" data-testid="signatures-tooltip">
+                <button type="button" class="cursor-help" :class="descriptorButtonClass"
+                  :aria-label="signaturesTooltipTitle" @click.stop>
                   ?
                 </button>
                 <div :class="descriptorPopoverClass">
@@ -664,65 +766,74 @@ watch([currentErrorCategoryFilter, currentErrorEntityTypeFilter, currentErrorSig
             </button>
           </div>
 
-          <div v-if="isLoadingCurrentErrorAnalysis" class="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+          <div v-if="isLoadingCurrentErrorAnalysis"
+            class="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
             Loading current error categories...
           </div>
-          <div v-else-if="currentErrorAnalysisError" class="mt-6 rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700">
+          <div v-else-if="currentErrorAnalysisError"
+            class="mt-6 rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700">
             Failed to load current error categories.
           </div>
-          <div v-else-if="!hasIssueTabsContent" class="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
-            No detailed captured errors or recent failed merges are present in the latest local snapshot for this school yet.
+          <div v-else-if="!hasIssueTabsContent"
+            class="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+            No detailed captured errors or recent failed merges are present in the latest local snapshot for this school
+            yet.
           </div>
           <div v-else class="mt-6">
-            <div v-if="currentErrorTab === 'categories'" class="grid gap-4 lg:grid-cols-2" data-testid="current-error-panel-categories">
-              <div v-for="category in currentErrorCategories" :key="category.key" class="rounded-3xl border border-slate-200 bg-slate-50 p-5" data-testid="current-error-category">
+            <div v-if="currentErrorTab === 'categories'" class="grid gap-4 lg:grid-cols-2"
+              data-testid="current-error-panel-categories">
+              <div v-for="category in currentErrorCategories" :key="category.key"
+                class="rounded-3xl border border-slate-200 bg-slate-50 p-5" data-testid="current-error-category">
                 <div class="flex items-start justify-between gap-4">
                   <div>
-                    <span class="inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em]" :class="getResolutionToneClass(category)">
+                    <span
+                      class="inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em]"
+                      :class="getResolutionToneClass(category)">
                       {{ category.title }}
                     </span>
                     <p class="mt-3 text-sm leading-6 text-slate-600">{{ category.action }}</p>
                   </div>
                   <div class="text-right">
                     <p class="text-2xl font-semibold text-slate-950">{{ category.count }}</p>
-                    <p class="text-xs text-slate-500">{{ category.signatures }} signature{{ category.signatures === 1 ? '' : 's' }}</p>
+                    <p class="text-xs text-slate-500">{{ category.signatures }} signature{{ category.signatures === 1 ?
+                      '' : 's' }}</p>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div v-else-if="currentErrorTab === 'signatures'" class="space-y-3" data-testid="current-error-panel-signatures">
-              <div v-if="!currentErrorSignatures.length" class="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+            <div v-else-if="currentErrorTab === 'signatures'" class="space-y-3"
+              data-testid="current-error-panel-signatures">
+              <div v-if="!currentErrorSignatures.length"
+                class="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
                 No current captured error signatures for this school.
               </div>
-              <div v-for="signature in currentErrorSignatures" :key="signature.signatureKey" class="rounded-3xl border border-slate-200 bg-slate-50 p-5" data-testid="current-error-signature">
+              <div v-for="signature in currentErrorSignatures" :key="signature.signatureKey"
+                class="rounded-3xl border border-slate-200 bg-slate-50 p-5" data-testid="current-error-signature">
                 <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div class="min-w-0">
-                    <p class="font-semibold leading-6 text-slate-950">{{ buildSignatureHeadline(signature.signatureLabel) }}</p>
-                    <p v-if="getSignatureSummary(signature)" class="mt-1 text-xs text-slate-500">{{ getSignatureSummary(signature) }}</p>
+                    <p class="font-semibold leading-6 text-slate-950">{{
+                      buildSignatureHeadline(signature.signatureLabel) }}</p>
+                    <p v-if="getSignatureSummary(signature)" class="mt-1 text-xs text-slate-500">{{
+                      getSignatureSummary(signature) }}</p>
                     <p class="mt-3 text-sm leading-6 text-slate-600">{{ signature.resolutionHint.action }}</p>
                     <p class="mt-3 text-xs leading-5 text-slate-500">{{ signature.sampleMessage }}</p>
                   </div>
                   <div class="flex flex-col items-start gap-2 lg:items-end">
-                    <span class="inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em]" :class="getResolutionToneClass(signature.resolutionHint)">
+                    <span
+                      class="inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em]"
+                      :class="getResolutionToneClass(signature.resolutionHint)">
                       {{ signature.resolutionHint.title }}
                     </span>
                     <p class="text-2xl font-semibold text-slate-950">{{ signature.totalCount }}</p>
-                    <button
-                      type="button"
+                    <button type="button"
                       class="inline-flex items-center rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700"
-                      data-testid="signature-detail-button"
-                      @click="openSignatureDetail(signature)"
-                    >
+                      data-testid="signature-detail-button" @click="openSignatureDetail(signature)">
                       View full error
                     </button>
-                    <a
-                      v-if="signature.latestMergeReport"
-                      :href="getMergeReportUrl(signature.latestMergeReport)"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
-                    >
+                    <a v-if="signature.latestMergeReport" :href="getMergeReportUrl(signature.latestMergeReport)"
+                      target="_blank" rel="noopener noreferrer"
+                      class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950">
                       Merge report ↗
                     </a>
                   </div>
@@ -731,21 +842,22 @@ watch([currentErrorCategoryFilter, currentErrorEntityTypeFilter, currentErrorSig
             </div>
 
             <div v-else-if="currentErrorTab === 'rows'" data-testid="current-error-panel-rows">
-              <div v-if="isLoadingCurrentErrorRows" class="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+              <div v-if="isLoadingCurrentErrorRows"
+                class="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
                 Loading current captured errors...
               </div>
-              <div v-else-if="currentErrorRowsError" class="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700">
+              <div v-else-if="currentErrorRowsError"
+                class="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700">
                 Failed to load current captured errors.
               </div>
               <div v-else class="space-y-3">
-                <div class="grid gap-3 rounded-3xl border border-slate-200 bg-white p-4 md:grid-cols-3" data-testid="current-error-row-filters">
+                <div class="grid gap-3 rounded-3xl border border-slate-200 bg-white p-4 md:grid-cols-3"
+                  data-testid="current-error-row-filters">
                   <label class="flex flex-col gap-2 text-sm text-slate-600">
                     <span class="font-medium text-slate-700">Category</span>
-                    <select
-                      v-model="currentErrorCategoryFilter"
+                    <select v-model="currentErrorCategoryFilter"
                       class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:bg-white"
-                      data-testid="current-error-category-filter"
-                    >
+                      data-testid="current-error-category-filter">
                       <option value="">All categories</option>
                       <option v-for="option in currentErrorCategoryOptions" :key="option.value" :value="option.value">
                         {{ option.label }}
@@ -754,11 +866,9 @@ watch([currentErrorCategoryFilter, currentErrorEntityTypeFilter, currentErrorSig
                   </label>
                   <label class="flex flex-col gap-2 text-sm text-slate-600">
                     <span class="font-medium text-slate-700">Entity Type</span>
-                    <select
-                      v-model="currentErrorEntityTypeFilter"
+                    <select v-model="currentErrorEntityTypeFilter"
                       class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:bg-white"
-                      data-testid="current-error-entity-type-filter"
-                    >
+                      data-testid="current-error-entity-type-filter">
                       <option value="">All entity types</option>
                       <option v-for="option in currentErrorEntityTypeOptions" :key="option.value" :value="option.value">
                         {{ option.label }}
@@ -767,11 +877,9 @@ watch([currentErrorCategoryFilter, currentErrorEntityTypeFilter, currentErrorSig
                   </label>
                   <label class="flex flex-col gap-2 text-sm text-slate-600">
                     <span class="font-medium text-slate-700">Signature</span>
-                    <select
-                      v-model="currentErrorSignatureFilter"
+                    <select v-model="currentErrorSignatureFilter"
                       class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:bg-white"
-                      data-testid="current-error-signature-filter"
-                    >
+                      data-testid="current-error-signature-filter">
                       <option value="">All signatures</option>
                       <option v-for="option in currentErrorSignatureOptions" :key="option.value" :value="option.value">
                         {{ option.label }}
@@ -779,77 +887,60 @@ watch([currentErrorCategoryFilter, currentErrorEntityTypeFilter, currentErrorSig
                     </select>
                   </label>
                 </div>
-                <div
-                  v-if="currentErrorDetailRows.length"
+                <div v-if="currentErrorDetailRows.length"
                   class="flex flex-col gap-3 border-t border-slate-200 pt-4 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between"
-                  data-testid="current-error-pagination-top"
-                >
+                  data-testid="current-error-pagination-top">
                   <p>{{ currentErrorDetailTotal }} error row{{ currentErrorDetailTotal === 1 ? '' : 's' }} total</p>
-                  <span data-testid="current-error-page-label-top">Page {{ currentErrorPage }} of {{ currentErrorTotalPages }}</span>
+                  <span data-testid="current-error-page-label-top">Page {{ currentErrorPage }} of {{
+                    currentErrorTotalPages }}</span>
                 </div>
-                <div v-if="!currentErrorDetailRows.length" class="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+                <div v-if="!currentErrorDetailRows.length"
+                  class="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
                   No captured errors match the selected category, entity type, and signature filters.
                 </div>
-                <div
-                  v-for="row in currentErrorDetailRows"
-                  :key="row.id"
+                <div v-for="row in currentErrorDetailRows" :key="row.id"
                   class="cursor-pointer rounded-3xl border border-slate-200 bg-slate-50 p-5 transition hover:border-slate-300 hover:bg-white"
-                  data-testid="current-error-row"
-                  role="button"
-                  tabindex="0"
-                  @click="openDetailRowError(row)"
-                  @keydown.enter.prevent="openDetailRowError(row)"
-                  @keydown.space.prevent="openDetailRowError(row)"
-                >
+                  data-testid="current-error-row" role="button" tabindex="0" @click="openDetailRowError(row)"
+                  @keydown.enter.prevent="openDetailRowError(row)" @keydown.space.prevent="openDetailRowError(row)">
                   <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div class="min-w-0">
-                      <p class="font-semibold leading-6 text-slate-950">{{ buildSignatureHeadline(row.signatureLabel) }}</p>
+                      <p class="font-semibold leading-6 text-slate-950">{{ buildSignatureHeadline(row.signatureLabel) }}
+                      </p>
                       <p v-if="getRowSummary(row)" class="mt-1 text-xs text-slate-500">{{ getRowSummary(row) }}</p>
                       <p class="mt-3 text-sm leading-6 text-slate-600">{{ row.fullErrorText }}</p>
                     </div>
                     <div class="flex flex-col items-start gap-2 lg:items-end">
                       <p class="text-xs text-slate-500">{{ row.snapshotDate }}</p>
-                      <button
-                        type="button"
+                      <button type="button"
                         class="inline-flex items-center rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700"
-                        data-testid="row-detail-button"
-                        @click.stop="openDetailRowError(row)"
-                      >
+                        data-testid="row-detail-button" @click.stop="openDetailRowError(row)">
                         View full error
                       </button>
-                      <a
-                        v-if="row.mergeReport"
-                        :href="getMergeReportUrl(row.mergeReport)"
-                        target="_blank"
+                      <a v-if="row.mergeReport" :href="getMergeReportUrl(row.mergeReport)" target="_blank"
                         rel="noopener noreferrer"
                         class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
-                        @click.stop
-                      >
+                        @click.stop>
                         Merge report ↗
                       </a>
                     </div>
                   </div>
                 </div>
-                <div v-if="currentErrorDetailRows.length" class="flex flex-col gap-3 border-t border-slate-200 pt-4 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+                <div v-if="currentErrorDetailRows.length"
+                  class="flex flex-col gap-3 border-t border-slate-200 pt-4 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
                   <p>{{ currentErrorDetailTotal }} error row{{ currentErrorDetailTotal === 1 ? '' : 's' }} total</p>
                   <div class="flex items-center gap-3">
-                    <button
-                      type="button"
+                    <button type="button"
                       class="rounded-full border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
-                      :disabled="currentErrorPage <= 1"
-                      data-testid="current-error-page-prev"
-                      @click="currentErrorPage -= 1"
-                    >
+                      :disabled="currentErrorPage <= 1" data-testid="current-error-page-prev"
+                      @click="currentErrorPage -= 1">
                       Previous
                     </button>
-                    <span data-testid="current-error-page-label">Page {{ currentErrorPage }} of {{ currentErrorTotalPages }}</span>
-                    <button
-                      type="button"
+                    <span data-testid="current-error-page-label">Page {{ currentErrorPage }} of {{
+                      currentErrorTotalPages }}</span>
+                    <button type="button"
                       class="rounded-full border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
-                      :disabled="currentErrorPage >= currentErrorTotalPages"
-                      data-testid="current-error-page-next"
-                      @click="currentErrorPage += 1"
-                    >
+                      :disabled="currentErrorPage >= currentErrorTotalPages" data-testid="current-error-page-next"
+                      @click="currentErrorPage += 1">
                       Next
                     </button>
                   </div>
@@ -858,76 +949,76 @@ watch([currentErrorCategoryFilter, currentErrorEntityTypeFilter, currentErrorSig
             </div>
 
             <div v-else class="space-y-3" data-testid="current-error-panel-recent-failures">
-              <div
-                v-for="merge in recentFailedMerges"
-                :key="merge.id"
+              <div v-for="merge in recentFailedMerges" :key="merge.id"
                 class="flex items-start gap-3 rounded-3xl border border-slate-200 bg-slate-50 p-5"
-                data-testid="recent-failed-merge-row"
-              >
+                data-testid="recent-failed-merge-row">
                 <div class="mt-1 h-2 w-2 rounded-full bg-rose-500 flex-shrink-0"></div>
                 <div class="flex flex-col text-sm">
-                  <a
-                    v-if="getRecentFailedMergeReportUrl(merge)"
-                    :href="getRecentFailedMergeReportUrl(merge) || undefined"
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <a v-if="getRecentFailedMergeReportUrl(merge)"
+                    :href="getRecentFailedMergeReportUrl(merge) || undefined" target="_blank" rel="noopener noreferrer"
                     class="w-fit font-medium text-slate-900 underline decoration-slate-300 underline-offset-4 transition hover:text-slate-700 hover:decoration-slate-500"
-                    data-testid="recent-failed-merge-id-link"
-                  >
+                    data-testid="recent-failed-merge-id-link">
                     {{ merge.id }}
                   </a>
                   <span v-else class="font-medium text-slate-900">{{ merge.id }}</span>
                   <span v-if="merge.type" class="text-xs text-slate-500">Type: {{ merge.type }}</span>
-                  <span v-if="merge.scheduleType" class="text-xs text-slate-500 capitalize">{{ merge.scheduleType }} merge</span>
-                  <span v-if="merge.haltReason || merge.statusDetail" class="text-xs font-medium text-yellow-700">{{ merge.haltReason || merge.statusDetail }}</span>
+                  <span v-if="merge.scheduleType" class="text-xs text-slate-500 capitalize">{{ merge.scheduleType }}
+                    merge</span>
+                  <span v-if="merge.haltReason || merge.statusDetail" class="text-xs font-medium text-yellow-700">{{
+                    merge.haltReason || merge.statusDetail }}</span>
                   <span v-if="merge.timestampEnd" class="text-xs text-slate-400">
                     {{ formatLocalDateTime(merge.timestampEnd) }}
                   </span>
                 </div>
               </div>
-              <div v-if="!recentFailedMerges.length" class="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+              <div v-if="!recentFailedMerges.length"
+                class="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
                 No recent failed merges.
               </div>
             </div>
           </div>
         </Card>
 
-        <div
-          v-if="selectedErrorDetail"
+        <div v-if="selectedErrorDetail"
           class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-8"
-          data-testid="current-error-detail-modal"
-          @click.self="closeErrorDetail"
-        >
-          <div class="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-[28px] border border-slate-200 bg-white p-6 shadow-2xl sm:p-8">
+          data-testid="current-error-detail-modal" @click.self="closeErrorDetail">
+          <div
+            class="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-[28px] border border-slate-200 bg-white p-6 shadow-2xl sm:p-8">
             <div class="flex items-start justify-between gap-4">
               <div>
-                <p class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{{ selectedErrorDetail.title }}</p>
+                <p class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{{ selectedErrorDetail.title
+                }}</p>
                 <h2 class="mt-2 text-2xl font-semibold text-slate-950">Full upstream error</h2>
                 <p class="mt-3 text-sm leading-6 text-slate-600">{{ selectedErrorDetail.signatureLabel }}</p>
               </div>
-              <button
-                type="button"
+              <button type="button"
                 class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-lg text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
-                aria-label="Close full error modal"
-                @click="closeErrorDetail"
-              >
+                aria-label="Close full error modal" @click="closeErrorDetail">
                 ×
               </button>
             </div>
 
             <div class="mt-6 flex flex-wrap gap-2 text-xs text-slate-600">
-              <span v-if="selectedErrorDetail.entityType" class="rounded-full bg-slate-100 px-3 py-1.5">{{ selectedErrorDetail.entityType }}</span>
-              <span v-if="selectedErrorDetail.errorCode" class="rounded-full bg-slate-100 px-3 py-1.5">{{ selectedErrorDetail.errorCode }}</span>
-              <span v-if="selectedErrorDetail.schoolLabel" class="rounded-full bg-slate-100 px-3 py-1.5">{{ selectedErrorDetail.schoolLabel }}</span>
-              <span v-if="selectedErrorDetail.sisPlatform" class="rounded-full bg-slate-100 px-3 py-1.5">{{ selectedErrorDetail.sisPlatform }}</span>
-              <span v-if="selectedErrorDetail.termCode" class="rounded-full bg-slate-100 px-3 py-1.5">Term {{ selectedErrorDetail.termCode }}</span>
-              <span v-if="selectedErrorDetail.scheduleType" class="rounded-full bg-slate-100 px-3 py-1.5">{{ selectedErrorDetail.scheduleType }}</span>
+              <span v-if="selectedErrorDetail.entityType" class="rounded-full bg-slate-100 px-3 py-1.5">{{
+                selectedErrorDetail.entityType }}</span>
+              <span v-if="selectedErrorDetail.errorCode" class="rounded-full bg-slate-100 px-3 py-1.5">{{
+                selectedErrorDetail.errorCode }}</span>
+              <span v-if="selectedErrorDetail.schoolLabel" class="rounded-full bg-slate-100 px-3 py-1.5">{{
+                selectedErrorDetail.schoolLabel }}</span>
+              <span v-if="selectedErrorDetail.sisPlatform" class="rounded-full bg-slate-100 px-3 py-1.5">{{
+                selectedErrorDetail.sisPlatform }}</span>
+              <span v-if="selectedErrorDetail.termCode" class="rounded-full bg-slate-100 px-3 py-1.5">Term {{
+                selectedErrorDetail.termCode }}</span>
+              <span v-if="selectedErrorDetail.scheduleType" class="rounded-full bg-slate-100 px-3 py-1.5">{{
+                selectedErrorDetail.scheduleType }}</span>
             </div>
 
             <div class="mt-6 space-y-4">
               <div class="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-                <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Captured upstream message</p>
-                <pre class="mt-3 whitespace-pre-wrap break-words font-sans text-sm leading-6 text-slate-800">{{ selectedErrorDetail.fullErrorText }}</pre>
+                <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Captured upstream message
+                </p>
+                <pre
+                  class="mt-3 whitespace-pre-wrap break-words font-sans text-sm leading-6 text-slate-800">{{ selectedErrorDetail.fullErrorText }}</pre>
               </div>
 
               <div class="grid gap-4 lg:grid-cols-2">
@@ -948,21 +1039,14 @@ watch([currentErrorCategoryFilter, currentErrorEntityTypeFilter, currentErrorSig
                 <div class="rounded-3xl border border-slate-200 bg-white p-5">
                   <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Links</p>
                   <div class="mt-3 flex flex-wrap gap-2">
-                    <router-link
-                      v-if="selectedErrorDetail.school"
-                      :to="schoolRoute(selectedErrorDetail.school)"
-                      class="inline-flex items-center rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700"
-                    >
+                    <router-link v-if="selectedErrorDetail.school" :to="schoolRoute(selectedErrorDetail.school)"
+                      class="inline-flex items-center rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700">
                       School detail
                     </router-link>
 
-                    <a
-                      v-if="selectedErrorDetail.mergeReport"
-                      :href="getMergeReportUrl(selectedErrorDetail.mergeReport)"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
-                    >
+                    <a v-if="selectedErrorDetail.mergeReport" :href="getMergeReportUrl(selectedErrorDetail.mergeReport)"
+                      target="_blank" rel="noopener noreferrer"
+                      class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950">
                       Merge report ↗
                     </a>
                   </div>
@@ -970,12 +1054,16 @@ watch([currentErrorCategoryFilter, currentErrorEntityTypeFilter, currentErrorSig
               </div>
             </div>
 
-            <details v-if="selectedErrorDetail.rawPayload || isStaticDataMode" class="mt-6 rounded-3xl border border-slate-200 bg-slate-50 p-5">
+            <details v-if="selectedErrorDetail.rawPayload || isStaticDataMode"
+              class="mt-6 rounded-3xl border border-slate-200 bg-slate-50 p-5">
               <summary class="cursor-pointer text-sm font-semibold text-slate-900">Raw sample payload</summary>
-              <div v-if="isStaticDataMode" class="mt-4 rounded-xl border border-slate-200 bg-white p-4 text-xs text-slate-500">
-                Raw error payloads are excluded from static dashboard exports to minimize file size. To view full raw payloads, you must run the dashboard in live development mode connected to the local database.
+              <div v-if="isStaticDataMode"
+                class="mt-4 rounded-xl border border-slate-200 bg-white p-4 text-xs text-slate-500">
+                Raw error payloads are excluded from static dashboard exports to minimize file size. To view full raw
+                payloads, you must run the dashboard in live development mode connected to the local database.
               </div>
-              <pre v-else class="mt-4 overflow-x-auto whitespace-pre-wrap break-words text-xs leading-5 text-slate-700">{{ selectedErrorDetail.rawPayload }}</pre>
+              <pre v-else
+                class="mt-4 overflow-x-auto whitespace-pre-wrap break-words text-xs leading-5 text-slate-700">{{ selectedErrorDetail.rawPayload }}</pre>
             </details>
           </div>
         </div>
