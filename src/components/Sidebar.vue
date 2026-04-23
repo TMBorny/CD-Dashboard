@@ -32,6 +32,11 @@ const navItems = [
     icon: '🛠️',
     name: 'AdminOperations',
   },
+  {
+    label: 'Feedback',
+    href: 'https://docs.google.com/forms/d/e/1FAIpQLSd-5U6Z_bx-Z3wHyZnliiobRmZ-ORjtCaWHCjXKFoD77Fo8sw/viewform?usp=publish-editor',
+    icon: '📝',
+  },
 ];
 
 const toggleSidebar = () => {
@@ -66,20 +71,31 @@ const isActive = (itemPath: string) => {
 
       <!-- Navigation Items -->
       <nav class="flex-1 px-3 py-6 space-y-2">
-        <router-link
-          v-for="item in navItems"
-          :key="item.path"
-          :to="item.path"
-          :class="[
-            'flex items-center justify-center lg:justify-start gap-3 px-3 py-3 rounded-lg transition font-medium',
-            isActive(item.path)
-              ? 'bg-blue-600 text-white'
-              : 'text-slate-300 hover:bg-slate-800 hover:text-white',
-          ]"
-        >
-          <span class="text-xl flex-shrink-0">{{ item.icon }}</span>
-          <span v-if="isOpen" class="truncate">{{ item.label }}</span>
-        </router-link>
+        <template v-for="item in navItems" :key="item.path ?? item.href">
+          <router-link
+            v-if="item.path"
+            :to="item.path"
+            :class="[
+              'flex items-center justify-center lg:justify-start gap-3 px-3 py-3 rounded-lg transition font-medium',
+              isActive(item.path)
+                ? 'bg-blue-600 text-white'
+                : 'text-slate-300 hover:bg-slate-800 hover:text-white',
+            ]"
+          >
+            <span class="text-xl flex-shrink-0">{{ item.icon }}</span>
+            <span v-if="isOpen" class="truncate">{{ item.label }}</span>
+          </router-link>
+          <a
+            v-else
+            :href="item.href"
+            target="_blank"
+            rel="noreferrer"
+            class="flex items-center justify-center lg:justify-start gap-3 rounded-lg px-3 py-3 font-medium text-slate-300 transition hover:bg-slate-800 hover:text-white"
+          >
+            <span class="text-xl flex-shrink-0">{{ item.icon }}</span>
+            <span v-if="isOpen" class="truncate">{{ item.label }}</span>
+          </a>
+        </template>
       </nav>
 
       <!-- Footer -->

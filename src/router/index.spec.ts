@@ -7,4 +7,10 @@ describe('router', () => {
 
     expect(route?.path).toBe('/admin/error-analysis');
   });
+
+  it('registers the feedback admin route', () => {
+    const route = router.getRoutes().find((entry) => entry.name === 'AdminFeedback');
+
+    expect(route?.path).toBe('/admin/feedback');
+  });
 });

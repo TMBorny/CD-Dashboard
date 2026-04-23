@@ -4,6 +4,7 @@ import ClientHealthDetail from '@/components/Admin/ClientHealth/ClientHealthDeta
 import ErrorAnalysisDashboard from '@/components/Admin/ErrorAnalysis/ErrorAnalysisDashboard.vue';
 import JobRunDetail from '@/components/Admin/JobsMonitoring/JobRunDetail.vue';
 import JobsMonitoring from '@/components/Admin/JobsMonitoring/JobsMonitoring.vue';
+import Feedback from '@/components/Admin/Feedback/Feedback.vue';
 import Operations from '@/components/Admin/Operations/Operations.vue';
 import { isStaticDataMode, siteBase } from '@/config/runtime';
 
@@ -49,6 +50,12 @@ const routes = [
     name: 'AdminOperations',
     component: Operations,
     meta: { title: 'Operations' }
+  },
+  {
+    path: '/admin/feedback',
+    name: 'AdminFeedback',
+    component: Feedback,
+    meta: { title: 'Feedback' }
   },
   {
     path: '/:catchAll(.*)',
