@@ -10,9 +10,10 @@ SITE_BASE="${VITE_SITE_BASE:-}"
 WORKTREE_DIR="${STATIC_PAGES_WORKTREE:-$(mktemp -d "${TMPDIR:-/tmp}/cd-dashboard-pages.XXXXXX")}"
 
 cleanup() {
-  if git -C "$PROJECT_ROOT" worktree list --porcelain | grep -Fq "worktree $WORKTREE_DIR"; then
-    git -C "$PROJECT_ROOT" worktree remove --force "$WORKTREE_DIR" >/dev/null 2>&1 || true
-  fi
+  # Remove the worktree directly; bypass 'worktree list' check to avoid macOS /private/tmp symlink path mismatch
+  git -C "$PROJECT_ROOT" worktree remove --force "$WORKTREE_DIR" >/dev/null 2>&1 || true
+  # Always prune as a fallback to ensure clean git state
+  git -C "$PROJECT_ROOT" worktree prune >/dev/null 2>&1 || true
 }
 
 trap cleanup EXIT
