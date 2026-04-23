@@ -1,12 +1,13 @@
 {
-  "capturedAt": "2026-04-22T21:46:30.997420+00:00",
-  "count": 6,
-  "snapshotDate": "2026-04-22",
+  "capturedAt": "2026-04-23T14:21:39.108092+00:00",
+  "count": 7,
+  "snapshotDate": "2026-04-23",
   "users": [
+    "abradshaw@isothermal.edu",
     "ddbarnard@isothermal.edu",
     "lgreene@isothermal.edu",
-    "rmckinney@isothermal.edu",
     "rmercantini@isothermal.edu",
+    "slackner@isothermal.edu",
     "squeen@isothermal.edu",
     "tfowler@isothermal.edu"
   ]

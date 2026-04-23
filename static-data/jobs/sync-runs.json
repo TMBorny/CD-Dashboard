@@ -1,7 +1,72 @@
 {
-  "limit": 46,
+  "limit": 48,
   "offset": 0,
   "syncRuns": [
+    {
+      "attemptedAt": "2026-04-23T14:18:43.457016+00:00",
+      "checkpointState": null,
+      "completedUnits": 0,
+      "currentSchool": null,
+      "currentSnapshotDate": null,
+      "dateCount": null,
+      "endDate": null,
+      "errorCount": 0,
+      "errorMessage": null,
+      "errors": [],
+      "failedUnits": 0,
+      "failedUnitsSample": [],
+      "failureReason": null,
+      "finishedAt": "2026-04-23T14:21:40.319038+00:00",
+      "jobId": "747a8ea2-ebe8-49f8-bb45-9503ede1154e",
+      "lastHeartbeatAt": null,
+      "lastProgressAt": null,
+      "school": null,
+      "schoolsProcessed": 294,
+      "scope": "scheduled-catchup-bulk",
+      "skippedUnits": 0,
+      "snapshotDate": "2026-04-23",
+      "startDate": null,
+      "startedAt": "2026-04-23T14:18:43.457016+00:00",
+      "status": "completed",
+      "statusDetail": null,
+      "timing": {
+        "fetchHealthSec": 172.35,
+        "listSchoolsSec": 2.86,
+        "persistDbSec": 1.65,
+        "totalSec": 176.86
+      },
+      "totalSchools": 294
+    },
+    {
+      "attemptedAt": "2026-04-23T11:40:13.411769+00:00",
+      "checkpointState": null,
+      "completedUnits": 0,
+      "currentSchool": null,
+      "currentSnapshotDate": null,
+      "dateCount": null,
+      "endDate": null,
+      "errorCount": 0,
+      "errorMessage": "[Errno 5] Input/output error",
+      "errors": [],
+      "failedUnits": 0,
+      "failedUnitsSample": [],
+      "failureReason": null,
+      "finishedAt": "2026-04-23T11:40:16.110516+00:00",
+      "jobId": "2b4fb646-82b7-4a01-97a2-f7305eff4ec3",
+      "lastHeartbeatAt": null,
+      "lastProgressAt": null,
+      "school": null,
+      "schoolsProcessed": 0,
+      "scope": "scheduled-bulk",
+      "skippedUnits": 0,
+      "snapshotDate": "2026-04-23",
+      "startDate": null,
+      "startedAt": "2026-04-23T11:40:13.411769+00:00",
+      "status": "failed",
+      "statusDetail": null,
+      "timing": null,
+      "totalSchools": 0
+    },
     {
       "attemptedAt": "2026-04-22T21:43:52.159281+00:00",
       "checkpointState": null,
@@ -1610,5 +1675,5 @@
       "totalSchools": 0
     }
   ],
-  "totalCount": 46
+  "totalCount": 48
 }

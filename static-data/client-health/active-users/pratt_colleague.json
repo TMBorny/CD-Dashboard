@@ -1,22 +1,18 @@
 {
-  "capturedAt": "2026-04-22T21:46:30.997440+00:00",
-  "count": 24,
-  "snapshotDate": "2026-04-22",
+  "capturedAt": "2026-04-23T14:21:39.108113+00:00",
+  "count": 23,
+  "snapshotDate": "2026-04-23",
   "users": [
     "acocciol@pratt.edu",
     "aimperia@pratt.edu",
-    "amassman@pratt.edu",
     "avilla22@pratt.edu",
     "checkm23@pratt.edu",
     "csmith@pratt.edu",
     "dkim67@pratt.edu",
     "dsmucke2@pratt.edu",
-    "dwright2@pratt.edu",
     "eneely@pratt.edu",
     "fyazdans@pratt.edu",
     "gscagnet@pratt.edu",
-    "gsmulyan@pratt.edu",
-    "jcuffie2@pratt.edu",
     "jmccall@pratt.edu",
     "khaddorf@pratt.edu",
     "lbutle41@pratt.edu",
@@ -24,8 +20,11 @@
     "lgerber@pratt.edu",
     "lponce@pratt.edu",
     "nseidler@pratt.edu",
+    "pdestaeb@pratt.edu",
+    "phan@pratt.edu",
     "rasher34@pratt.edu",
     "rcalde98@pratt.edu",
-    "sboyer81@pratt.edu"
+    "sboyer81@pratt.edu",
+    "tmaffucc@pratt.edu"
   ]
 }
