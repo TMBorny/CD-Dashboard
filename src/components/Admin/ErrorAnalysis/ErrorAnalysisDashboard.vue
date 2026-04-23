@@ -153,7 +153,15 @@ const sisOptions = computed(() => {
     (optionSource?.sisBreakdowns ?? []).map((row) => [row.key, row.totalErrors] as const),
   );
 
-  const sisPlatforms = optionSource?.filterOptions.sisPlatforms ?? [];
+  const schoolSisPlatforms = new Set(
+    (optionSource?.filterOptions.schools ?? [])
+      .map((option) => option.sisPlatform)
+      .filter((sisPlatform): sisPlatform is string => Boolean(sisPlatform)),
+  );
+
+  const sisPlatforms = (optionSource?.filterOptions.sisPlatforms ?? []).filter((sisPlatform) =>
+    schoolSisPlatforms.has(sisPlatform),
+  );
   const sortedSisPlatforms = [...sisPlatforms].sort((left, right) => {
     const countDiff = (countsBySis.get(right) ?? 0) - (countsBySis.get(left) ?? 0);
     if (countDiff !== 0) return countDiff;
@@ -167,6 +175,14 @@ const sisOptions = computed(() => {
       label: `${value} (${formatCountLabel(countsBySis.get(value))})`,
     })),
   ];
+});
+
+watch(sisOptions, (options) => {
+  if (options.some((option) => option.value === selectedSis.value)) {
+    return;
+  }
+
+  selectedSis.value = 'all';
 });
 
 const schoolOptions = computed(() => {

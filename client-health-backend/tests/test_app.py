@@ -26,9 +26,10 @@ from sqlalchemy import create_engine, inspect
 
 from app.db import ensure_schema_updates, get_database_url, get_db, get_default_db_path, init_db
 from app.main import app, create_app
-from app.models import BackfillWorkUnit, ErrorAnalysisDetail, ErrorAnalysisGroup, SchedulerSettings, SchoolSnapshot, SyncRun
+from app.models import BackfillWorkUnit, ErrorAnalysisDetail, ErrorAnalysisGroup, ExcludedSchool, SchedulerSettings, SchoolSnapshot, SyncRun
 from app.security import is_loopback_client, is_loopback_origin, require_internal_auth
 from app.routes import (
+    get_additional_excluded_schools,
     build_snapshot_dates,
     build_error_analysis_groups,
     build_error_analysis_details,
@@ -55,6 +56,7 @@ from app.routes import (
     prepare_backfill_auto_resume,
     resolve_backfill_date_range,
     serialize_persisted_sync_run,
+    reconcile_manual_exclusions,
     select_schools_for_sync,
     serialize_sync_job,
     split_school_catalog,
@@ -1832,7 +1834,12 @@ class HistoricalBackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
                 return {"data": [{"email": "a@example.com"}]}
             raise AssertionError(f"Unexpected path {path}")
 
-        with patch("app.routes.list_schools", side_effect=fake_list_schools), patch(
+        async def fake_authenticate_api():
+            return True
+
+        with patch("app.routes.authenticate_api", side_effect=fake_authenticate_api), patch(
+            "app.routes.list_schools", side_effect=fake_list_schools
+        ), patch(
             "app.routes.api_get",
             side_effect=fake_api_get,
         ), patch("app.routes.fetch_school_sis_platform", return_value="Banner"):
@@ -1860,9 +1867,10 @@ class HistoricalBackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(snapshot.display_name, "Existing Snapshot")
         self.assertEqual(snapshot.active_users_24h, 9)
-        self.assertEqual(unit.status, "failed")
-        self.assertEqual(sync_run.failed_units, 1)
+        self.assertEqual(unit.status, "skipped")
+        self.assertEqual(sync_run.failed_units, 0)
         self.assertEqual(sync_run.completed_units, 0)
+        self.assertEqual(sync_run.skipped_units, 1)
 
     async def test_backfill_does_not_overwrite_existing_snapshot_when_user_activity_fails(self):
         init_db()
@@ -1916,7 +1924,12 @@ class HistoricalBackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
                 raise RuntimeError("user activity timeout")
             raise AssertionError(f"Unexpected path {path}")
 
-        with patch("app.routes.list_schools", side_effect=fake_list_schools), patch(
+        async def fake_authenticate_api():
+            return True
+
+        with patch("app.routes.authenticate_api", side_effect=fake_authenticate_api), patch(
+            "app.routes.list_schools", side_effect=fake_list_schools
+        ), patch(
             "app.routes.api_get",
             side_effect=fake_api_get,
         ), patch("app.routes.fetch_school_sis_platform", return_value="Banner"):
@@ -1944,8 +1957,96 @@ class HistoricalBackfillWorkerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(snapshot.display_name, "Existing Snapshot")
         self.assertEqual(snapshot.active_users_24h, 13)
-        self.assertEqual(unit.status, "failed")
-        self.assertEqual(sync_run.failed_units, 1)
+        self.assertEqual(unit.status, "skipped")
+        self.assertEqual(sync_run.failed_units, 0)
+        self.assertEqual(sync_run.skipped_units, 1)
+
+    async def test_backfill_skips_existing_snapshot_without_refetching(self):
+        init_db()
+        routes._sync_jobs["test-backfill-skip-existing"] = routes.create_backfill_job_payload(
+            job_id="test-backfill-skip-existing",
+            school="test-backfill-school",
+            start_date="2026-01-03",
+            end_date="2026-01-03",
+            date_count=1,
+        )
+        db = get_db()
+        try:
+            db.add(
+                SchoolSnapshot.from_dict(
+                    {
+                        "snapshotDate": "2026-01-03",
+                        "school": "test-backfill-school",
+                        "displayName": "Existing Snapshot",
+                        "sisPlatform": "Banner",
+                        "products": [],
+                        "merges": {
+                            "nightly": {"total": 3, "succeeded": 3, "failed": 0, "finishedWithIssues": 0, "noData": 0, "mergeTimeMs": 30},
+                            "realtime": {"total": 0, "succeeded": 0, "failed": 0, "finishedWithIssues": 0, "noData": 0},
+                            "manual": {"total": 0, "succeeded": 0, "failed": 0, "finishedWithIssues": 0, "noData": 0},
+                        },
+                        "recentFailedMerges": [],
+                        "mergeErrorsCount": 0,
+                        "activeUsers24h": 21,
+                    }
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        async def fake_list_schools():
+            return {
+                "schools": [
+                    {
+                        "school": "test-backfill-school",
+                        "displayName": "Test Backfill School",
+                        "products": [],
+                    }
+                ]
+            }
+
+        async def fail_if_called(*args, **kwargs):
+            raise AssertionError("Backfill should not refetch an already populated snapshot")
+
+        async def fake_authenticate_api():
+            return True
+
+        with patch("app.routes.authenticate_api", side_effect=fake_authenticate_api), patch(
+            "app.routes.list_schools", side_effect=fake_list_schools
+        ), patch(
+            "app.routes.api_get",
+            side_effect=fail_if_called,
+        ), patch("app.routes.fetch_school_sis_platform", side_effect=fail_if_called):
+            await routes.run_history_backfill_job(
+                "test-backfill-skip-existing",
+                school="test-backfill-school",
+                start_date="2026-01-03",
+                end_date="2026-01-03",
+            )
+
+        db = get_db()
+        try:
+            snapshot = (
+                db.query(SchoolSnapshot)
+                .filter(
+                    SchoolSnapshot.school == "test-backfill-school",
+                    SchoolSnapshot.snapshot_date == "2026-01-03",
+                )
+                .one()
+            )
+            sync_run = db.query(SyncRun).filter(SyncRun.job_id == "test-backfill-skip-existing").one()
+            unit = db.query(BackfillWorkUnit).filter(BackfillWorkUnit.job_id == "test-backfill-skip-existing").one()
+        finally:
+            db.close()
+
+        self.assertEqual(snapshot.display_name, "Existing Snapshot")
+        self.assertEqual(snapshot.active_users_24h, 21)
+        self.assertEqual(unit.status, "skipped")
+        self.assertEqual(sync_run.completed_units, 0)
+        self.assertEqual(sync_run.failed_units, 0)
+        self.assertEqual(sync_run.skipped_units, 1)
+        self.assertEqual(sync_run.schools_processed, 1)
 
 
 class BackfillEndpointTests(unittest.TestCase):
@@ -2071,6 +2172,201 @@ class SchoolExclusionTests(unittest.TestCase):
             get_school_exclusion_reason("demo01", "Demo School", {"demo01"}),
             "Manually excluded in Operations",
         )
+
+
+class ManualExclusionReconciliationTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        init_db()
+        db = get_db()
+        try:
+            db.query(ExcludedSchool).delete(synchronize_session=False)
+            db.query(SchoolSnapshot).delete(synchronize_session=False)
+            db.commit()
+        finally:
+            db.close()
+
+    def add_snapshot(
+        self,
+        db,
+        *,
+        school: str,
+        snapshot_date: str,
+        active_users: int = 0,
+        realtime_total: int = 0,
+        nightly_total: int = 0,
+    ):
+        db.add(
+            SchoolSnapshot.from_dict(
+                {
+                    "snapshotDate": snapshot_date,
+                    "school": school,
+                    "displayName": school,
+                    "products": [],
+                    "merges": {
+                        "nightly": {
+                            "total": nightly_total,
+                            "succeeded": nightly_total,
+                            "failed": 0,
+                            "finishedWithIssues": 0,
+                            "noData": 0,
+                            "halted": 0,
+                        },
+                        "realtime": {
+                            "total": realtime_total,
+                            "succeeded": realtime_total,
+                            "failed": 0,
+                            "finishedWithIssues": 0,
+                            "noData": 0,
+                        },
+                        "manual": {
+                            "total": 0,
+                            "succeeded": 0,
+                            "failed": 0,
+                            "finishedWithIssues": 0,
+                            "noData": 0,
+                        },
+                    },
+                    "activeUsers24h": active_users,
+                }
+            )
+        )
+
+    async def test_reconciliation_keeps_school_excluded_without_activity(self):
+        db = get_db()
+        try:
+            db.add(ExcludedSchool(school="keep01"))
+            self.add_snapshot(db, school="keep01", snapshot_date="2026-02-01")
+            db.commit()
+
+            async def fake_api_get(path, params=None):
+                if path.endswith("/userActivity"):
+                    return []
+                if path.endswith("/merge-history"):
+                    return []
+                raise AssertionError(path)
+
+            with patch("app.routes.api_get", side_effect=fake_api_get):
+                result = await reconcile_manual_exclusions(
+                    db,
+                    apply_changes=True,
+                    now=datetime(2026, 4, 23, tzinfo=timezone.utc),
+                )
+
+            self.assertEqual(result["reinstatedSchools"], [])
+            self.assertEqual(result["retainedSchools"], ["keep01"])
+            self.assertIsNotNone(db.query(ExcludedSchool).filter(ExcludedSchool.school == "keep01").first())
+        finally:
+            db.close()
+
+    async def test_reconciliation_uses_local_snapshot_when_available(self):
+        db = get_db()
+        try:
+            db.add(ExcludedSchool(school="local01"))
+            self.add_snapshot(db, school="local01", snapshot_date="2026-02-01", active_users=3)
+            db.commit()
+
+            async def fail_if_called(*args, **kwargs):
+                raise AssertionError("live API should not be called when local data already proves activity")
+
+            with patch("app.routes.api_get", side_effect=fail_if_called):
+                result = await reconcile_manual_exclusions(
+                    db,
+                    apply_changes=True,
+                    now=datetime(2026, 4, 23, tzinfo=timezone.utc),
+                )
+
+            self.assertEqual(result["reinstatedSchools"], ["local01"])
+            self.assertEqual(result["retainedSchools"], [])
+            self.assertIsNone(db.query(ExcludedSchool).filter(ExcludedSchool.school == "local01").first())
+        finally:
+            db.close()
+
+    async def test_reconciliation_reinstates_from_live_active_users_when_local_data_is_missing(self):
+        db = get_db()
+        try:
+            db.add(ExcludedSchool(school="active01"))
+            self.add_snapshot(db, school="active01", snapshot_date="2026-02-01")
+            db.commit()
+
+            async def fake_api_get(path, params=None):
+                if path.endswith("/userActivity") and "active01" in path:
+                    return [{"email": "student@example.edu"}]
+                if path.endswith("/merge-history"):
+                    return []
+                raise AssertionError(path)
+
+            with patch("app.routes.api_get", side_effect=fake_api_get):
+                result = await reconcile_manual_exclusions(
+                    db,
+                    apply_changes=True,
+                    now=datetime(2026, 4, 23, tzinfo=timezone.utc),
+                )
+
+            self.assertEqual(result["reinstatedSchools"], ["active01"])
+            self.assertIsNone(db.query(ExcludedSchool).filter(ExcludedSchool.school == "active01").first())
+        finally:
+            db.close()
+
+    async def test_reconciliation_reinstates_from_live_merge_history(self):
+        db = get_db()
+        try:
+            db.add_all([ExcludedSchool(school="real01"), ExcludedSchool(school="night01")])
+            self.add_snapshot(db, school="real01", snapshot_date="2026-02-01")
+            self.add_snapshot(db, school="night01", snapshot_date="2026-02-01")
+            db.commit()
+
+            async def fake_api_get(path, params=None):
+                if path.endswith("/userActivity"):
+                    return []
+                if path.endswith("/merge-history") and "real01" in path:
+                    return [{"id": "r1", "scheduleType": "realtime", "status": "success", "timestampEnd": 1}]
+                if path.endswith("/merge-history") and "night01" in path:
+                    return [{"id": "n1", "scheduleType": "nightly", "status": "success", "timestampEnd": 1}]
+                return []
+
+            with patch("app.routes.api_get", side_effect=fake_api_get):
+                result = await reconcile_manual_exclusions(
+                    db,
+                    apply_changes=True,
+                    now=datetime(2026, 4, 23, tzinfo=timezone.utc),
+                )
+
+            self.assertCountEqual(result["reinstatedSchools"], ["night01", "real01"])
+            self.assertIsNone(db.query(ExcludedSchool).filter(ExcludedSchool.school == "real01").first())
+            self.assertIsNone(db.query(ExcludedSchool).filter(ExcludedSchool.school == "night01").first())
+        finally:
+            db.close()
+
+    async def test_rule_based_exclusions_still_win_after_manual_cleanup(self):
+        db = get_db()
+        try:
+            db.add(ExcludedSchool(school="demo01"))
+            self.add_snapshot(db, school="demo01", snapshot_date="2026-02-01", active_users=4)
+            db.commit()
+
+            async def fake_api_get(path, params=None):
+                if path.endswith("/userActivity"):
+                    return [{"email": "demo@example.edu"}]
+                if path.endswith("/merge-history"):
+                    return []
+                raise AssertionError(path)
+
+            with patch("app.routes.api_get", side_effect=fake_api_get):
+                result = await reconcile_manual_exclusions(
+                    db,
+                    apply_changes=True,
+                    now=datetime(2026, 4, 23, tzinfo=timezone.utc),
+                )
+
+            self.assertEqual(result["reinstatedSchools"], ["demo01"])
+            schools = [
+                {"school": "demo01", "displayName": "Demo School", "products": []},
+            ]
+            included, excluded = split_school_catalog(schools, get_additional_excluded_schools(db))
+            self.assertEqual(included, [])
+            self.assertEqual(excluded[0]["reason"], "Matches excluded term: demo")
+        finally:
+            db.close()
 
 
 class SchoolNameResolutionTests(unittest.TestCase):

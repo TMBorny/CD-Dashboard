@@ -551,6 +551,38 @@ describe('ErrorAnalysisDashboard', () => {
     expect(schoolOptions).toEqual(['All schools', 'Foo State (foo01)']);
   });
 
+  it('hides SIS platforms that have no associated schools', async () => {
+    queryData.value = {
+      ...buildResponse(),
+      filterOptions: {
+        ...buildResponse().filterOptions,
+        sisPlatforms: ['Banner', 'ColumbiaCollegeChicago', 'PeopleSoftDirect'],
+      },
+      sisBreakdowns: [
+        buildResponse().sisBreakdowns[0],
+        buildResponse().sisBreakdowns[1],
+      ],
+    };
+    sisCountsQueryData.value = queryData.value;
+
+    const { default: ErrorAnalysisDashboard } = await import('./ErrorAnalysisDashboard.vue');
+    const wrapper = mount(ErrorAnalysisDashboard, {
+      global: {
+        stubs: {
+          RouterLink: RouterLinkStub,
+          VueApexCharts: { template: '<div class="chart-stub" />' },
+        },
+      },
+    });
+
+    const sisOptions = wrapper.get('[data-testid="sis-filter"]').findAll('option').map((option) => option.text());
+    expect(sisOptions).toEqual([
+      'All SIS Platforms',
+      'PeopleSoftDirect (4)',
+      'Banner (3)',
+    ]);
+  });
+
   it('downloads an export using the current filters', async () => {
     const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
 

@@ -124,6 +124,172 @@ def get_additional_excluded_schools(db) -> set[str]:
     }
 
 
+def get_new_york_year_start_date(now: Optional[datetime] = None) -> str:
+    """Return January 1 of the current New York calendar year."""
+    local_now = current_new_york_time(now)
+    return f"{local_now.year}-01-01"
+
+
+def _school_has_year_to_date_activity_from_snapshots(
+    db,
+    school: str,
+    year_start_date: str,
+) -> dict[str, bool]:
+    """Check whether cached snapshots already prove a school is active this year."""
+    snapshots = (
+        db.query(SchoolSnapshot)
+        .filter(SchoolSnapshot.school == school)
+        .filter(SchoolSnapshot.snapshot_date >= year_start_date)
+        .all()
+    )
+
+    signals = {
+        "activeUsers": False,
+        "realtimeMerge": False,
+        "nightlyMerge": False,
+    }
+    for snapshot in snapshots:
+        if (snapshot.active_users_24h or 0) > 0:
+            signals["activeUsers"] = True
+        if (snapshot.realtime_total or 0) > 0:
+            signals["realtimeMerge"] = True
+        if (snapshot.nightly_total or 0) > 0:
+            signals["nightlyMerge"] = True
+
+    return signals
+
+
+async def _school_has_year_to_date_activity_from_coursedog(
+    school: str,
+    year_start_date: str,
+    now: Optional[datetime] = None,
+) -> dict[str, bool]:
+    """Check live Coursedog activity when local snapshots are incomplete."""
+    local_now = current_new_york_time(now)
+    year_start = datetime.strptime(year_start_date, "%Y-%m-%d").replace(tzinfo=SCHEDULE_TIMEZONE)
+
+    signals = {
+        "activeUsers": False,
+        "realtimeMerge": False,
+        "nightlyMerge": False,
+    }
+
+    try:
+        activity_payload = await api_get(
+            f"/api/v1/{school}/userActivity",
+            params={
+                "after": str(int(year_start.astimezone(timezone.utc).timestamp() * 1000)),
+                "before": str(int(local_now.astimezone(timezone.utc).timestamp() * 1000)),
+            },
+        )
+        signals["activeUsers"] = bool(extract_unique_activity_users(activity_payload))
+    except Exception as exc:
+        logger.warning("Live active-user lookup failed for %s: %s", school, exc)
+
+    try:
+        page = 0
+        page_size = 500
+        while True:
+            merge_history_payload = await api_get(
+                f"/api/v1/int/{school}/integrations-hub/merge-history",
+                params={
+                    "page": str(page),
+                    "size": str(page_size),
+                    "dateFrom": year_start.astimezone(timezone.utc).isoformat(),
+                    "dateTo": local_now.astimezone(timezone.utc).isoformat(),
+                },
+            )
+            merge_entries = extract_merge_history_entries(merge_history_payload)
+            if not merge_entries:
+                break
+
+            for entry in merge_entries:
+                schedule_type = str(entry.get("scheduleType", "")).lower()
+                if schedule_type == "realtime":
+                    signals["realtimeMerge"] = True
+                elif schedule_type == "nightly":
+                    signals["nightlyMerge"] = True
+
+                if signals["realtimeMerge"] and signals["nightlyMerge"]:
+                    break
+
+            if signals["realtimeMerge"] and signals["nightlyMerge"]:
+                break
+            if len(merge_entries) < page_size:
+                break
+            page += 1
+    except Exception as exc:
+        logger.warning("Live merge-history lookup failed for %s: %s", school, exc)
+
+    return signals
+
+
+async def evaluate_manual_exclusion_reinstatement(
+    db,
+    school: str,
+    now: Optional[datetime] = None,
+) -> dict[str, Any]:
+    """Return whether a manually excluded school should be reinstated."""
+    year_start_date = get_new_york_year_start_date(now)
+    local_signals = _school_has_year_to_date_activity_from_snapshots(db, school, year_start_date)
+    if any(local_signals.values()):
+        return {
+            "school": school,
+            "yearStartDate": year_start_date,
+            "qualifies": True,
+            "source": "local",
+            "signals": local_signals,
+        }
+
+    live_signals = await _school_has_year_to_date_activity_from_coursedog(school, year_start_date, now=now)
+    qualifies = any(live_signals.values())
+    return {
+        "school": school,
+        "yearStartDate": year_start_date,
+        "qualifies": qualifies,
+        "source": "live" if qualifies or any(live_signals.values()) else "live-empty",
+        "signals": live_signals,
+    }
+
+
+async def reconcile_manual_exclusions(
+    db,
+    *,
+    apply_changes: bool = False,
+    now: Optional[datetime] = None,
+) -> dict[str, Any]:
+    """Evaluate the manual exclusion list and optionally remove reinstated schools."""
+    excluded_rows = (
+        db.query(ExcludedSchool)
+        .order_by(ExcludedSchool.school.asc())
+        .all()
+    )
+    results: list[dict[str, Any]] = []
+    reinstated: list[str] = []
+    retained: list[str] = []
+
+    for row in excluded_rows:
+        evaluation = await evaluate_manual_exclusion_reinstatement(db, row.school, now=now)
+        results.append(evaluation)
+        if evaluation["qualifies"]:
+            reinstated.append(row.school)
+            if apply_changes:
+                db.delete(row)
+        else:
+            retained.append(row.school)
+
+    if apply_changes:
+        db.commit()
+
+    return {
+        "yearStartDate": get_new_york_year_start_date(now),
+        "evaluatedCount": len(excluded_rows),
+        "reinstatedSchools": reinstated,
+        "retainedSchools": retained,
+        "results": results,
+    }
+
+
 def normalize_school_catalog(products_data, display_names_data=None) -> list[dict]:
     """Normalize the admin schools response into a flat school list without exclusions."""
     schools: list[dict] = []
@@ -1553,6 +1719,16 @@ def summarize_backfill_work_unit_statuses(db, job_id: str) -> dict[str, int]:
         if unit.status in counts:
             counts[unit.status] += 1
     return counts
+
+
+def backfill_snapshot_exists(db, school: str, snapshot_date: str) -> bool:
+    """Return whether a snapshot already exists for a school/date pair."""
+    return (
+        db.query(SchoolSnapshot.id)
+        .filter(SchoolSnapshot.school == school, SchoolSnapshot.snapshot_date == snapshot_date)
+        .first()
+        is not None
+    )
 
 
 async def restart_backfill_job(job_id: str, mode: str) -> dict:
@@ -3624,6 +3800,34 @@ async def run_history_backfill_job(
 
         for unit in work_units:
             attempt_number = 1
+            db = get_db()
+            try:
+                if backfill_snapshot_exists(db, unit.school, unit.snapshot_date):
+                    db_unit = db.query(BackfillWorkUnit).filter(BackfillWorkUnit.id == unit.id).first()
+                    if db_unit:
+                        db_unit.status = "skipped"
+                        db_unit.last_error = "Snapshot already exists; skipped re-fetch"
+                        db_unit.completed_at = datetime.now(timezone.utc)
+                    db.commit()
+                    update_backfill_job_state(
+                        job,
+                        current_school=unit.school,
+                        current_snapshot_date=unit.snapshot_date,
+                        skipped_delta=1,
+                        checkpoint_status="running",
+                    )
+                    persist_job_state(job_id)
+                    logger.info(
+                        "Backfill unit skipped job_id=%s school=%s snapshot_date=%s mode=%s",
+                        job_id,
+                        unit.school,
+                        unit.snapshot_date,
+                        mode,
+                    )
+                    continue
+            finally:
+                db.close()
+
             db = get_db()
             try:
                 db_unit = db.query(BackfillWorkUnit).filter(BackfillWorkUnit.id == unit.id).first()
