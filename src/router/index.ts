@@ -1,10 +1,11 @@
-import { createRouter, createWebHistory } from 'vue-router';
+import { createRouter, createWebHashHistory, createWebHistory } from 'vue-router';
 import ClientHealthDashboard from '@/components/Admin/ClientHealth/ClientHealthDashboard.vue';
 import ClientHealthDetail from '@/components/Admin/ClientHealth/ClientHealthDetail.vue';
 import ErrorAnalysisDashboard from '@/components/Admin/ErrorAnalysis/ErrorAnalysisDashboard.vue';
 import JobRunDetail from '@/components/Admin/JobsMonitoring/JobRunDetail.vue';
 import JobsMonitoring from '@/components/Admin/JobsMonitoring/JobsMonitoring.vue';
 import Operations from '@/components/Admin/Operations/Operations.vue';
+import { isStaticDataMode, siteBase } from '@/config/runtime';
 
 const routes = [
   {
@@ -50,7 +51,7 @@ const routes = [
 ];
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: isStaticDataMode ? createWebHashHistory(siteBase) : createWebHistory(siteBase),
   routes,
 });
 

@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { useQuery } from '@tanstack/vue-query';
 import { getClientHealthHistory, getClientHealthActiveUsers, getClientHealthSyncMetadata, getErrorAnalysis, getErrorAnalysisErrors } from '@/api';
+import { isStaticDataMode } from '@/config/runtime';
 import type { FailedMerge } from '@/types/clientHealth';
 import type { ErrorAnalysisResponse, ErrorDetailRow, ErrorDetailTableResponse, ErrorSignatureCluster, MergeReportReference, ResolutionHint } from '@/types/errorAnalysis';
 import VueApexCharts from 'vue3-apexcharts';
@@ -14,7 +15,6 @@ import { formatSchoolLabel } from '@/utils/schoolNames';
 const route = useRoute();
 const school = computed(() => String(route.params.school ?? ''));
 const coursedogBaseUrl = (import.meta.env.VITE_COURSEDOG_PRD_URL?.trim() || 'https://app.coursedog.com').replace(/\/+$/, '');
-const integrationHubUrl = computed(() => `${coursedogBaseUrl}/#/int/${school.value}`);
 const mergeReportsUrl = computed(() => `${coursedogBaseUrl}/#/int/${school.value}/merge-history`);
 const localTimeZoneLabel = getLocalTimeZoneLabel();
 
@@ -113,6 +113,9 @@ const currentErrorDetailRows = computed(() => currentErrorRows.value?.rows ?? []
 const currentErrorDetailTotal = computed(() => currentErrorRows.value?.total ?? 0);
 const currentErrorTotalPages = computed(() => Math.max(1, Math.ceil(currentErrorDetailTotal.value / currentErrorPageSize)));
 const currentErrorTotals = computed(() => currentErrorAnalysis.value?.summary.totalErrorInstances ?? 0);
+const currentErrorSchoolBreakdown = computed(() =>
+  currentErrorAnalysis.value?.schoolBreakdowns.find((row) => row.key === school.value) ?? null,
+);
 const currentErrorTab = ref<'categories' | 'signatures' | 'rows' | 'recent-failures'>('rows');
 const selectedErrorDetail = ref<{
   title: string;
@@ -130,25 +133,77 @@ const selectedErrorDetail = ref<{
   rawPayload?: string | null;
   resolutionHint?: ResolutionHint | null;
 } | null>(null);
+const getResolutionBucketMeta = (bucket: string) => {
+  switch (bucket) {
+    case 'missing_reference':
+      return {
+        title: 'Missing dependency or reference',
+        action: 'Verify the referenced records exist in the SIS and are synced before retrying dependent entities.',
+      };
+    case 'duplicate_conflict':
+      return {
+        title: 'Duplicate or conflicting record',
+        action: 'Check for duplicate source records or conflicting identifiers and resolve the collision before rerunning the sync.',
+      };
+    case 'validation_data_shape':
+      return {
+        title: 'Validation or data-shape issue',
+        action: 'Review the source payload for missing required fields, invalid formats, or schema mismatches before the next sync.',
+      };
+    case 'configuration_auth':
+      return {
+        title: 'Configuration or access problem',
+        action: 'Review integration credentials, permissions, and mapping/configuration settings for the affected entity type.',
+      };
+    default:
+      return {
+        title: 'General investigation recommended',
+        action: 'Inspect a sample error in Integration Hub, compare recent changes for the entity type, and confirm whether the issue is isolated to one school or SIS.',
+      };
+  }
+};
 const currentErrorCategories = computed(() => {
   const categories = new Map<string, { key: string; title: string; action: string; bucket: string; count: number; signatures: number }>();
+  const signatureCounts = new Map<string, number>();
   currentErrorSignatures.value.forEach((signature) => {
-    const hint = signature.resolutionHint;
-    const existing = categories.get(hint.title);
-    if (existing) {
-      existing.count += signature.totalCount;
-      existing.signatures += 1;
-      return;
-    }
-    categories.set(hint.title, {
-      key: hint.title,
-      title: hint.title,
-      action: hint.action,
-      bucket: hint.bucket,
-      count: signature.totalCount,
-      signatures: 1,
-    });
+    signatureCounts.set(signature.resolutionHint.bucket, (signatureCounts.get(signature.resolutionHint.bucket) ?? 0) + 1);
   });
+
+  const resolutionBuckets = currentErrorSchoolBreakdown.value?.resolutionBuckets;
+  if (resolutionBuckets && Object.keys(resolutionBuckets).length > 0) {
+    Object.entries(resolutionBuckets).forEach(([bucket, count]) => {
+      if (count <= 0) return;
+      const meta = getResolutionBucketMeta(bucket);
+      categories.set(bucket, {
+        key: bucket,
+        title: meta.title,
+        action: meta.action,
+        bucket,
+        count,
+        signatures: signatureCounts.get(bucket) ?? 0,
+      });
+    });
+  }
+
+  if (categories.size === 0) {
+    currentErrorSignatures.value.forEach((signature) => {
+      const hint = signature.resolutionHint;
+      const existing = categories.get(hint.bucket);
+      if (existing) {
+        existing.count += signature.totalCount;
+        existing.signatures += 1;
+        return;
+      }
+      categories.set(hint.bucket, {
+        key: hint.bucket,
+        title: hint.title,
+        action: hint.action,
+        bucket: hint.bucket,
+        count: signature.totalCount,
+        signatures: 1,
+      });
+    });
+  }
 
   return [...categories.values()].sort((left, right) => right.count - left.count || left.title.localeCompare(right.title));
 });
@@ -337,7 +392,6 @@ const schoolRoute = (schoolId: string) => ({
   params: { school: schoolId },
 });
 
-const getIntegrationHubSchoolUrl = (schoolId: string) => `${coursedogBaseUrl}/#/int/${schoolId}`;
 
 const stringifyPayload = (value: unknown) => {
   try {
@@ -547,6 +601,7 @@ watch([currentErrorCategoryFilter, currentErrorEntityTypeFilter, currentErrorSig
         <Card class="flex flex-col overflow-hidden" subtitle="Users" title="Active Users in Last 24h">
           <p class="mt-2 text-3xl font-semibold text-slate-950">{{ activeUsers?.count }}</p>
           <p v-if="activeUsers?.error" class="mt-2 text-xs text-amber-500">{{ activeUsers.error }}</p>
+          <p v-else-if="isStaticDataMode" class="mt-2 text-xs text-slate-500">Static mode shows the cached count from the latest exported snapshot.</p>
           <div class="mt-6 max-h-[28rem] space-y-2 overflow-y-auto pr-2" data-testid="active-users-list">
             <div v-for="user in activeUsers?.users" :key="user" class="flex items-center gap-3 rounded-lg bg-slate-50 p-3">
               <div class="h-2 w-2 rounded-full bg-emerald-500"></div>

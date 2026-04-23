@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useRoute } from 'vue-router';
+import { isStaticDataMode } from '@/config/runtime';
 
 const route = useRoute();
 const isOpen = ref(true);
@@ -83,6 +84,7 @@ const isActive = (itemPath: string) => {
 
       <!-- Footer -->
       <div v-if="isOpen" class="px-4 py-6 border-t border-slate-800">
+        <p v-if="isStaticDataMode" class="mb-2 text-xs uppercase tracking-[0.16em] text-amber-300">Static mode</p>
         <p class="text-xs text-slate-400">{{ buildLabel }}</p>
       </div>
     </div>

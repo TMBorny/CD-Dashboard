@@ -5,6 +5,7 @@ const get = vi.fn();
 const del = vi.fn();
 const put = vi.fn();
 const create = vi.fn(() => ({ post, get, put, delete: del }));
+const fetchMock = vi.fn();
 
 vi.mock('axios', () => ({
   default: {
@@ -19,8 +20,10 @@ describe('client health api helpers', () => {
     del.mockReset();
     put.mockReset();
     create.mockClear();
+    fetchMock.mockReset();
     vi.resetModules();
     vi.unstubAllEnvs();
+    vi.stubGlobal('fetch', fetchMock);
   });
 
   it('fetches the available schools list', async () => {
@@ -168,5 +171,43 @@ describe('client health api helpers', () => {
     await getSyncRun('bulk-1');
 
     expect(get).toHaveBeenCalledWith('/client-health/sync-runs/bulk-1');
+  });
+
+  it('loads latest client health from static json when static mode is enabled', async () => {
+    vi.stubEnv('VITE_DATA_MODE', 'static');
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ snapshotDate: '2026-04-22', schools: [] }),
+    });
+    const { getClientHealth } = await import('./index');
+
+    const response = await getClientHealth();
+
+    expect(fetchMock).toHaveBeenCalledWith('/static-data/client-health/latest.json', {
+      headers: { Accept: 'application/json' },
+    });
+    expect(response.data.snapshotDate).toBe('2026-04-22');
+  });
+
+  it('loads sync runs from static json when static mode is enabled', async () => {
+    vi.stubEnv('VITE_DATA_MODE', 'static');
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        syncRuns: [{ jobId: 'job-1' }, { jobId: 'job-2' }],
+        totalCount: 2,
+        limit: 2,
+        offset: 0,
+      }),
+    });
+    const { getSyncRuns } = await import('./index');
+
+    const response = await getSyncRuns({ limit: 1, offset: 1 });
+
+    expect(fetchMock).toHaveBeenCalledWith('/static-data/jobs/sync-runs.json', {
+      headers: { Accept: 'application/json' },
+    });
+    expect(response.data.syncRuns).toEqual([{ jobId: 'job-2' }]);
+    expect(response.data.totalCount).toBe(2);
   });
 });

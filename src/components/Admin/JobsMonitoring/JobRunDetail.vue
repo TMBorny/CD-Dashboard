@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
 import { getSyncRun, resumeHistoryBackfill, retryHistoryBackfillFailures } from '@/api';
 import Badge from '@/components/ui/Badge.vue';
 import Card from '@/components/ui/Card.vue';
+import { isStaticDataMode } from '@/config/runtime';
 import {
   canResumeJob,
   canRetryFailuresForJob,
@@ -33,7 +34,7 @@ const queryClient = useQueryClient();
 const { data, isLoading, error } = useQuery({
   queryKey: ['syncRun', props.jobId],
   queryFn: () => getSyncRun(props.jobId).then((res) => res.data),
-  refetchInterval: 5000,
+  refetchInterval: isStaticDataMode ? false : 5000,
 });
 
 const hasSyncRunData = computed(() => Boolean(data.value?.syncRun));
@@ -145,7 +146,10 @@ const triggerRetryFailures = async () => {
     </div>
     <template v-else>
       <div v-if="error" class="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-        Live updates are temporarily unavailable. Showing the most recent job details we already loaded.
+        {{ isStaticDataMode ? 'Showing the exported snapshot of this job from the static build.' : 'Live updates are temporarily unavailable. Showing the most recent job details we already loaded.' }}
+      </div>
+      <div v-if="isStaticDataMode" class="mb-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+        Recovery actions are disabled on the hosted static site.
       </div>
       <div v-if="mutationError" class="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
         {{ mutationError }}
@@ -237,18 +241,18 @@ const triggerRetryFailures = async () => {
               <button
                 v-if="canResumeJob(run)"
                 class="rounded-full border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                :disabled="runActionPending"
+                :disabled="isStaticDataMode || runActionPending"
                 @click="triggerResume"
               >
-                {{ runActionPending ? 'Working…' : 'Resume backfill' }}
+                {{ isStaticDataMode ? 'Unavailable on static site' : (runActionPending ? 'Working…' : 'Resume backfill') }}
               </button>
               <button
                 v-if="canRetryFailuresForJob(run)"
                 class="rounded-full border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 transition hover:border-amber-400 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
-                :disabled="runActionPending"
+                :disabled="isStaticDataMode || runActionPending"
                 @click="triggerRetryFailures"
               >
-                {{ runActionPending ? 'Working…' : 'Retry failed units' }}
+                {{ isStaticDataMode ? 'Unavailable on static site' : (runActionPending ? 'Working…' : 'Retry failed units') }}
               </button>
             </div>
             <p v-else class="mt-4 text-sm text-slate-500">No recovery action is available for this run.</p>

@@ -60,6 +60,7 @@ export interface ErrorBreakdownRow {
   recurrenceDays?: number;
   likelyNextStep?: string | null;
   topResolutionTheme?: string | null;
+  resolutionBuckets?: Record<string, number>;
   affectedSchools?: number;
   commonResolutionTheme?: string | null;
   latestMergeReport?: MergeReportReference | null;

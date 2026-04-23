@@ -5,6 +5,7 @@ import VueApexCharts from 'vue3-apexcharts';
 import { downloadErrorAnalysisDetailedExport, downloadErrorAnalysisExport, getErrorAnalysis, getErrorAnalysisErrors } from '@/api';
 import Card from '@/components/ui/Card.vue';
 import { useChartOptions } from '@/composables/useChartOptions';
+import { isStaticDataMode } from '@/config/runtime';
 import type {
   ErrorAnalysisResponse,
   ErrorBreakdownRow,
@@ -47,6 +48,7 @@ interface SisSignatureContext {
 }
 
 const selectedWindow = ref<WindowOption>('7');
+const selectedSchool = ref('all');
 const selectedSis = ref('all');
 const activeView = ref<ErrorViewMode>('aggregate');
 const selectedErrorDetail = ref<ErrorDetailContext | null>(null);
@@ -69,15 +71,17 @@ const daysParam = computed<number | undefined>(() => {
 
 const { data, isLoading, error } = useQuery({
   queryKey: computed(() => [
-    'errorAnalysis',
-    {
-      days: daysParam.value ?? 'all',
-      sisPlatform: selectedSis.value,
-    },
+      'errorAnalysis',
+      {
+        days: daysParam.value ?? 'all',
+        school: selectedSchool.value,
+        sisPlatform: selectedSis.value,
+      },
   ]),
   queryFn: () =>
     getErrorAnalysis({
       days: daysParam.value,
+      school: selectedSchool.value === 'all' ? undefined : selectedSchool.value,
       sisPlatform: selectedSis.value === 'all' ? undefined : selectedSis.value,
     }).then((res) => res.data as ErrorAnalysisResponse),
   placeholderData: keepPreviousData,
@@ -103,11 +107,12 @@ const sisCountsResponse = computed(() => sisCountsData.value);
 
 const { data: detailData, isLoading: isLoadingDetails } = useQuery({
   queryKey: computed(() => [
-    'errorAnalysisDetails',
-    {
-      days: daysParam.value ?? 'all',
-      sisPlatform: selectedSis.value,
-      q: detailSearch.value,
+      'errorAnalysisDetails',
+      {
+        days: daysParam.value ?? 'all',
+        school: selectedSchool.value,
+        sisPlatform: selectedSis.value,
+        q: detailSearch.value,
       page: detailPage.value,
       pageSize: detailPageSize,
       sortBy: detailSortBy.value,
@@ -117,6 +122,7 @@ const { data: detailData, isLoading: isLoadingDetails } = useQuery({
   queryFn: () =>
     getErrorAnalysisErrors({
       days: daysParam.value,
+      school: selectedSchool.value === 'all' ? undefined : selectedSchool.value,
       sisPlatform: selectedSis.value === 'all' ? undefined : selectedSis.value,
       q: detailSearch.value || undefined,
       page: detailPage.value,
@@ -130,6 +136,10 @@ const { data: detailData, isLoading: isLoadingDetails } = useQuery({
 const detailResponse = computed(() => detailData.value);
 
 const formatCountLabel = (value?: number | null) => new Intl.NumberFormat('en-US').format(value ?? 0);
+
+watch(selectedSis, () => {
+  selectedSchool.value = 'all';
+});
 
 const sisOptions = computed(() => {
   const optionSource = sisCountsResponse.value ?? response.value;
@@ -153,7 +163,24 @@ const sisOptions = computed(() => {
   ];
 });
 
-watch([selectedWindow, selectedSis, detailSearch], () => {
+const schoolOptions = computed(() => {
+  const filteredSchools = (response.value?.filterOptions.schools ?? []).filter((option) =>
+    selectedSis.value === 'all' || option.sisPlatform === selectedSis.value,
+  );
+
+  return [
+    { value: 'all', label: 'All schools' },
+    ...filteredSchools
+      .slice()
+      .sort((left, right) => left.label.localeCompare(right.label))
+      .map((option) => ({
+        value: option.value,
+        label: formatSchoolLabel(option.value, option.label),
+      })),
+  ];
+});
+
+watch([selectedWindow, selectedSchool, selectedSis, detailSearch], () => {
   detailPage.value = 1;
 });
 
@@ -258,9 +285,7 @@ const isSignaturePatternDetail = computed(() =>
   Boolean(selectedErrorDetail.value?.impactedSchools?.length || selectedErrorDetail.value?.exampleMergeReports?.length),
 );
 
-const errorDetailHeading = computed(() =>
-  isSignaturePatternDetail.value ? 'Signature pattern' : 'Captured error',
-);
+const errorDetailHeading = computed(() => 'Full upstream error');
 
 const errorDetailMessageLabel = computed(() =>
   isSignaturePatternDetail.value ? 'Sample upstream message' : 'Captured upstream message',
@@ -604,6 +629,7 @@ const handleExport = async () => {
   try {
     const exportParams = {
       days: daysParam.value,
+      school: selectedSchool.value === 'all' ? undefined : selectedSchool.value,
       sisPlatform: selectedSis.value === 'all' ? undefined : selectedSis.value,
     };
     const { blob, filename } = activeView.value === 'all'
@@ -636,11 +662,12 @@ const handleExport = async () => {
             Find recurring open merge-error patterns, compare them across schools and SIS platforms,
             and surface likely next steps from captured trends.
           </p>
-          <div class="mt-5 flex flex-wrap gap-2 text-sm">
-            <span class="inline-flex rounded-full bg-slate-100 px-3 py-1.5 text-slate-700">{{ headerStatus }}</span>
-            <span class="inline-flex rounded-full bg-slate-100 px-3 py-1.5 text-slate-700">{{ historyStatus }}</span>
-            <span class="inline-flex rounded-full bg-slate-100 px-3 py-1.5 text-slate-500">Times shown in {{ localTimeZoneLabel }}</span>
-          </div>
+        <div class="mt-5 flex flex-wrap gap-2 text-sm">
+          <span class="inline-flex rounded-full bg-slate-100 px-3 py-1.5 text-slate-700">{{ headerStatus }}</span>
+          <span class="inline-flex rounded-full bg-slate-100 px-3 py-1.5 text-slate-700">{{ historyStatus }}</span>
+          <span class="inline-flex rounded-full bg-slate-100 px-3 py-1.5 text-slate-500">Times shown in {{ localTimeZoneLabel }}</span>
+          <span v-if="isStaticDataMode" class="inline-flex rounded-full bg-amber-100 px-3 py-1.5 text-amber-800">Read-only static snapshot</span>
+        </div>
         </div>
 
         <div class="mt-6 flex justify-start sm:justify-end">
@@ -747,6 +774,13 @@ const handleExport = async () => {
                 <label class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">SIS</label>
                 <select v-model="selectedSis" data-testid="sis-filter" class="w-full rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm focus:border-slate-400 focus:outline-none">
                   <option v-for="option in sisOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">School</label>
+                <select v-model="selectedSchool" data-testid="school-filter" class="w-full rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm focus:border-slate-400 focus:outline-none">
+                  <option v-for="option in schoolOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </div>
             </div>
@@ -1338,6 +1372,16 @@ const handleExport = async () => {
                 >
                   School detail
                 </router-link>
+
+                <a
+                  v-if="selectedErrorDetail.school"
+                  :href="getIntegrationHubUrl(selectedErrorDetail.school)"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+                >
+                  Integration Hub ↗
+                </a>
 
                 <a
                   v-if="selectedErrorDetail.mergeReport && !selectedErrorDetail.exampleMergeReports?.length"

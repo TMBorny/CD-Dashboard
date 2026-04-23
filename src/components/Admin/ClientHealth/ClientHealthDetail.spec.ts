@@ -88,7 +88,7 @@ vi.mock('@tanstack/vue-query', () => ({
 
     if (key === 'clientHealthActiveUsers') {
       return {
-        data: ref({ count: 3, users: ['a@example.com'] }),
+        data: ref({ count: 3, users: ['dstpe568@cccc.edu', 'jsilf054@cccc.edu', 'a@example.com'] }),
         isLoading: ref(false),
         error: ref(null),
       };
@@ -205,7 +205,26 @@ vi.mock('@tanstack/vue-query', () => ({
               exampleMergeReports: [],
             },
           ],
-          schoolBreakdowns: [],
+          schoolBreakdowns: [
+            {
+              key: 'bar01',
+              label: 'Baruch College',
+              sisPlatform: 'Banner',
+              totalErrors: 21,
+              distinctSignatures: 3,
+              dominantSignature: 'sections | missing_course | course <num> missing dependency <num>',
+              lastSeen: '2026-04-12',
+              recurrenceDays: 1,
+              likelyNextStep: 'Verify the related dependency exists before rerunning the merge.',
+              topResolutionTheme: 'missing_reference',
+              resolutionBuckets: {
+                missing_reference: 11,
+                duplicate_conflict: 10,
+                generic_investigation: 4,
+              },
+              latestMergeReport: null,
+            },
+          ],
           sisBreakdowns: [],
         }),
         isLoading: ref(false),
@@ -336,7 +355,9 @@ describe('ClientHealthDetail', () => {
     });
 
     expect(wrapper.text()).toContain('Current detailed error snapshot: 2026-04-12');
-    expect(wrapper.get('[data-testid="current-error-tabs"]').text()).toContain('Categories (2)');
+    expect(wrapper.text()).toContain('dstpe568@cccc.edu');
+    expect(wrapper.text()).toContain('jsilf054@cccc.edu');
+    expect(wrapper.get('[data-testid="current-error-tabs"]').text()).toContain('Categories (3)');
     expect(wrapper.get('[data-testid="current-error-tabs"]').text()).toContain('Signatures (2)');
     expect(wrapper.get('[data-testid="current-error-tabs"]').text()).toContain('Errors (21)');
     expect(wrapper.get('[data-testid="current-error-tabs"]').text()).toContain('Recent Failed Merges (1)');
@@ -346,12 +367,13 @@ describe('ClientHealthDetail', () => {
     expect(wrapper.find('[data-testid="current-error-detail-modal"]').exists()).toBe(true);
     expect(wrapper.text()).toContain('Course 202602 missing dependency 987654');
 
-    const categoriesTab = wrapper.get('[data-testid="current-error-tabs"]').findAll('button').find((node) => node.text() === 'Categories (2)');
+    const categoriesTab = wrapper.get('[data-testid="current-error-tabs"]').findAll('button').find((node) => node.text() === 'Categories (3)');
     expect(categoriesTab).toBeTruthy();
     await categoriesTab!.trigger('click');
     expect(wrapper.find('[data-testid="current-error-panel-categories"]').exists()).toBe(true);
-    expect(wrapper.text()).toContain('Missing reference');
-    expect(wrapper.text()).toContain('Duplicate conflict');
+    expect(wrapper.text()).toContain('Missing dependency or reference');
+    expect(wrapper.text()).toContain('Duplicate or conflicting record');
+    expect(wrapper.text()).toContain('General investigation recommended');
 
     const capturedErrorsTab = wrapper.get('[data-testid="current-error-tabs"]').findAll('button').find((node) => node.text() === 'Errors (21)');
     expect(capturedErrorsTab).toBeTruthy();

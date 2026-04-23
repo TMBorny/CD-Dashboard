@@ -724,6 +724,7 @@ async def get_error_analysis(
                     "recurrenceDays": len(school_row["recurrenceDays"]),
                     "likelyNextStep": dominant_signature["resolutionHint"]["action"] if dominant_signature else None,
                     "topResolutionTheme": dominant_bucket,
+                    "resolutionBuckets": school_row["resolutionBuckets"],
                     "latestMergeReport": school_row["latestMergeReport"],
                 }
             )
@@ -3103,6 +3104,7 @@ def build_snapshot_from_merge_history(
     snapshot_date: str,
     merge_entries: list[dict],
     active_users_24h: int,
+    active_users: Optional[list[str]] = None,
 ) -> dict:
     """Build a historical snapshot from merge history plus user activity."""
     nightly_total = nightly_success = nightly_issues = nightly_nodata = nightly_halted = 0
@@ -3203,6 +3205,7 @@ def build_snapshot_from_merge_history(
         # Historical backfills do not have a trustworthy per-day open merge error total.
         "mergeErrorsCount": None,
         "activeUsers24h": active_users_24h,
+        "activeUsers": active_users or [],
         "createdAt": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -3343,12 +3346,14 @@ async def fetch_school_health(
 
         # Active users — try to get from user activity endpoint
         active_users_24h = 0
+        active_users: list[str] = []
         try:
             activity_data = await api_get(
                 f"/api/v1/{school}/userActivity",
                 params={"after": str(last_24h)},
             )
-            active_users_24h = len(extract_unique_activity_users(activity_data))
+            active_users = extract_unique_activity_users(activity_data)
+            active_users_24h = len(active_users)
         except Exception as e:
             sync_errors.append(f"{school}: user activity request failed ({e})")
 
@@ -3410,6 +3415,7 @@ async def fetch_school_health(
             "recentFailedMerges": recent_failed,
             "mergeErrorsCount": merge_errors_count,
             "activeUsers24h": active_users_24h,
+            "activeUsers": active_users,
             "createdAt": datetime.now(timezone.utc).isoformat(),
             "_errorGroups": error_groups,
             "_errorDetails": error_details,
@@ -3456,6 +3462,7 @@ async def fetch_school_health_for_date(
     merge_entries = await annotate_nightly_halted_merges(school, merge_entries)
 
     active_users_24h = 0
+    active_users: list[str] = []
     try:
         activity_data = await api_get(
             f"/api/v1/{school}/userActivity",
@@ -3464,7 +3471,8 @@ async def fetch_school_health_for_date(
                 "before": str(int(day_end.timestamp() * 1000)),
             },
         )
-        active_users_24h = len(extract_unique_activity_users(activity_data))
+        active_users = extract_unique_activity_users(activity_data)
+        active_users_24h = len(active_users)
     except Exception as e:
         # Non-fatal: log the failure and continue with active_users_24h=0
         # so a bad activity endpoint doesn't abort the whole work unit.
@@ -3490,6 +3498,7 @@ async def fetch_school_health_for_date(
         snapshot_date=snapshot_date,
         merge_entries=merge_entries,
         active_users_24h=active_users_24h,
+        active_users=active_users,
     )
     snapshot["_syncErrors"] = sync_errors
     return snapshot

@@ -4,6 +4,7 @@ import { RouterLink } from 'vue-router';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
 import { getSyncRuns, resumeHistoryBackfill, retryHistoryBackfillFailures } from '@/api';
 import Badge from '@/components/ui/Badge.vue';
+import { isStaticDataMode } from '@/config/runtime';
 import {
   canResumeJob,
   canRetryFailuresForJob,
@@ -27,7 +28,7 @@ const currentOffset = computed(() => currentPage.value * PAGE_SIZE);
 const { data, isLoading, error } = useQuery({
   queryKey: computed(() => ['syncRuns', { limit: PAGE_SIZE, offset: currentOffset.value }]),
   queryFn: () => getSyncRuns({ limit: PAGE_SIZE, offset: currentOffset.value }).then((res) => res.data as SyncRunsResponse),
-  refetchInterval: 5000,
+  refetchInterval: isStaticDataMode ? false : 5000,
   placeholderData: keepPreviousData,
 });
 
@@ -101,7 +102,10 @@ const localTimeZoneLabel = getLocalTimeZoneLabel();
     <div v-else-if="error && !hasSyncRunsData" class="text-sm text-rose-500">Failed to load job history.</div>
     <div v-else class="space-y-4">
       <div v-if="error" class="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-        Live updates are temporarily unavailable. Showing the most recent job history we already loaded.
+        {{ isStaticDataMode ? 'Showing the exported snapshot of job history from the static build.' : 'Live updates are temporarily unavailable. Showing the most recent job history we already loaded.' }}
+      </div>
+      <div v-if="isStaticDataMode" class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+        This hosted view is read-only. Resume and retry actions stay available in the live dashboard only.
       </div>
       <div v-if="mutationError" class="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
         {{ mutationError }}
@@ -273,18 +277,18 @@ const localTimeZoneLabel = getLocalTimeZoneLabel();
                 <button
                   v-if="canResumeJob(run)"
                   class="rounded-full border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                  :disabled="runActionPending(run)"
+                  :disabled="isStaticDataMode || runActionPending(run)"
                   @click="triggerResume(run)"
                 >
-                  {{ runActionPending(run) ? 'Working…' : 'Resume' }}
+                  {{ isStaticDataMode ? 'Unavailable on static site' : (runActionPending(run) ? 'Working…' : 'Resume') }}
                 </button>
                 <button
                   v-if="canRetryFailuresForJob(run)"
                   class="rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800 transition hover:border-amber-400 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
-                  :disabled="runActionPending(run)"
+                  :disabled="isStaticDataMode || runActionPending(run)"
                   @click="triggerRetryFailures(run)"
                 >
-                  {{ runActionPending(run) ? 'Working…' : 'Retry Failures' }}
+                  {{ isStaticDataMode ? 'Unavailable on static site' : (runActionPending(run) ? 'Working…' : 'Retry Failures') }}
                 </button>
               </div>
             </td>

@@ -13,12 +13,14 @@ node_modules
 dist
 dist-ssr
 *.local
+.static-publish.log
 .env
 .env.*
 !.env.example
 *.db
 *.bk
 client-health-backend/*.db
+public/static-data/
 
 # Editor directories and files
 .vscode/*

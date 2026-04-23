@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue';
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
 import { addSchoolExclusion, getSchedulerSettings, getSchools, getSyncStatus, removeSchoolExclusion, triggerHistoryBackfill, triggerSync, updateSchedulerSettings } from '@/api';
 import Badge from '@/components/ui/Badge.vue';
+import { isStaticDataMode } from '@/config/runtime';
 import type { ExcludedSchoolOption, SchoolOption } from '@/types/clientHealth';
 import { formatSchoolLabel } from '@/utils/schoolNames';
 
@@ -45,11 +46,13 @@ const schedulerTime = ref('07:30');
 const { data, isLoading, error } = useQuery({
   queryKey: ['schools'],
   queryFn: () => getSchools().then((res) => res.data),
+  enabled: !isStaticDataMode,
 });
 
 const { data: schedulerSettings, isLoading: isLoadingSchedulerSettings } = useQuery({
   queryKey: ['schedulerSettings'],
   queryFn: () => getSchedulerSettings().then((res) => res.data),
+  enabled: !isStaticDataMode,
 });
 
 const schools = computed<SchoolOption[]>(() => data.value?.schools ?? []);
@@ -337,6 +340,18 @@ async function unexcludeSchool(school: string) {
 <template>
   <div class="w-full bg-slate-50 text-slate-900">
     <div class="w-full px-4 py-6 sm:px-6 lg:px-8 xl:px-10 2xl:px-12">
+      <div v-if="isStaticDataMode" class="rounded-[28px] border border-slate-200 bg-white p-8 shadow-sm">
+        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Operations</p>
+        <h1 class="mt-3 text-4xl font-semibold tracking-tight text-slate-950 sm:text-5xl">Live admin controls stay in the private dashboard</h1>
+        <p class="mt-4 max-w-3xl text-base leading-7 text-slate-600">
+          This GitHub Pages build is a read-only snapshot. Sync triggers, historical backfills, scheduler changes,
+          and school exclusion management require the live backend and are intentionally disabled here.
+        </p>
+        <div class="mt-6 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900">
+          Use the live internal deployment when you need to run or manage operations.
+        </div>
+      </div>
+      <template v-else>
       <div class="mb-8 rounded-[28px] border border-slate-200 bg-white/95 p-8 shadow-sm">
         <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -653,6 +668,7 @@ async function unexcludeSchool(school: string) {
           </div>
         </section>
       </div>
+      </template>
     </div>
   </div>
 </template>

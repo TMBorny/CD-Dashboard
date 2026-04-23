@@ -26,6 +26,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   
   return {
+    base: env.VITE_SITE_BASE || '/',
     plugins: [vue(), tailwind()],
     resolve: {
       alias: {

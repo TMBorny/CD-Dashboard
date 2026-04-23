@@ -1420,12 +1420,14 @@ class BackfillTrackingTests(unittest.TestCase):
                 "recentFailedMerges": [],
                 "mergeErrorsCount": 0,
                 "activeUsers24h": 0,
+                "activeUsers": ["dstpe568@cccc.edu", "jsilf054@cccc.edu"],
             }
         )
 
         payload = snapshot.to_dict()
 
         self.assertEqual(payload["merges"]["nightly"]["halted"], 1)
+        self.assertEqual(payload["activeUsers"], ["dstpe568@cccc.edu", "jsilf054@cccc.edu"])
 
     def test_ensure_schema_updates_adds_nightly_halted_column_for_existing_db(self):
         temp_dir = tempfile.mkdtemp(prefix="client-health-schema-test-")

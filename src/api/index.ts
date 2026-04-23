@@ -1,4 +1,6 @@
 import axios from 'axios';
+import { isStaticDataMode } from '@/config/runtime';
+import * as staticApi from './static';
 
 const internalApiKey = import.meta.env.VITE_INTERNAL_API_KEY?.trim();
 
@@ -15,11 +17,17 @@ const backend = axios.create({
 });
 
 export async function getSchools() {
+  if (isStaticDataMode) {
+    return staticApi.getSchools();
+  }
   const res = await backend.get('/schools');
   return { data: res.data };
 }
 
 export async function addSchoolExclusion(params: { school: string }) {
+  if (isStaticDataMode) {
+    return staticApi.addSchoolExclusion(params);
+  }
   const res = await backend.post('/schools/exclusions', {
     school: params.school,
   });
@@ -27,6 +35,9 @@ export async function addSchoolExclusion(params: { school: string }) {
 }
 
 export async function removeSchoolExclusion(school: string) {
+  if (isStaticDataMode) {
+    return staticApi.removeSchoolExclusion(school);
+  }
   const res = await backend.delete(`/schools/exclusions/${school}`);
   return { data: res.data };
 }
@@ -36,6 +47,9 @@ export async function removeSchoolExclusion(school: string) {
  * This hits our local backend which serves pre-cached data from SQLite.
  */
 export async function getClientHealth() {
+  if (isStaticDataMode) {
+    return staticApi.getClientHealth();
+  }
   const res = await backend.get('/client-health');
   return { data: res.data };
 }
@@ -45,6 +59,9 @@ export async function getClientHealth() {
  * schools and persists it to SQLite. Returns timing information.
  */
 export async function triggerSync(params?: { school?: string }) {
+  if (isStaticDataMode) {
+    return staticApi.triggerSync(params);
+  }
   const res = await backend.post('/client-health/sync', null, {
     params: params?.school ? { school: params.school } : {},
   });
@@ -52,11 +69,17 @@ export async function triggerSync(params?: { school?: string }) {
 }
 
 export async function getSyncStatus(jobId: string) {
+  if (isStaticDataMode) {
+    return staticApi.getSyncStatus(jobId);
+  }
   const res = await backend.get(`/client-health/sync/${jobId}`);
   return res.data;
 }
 
 export async function triggerHistoryBackfill(params: { startDate: string; endDate?: string; school?: string }) {
+  if (isStaticDataMode) {
+    return staticApi.triggerHistoryBackfill(params);
+  }
   const res = await backend.post('/client-health/history/backfill', null, {
     params: {
       startDate: params.startDate,
@@ -68,16 +91,25 @@ export async function triggerHistoryBackfill(params: { startDate: string; endDat
 }
 
 export async function resumeHistoryBackfill(jobId: string) {
+  if (isStaticDataMode) {
+    return staticApi.resumeHistoryBackfill(jobId);
+  }
   const res = await backend.post(`/client-health/history/backfill/${jobId}/resume`);
   return res.data;
 }
 
 export async function retryHistoryBackfillFailures(jobId: string) {
+  if (isStaticDataMode) {
+    return staticApi.retryHistoryBackfillFailures(jobId);
+  }
   const res = await backend.post(`/client-health/history/backfill/${jobId}/retry-failures`);
   return res.data;
 }
 
 export async function getClientHealthSyncMetadata(params?: { school?: string }) {
+  if (isStaticDataMode) {
+    return staticApi.getClientHealthSyncMetadata(params);
+  }
   const res = await backend.get('/client-health/sync-metadata', {
     params: params?.school ? { school: params.school } : {},
   });
@@ -85,11 +117,17 @@ export async function getClientHealthSyncMetadata(params?: { school?: string }) 
 }
 
 export async function getSchedulerSettings() {
+  if (isStaticDataMode) {
+    return staticApi.getSchedulerSettings();
+  }
   const res = await backend.get('/client-health/scheduler-settings');
   return { data: res.data };
 }
 
 export async function updateSchedulerSettings(params: { syncEnabled: boolean; syncTime: string }) {
+  if (isStaticDataMode) {
+    return staticApi.updateSchedulerSettings(params);
+  }
   const res = await backend.put('/client-health/scheduler-settings', {
     syncEnabled: params.syncEnabled,
     syncTime: params.syncTime,
@@ -103,6 +141,9 @@ export async function updateSchedulerSettings(params: { syncEnabled: boolean; sy
 // ---------------------------------------------------------------------------
 
 export async function getClientHealthHistory(params: { days?: number; school?: string }) {
+  if (isStaticDataMode) {
+    return staticApi.getClientHealthHistory(params);
+  }
   const res = await backend.get('/client-health/history', {
     params: {
       ...(typeof params.days === 'number' ? { days: params.days } : {}),
@@ -114,6 +155,9 @@ export async function getClientHealthHistory(params: { days?: number; school?: s
 }
 
 export async function getErrorAnalysis(params: { days?: number; school?: string; sisPlatform?: string; latestOnly?: boolean }) {
+  if (isStaticDataMode) {
+    return staticApi.getErrorAnalysis(params);
+  }
   const res = await backend.get('/error-analysis', {
     params: {
       ...(typeof params.days === 'number' ? { days: params.days } : {}),
@@ -127,6 +171,9 @@ export async function getErrorAnalysis(params: { days?: number; school?: string;
 }
 
 export async function downloadErrorAnalysisExport(params: { days?: number; school?: string; sisPlatform?: string }) {
+  if (isStaticDataMode) {
+    return staticApi.downloadErrorAnalysisExport(params);
+  }
   const res = await backend.get('/error-analysis/export', {
     params: {
       ...(typeof params.days === 'number' ? { days: params.days } : {}),
@@ -157,6 +204,9 @@ export async function getErrorAnalysisErrors(params: {
   page?: number;
   pageSize?: number;
 }) {
+  if (isStaticDataMode) {
+    return staticApi.getErrorAnalysisErrors(params);
+  }
   const res = await backend.get('/error-analysis/errors', {
     params: {
       ...(typeof params.days === 'number' ? { days: params.days } : {}),
@@ -182,6 +232,9 @@ export async function downloadErrorAnalysisDetailedExport(params: {
   sisPlatform?: string;
   q?: string;
 }) {
+  if (isStaticDataMode) {
+    return staticApi.downloadErrorAnalysisDetailedExport(params);
+  }
   const res = await backend.get('/error-analysis/export', {
     params: {
       ...(typeof params.days === 'number' ? { days: params.days } : {}),
@@ -203,6 +256,9 @@ export async function downloadErrorAnalysisDetailedExport(params: {
  * Get active users for a specific school via the local backend.
  */
 export async function getClientHealthActiveUsers(params: { school?: string }) {
+  if (isStaticDataMode) {
+    return staticApi.getClientHealthActiveUsers(params);
+  }
   const schoolId = params.school;
   if (!schoolId) {
     throw new Error('school is required');
@@ -219,6 +275,9 @@ export async function getClientHealthActiveUsers(params: { school?: string }) {
 }
 
 export async function getSyncRuns(params?: { limit?: number; offset?: number }) {
+  if (isStaticDataMode) {
+    return staticApi.getSyncRuns(params);
+  }
   const res = await backend.get('/client-health/sync-runs', {
     params: {
       limit: params?.limit ?? 50,
@@ -229,6 +288,9 @@ export async function getSyncRuns(params?: { limit?: number; offset?: number }) 
 }
 
 export async function getSyncRun(jobId: string) {
+  if (isStaticDataMode) {
+    return staticApi.getSyncRun(jobId);
+  }
   const res = await backend.get(`/client-health/sync-runs/${jobId}`);
   return { data: res.data };
 }

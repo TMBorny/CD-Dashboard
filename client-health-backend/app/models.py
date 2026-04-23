@@ -66,6 +66,7 @@ class SchoolSnapshot(Base):
     recent_failed_merges_json = Column(Text, default="[]")
     merge_errors_count = Column(Integer, default=0)
     active_users_24h = Column(Integer, default=0)
+    active_users_json = Column(Text, default="[]")
 
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -107,6 +108,7 @@ class SchoolSnapshot(Base):
             else [],
             "mergeErrorsCount": self.merge_errors_count,
             "activeUsers24h": self.active_users_24h,
+            "activeUsers": json.loads(self.active_users_json) if self.active_users_json else [],
             "createdAt": serialize_datetime(self.created_at),
         }
 
@@ -146,6 +148,7 @@ class SchoolSnapshot(Base):
             ),
             merge_errors_count=data.get("mergeErrorsCount", 0),
             active_users_24h=data.get("activeUsers24h", 0),
+            active_users_json=json.dumps(data.get("activeUsers", [])),
         )
 
 

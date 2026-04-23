@@ -190,6 +190,41 @@ Preview the production bundle:
 npm run preview
 ```
 
+### Static GitHub Pages build
+
+The repo now supports a read-only `static` runtime that serves exported JSON instead of calling `/backend/api/*`.
+
+Typical flow on a trusted machine:
+
+```bash
+npm run export:static-data
+VITE_SITE_BASE=/your-pages-repo/ npm run build:static
+```
+
+Or run the end-to-end publish script:
+
+```bash
+VITE_SITE_BASE=/your-pages-repo/ npm run publish:static
+```
+
+What this does:
+
+- exports SQLite-backed dashboard data into `public/static-data/`
+- builds the frontend in `VITE_DATA_MODE=static`
+- publishes `dist/` to the configured Pages branch
+
+Supporting files:
+
+- `client-health-backend/scripts/export_static_data.py`: generates the static JSON bundle from SQLite only
+- `scripts/export-static-data.sh`: wrapper that uses `poetry` when available and falls back to `python3`
+- `scripts/publish-static-site.sh`: export, build, and push the Pages branch
+- `scripts/install-static-publish-launchd.sh`: installs a daily macOS `launchd` job for unattended publishing
+
+Static-mode env vars:
+
+- `VITE_DATA_MODE=static`
+- `VITE_SITE_BASE=/your-pages-repo/`
+
 Current note: the chart bundle is relatively large because ApexCharts is loaded into the main build. Vite may warn about chunk size during production builds.
 
 ## Database and Sync Model
