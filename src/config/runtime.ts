@@ -12,7 +12,12 @@ const normalizeBasePath = (value: string | undefined) => {
     return fallback;
   }
 
-  return ensureTrailingSlash(ensureLeadingSlash(value.trim()));
+  const val = value.trim();
+  if (val === './' || val === '.') {
+    return './';
+  }
+
+  return ensureTrailingSlash(ensureLeadingSlash(val));
 };
 
 export const dataMode = normalizeDataMode(import.meta.env.VITE_DATA_MODE);

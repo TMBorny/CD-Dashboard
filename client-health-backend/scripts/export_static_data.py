@@ -165,44 +165,69 @@ async def hydrate_missing_active_users(latest_by_school: dict[str, SchoolSnapsho
 def build_error_summary_export(db, exported_at: str) -> dict[str, Any]:
     history_start = db.query(ErrorAnalysisGroup.snapshot_date).order_by(ErrorAnalysisGroup.snapshot_date.asc()).first()
     last_capture = db.query(ErrorAnalysisGroup.created_at).order_by(ErrorAnalysisGroup.created_at.desc()).first()
-    groups = (
-        db.query(ErrorAnalysisGroup)
-        .order_by(
-            ErrorAnalysisGroup.snapshot_date.desc(),
-            ErrorAnalysisGroup.school.asc(),
-            ErrorAnalysisGroup.signature_key.asc(),
+    latest_snapshot = db.query(ErrorAnalysisGroup.snapshot_date).order_by(ErrorAnalysisGroup.snapshot_date.desc()).first()
+    
+    if latest_snapshot:
+        groups = (
+            db.query(ErrorAnalysisGroup)
+            .filter(ErrorAnalysisGroup.snapshot_date == latest_snapshot[0])
+            .order_by(
+                ErrorAnalysisGroup.school.asc(),
+                ErrorAnalysisGroup.signature_key.asc(),
+            )
+            .all()
         )
-        .all()
-    )
+    else:
+        groups = []
+
+    groups_list = []
+    for group in groups:
+        data = group.to_dict()
+        data["sampleErrors"] = []
+        groups_list.append(data)
+
     return {
         "metadata": {
             "historyStartsOn": history_start[0] if history_start else None,
             "lastCapturedAt": serialize_datetime(last_capture[0]) if last_capture else None,
             "exportedAt": exported_at,
         },
-        "groups": [group.to_dict() for group in groups],
+        "groups": groups_list,
     }
 
 
 def build_error_detail_export(db, exported_at: str) -> dict[str, Any]:
     history_start = db.query(ErrorAnalysisDetail.snapshot_date).order_by(ErrorAnalysisDetail.snapshot_date.asc()).first()
     last_capture = db.query(ErrorAnalysisDetail.created_at).order_by(ErrorAnalysisDetail.created_at.desc()).first()
-    rows = (
-        db.query(ErrorAnalysisDetail)
-        .order_by(
-            ErrorAnalysisDetail.snapshot_date.desc(),
-            ErrorAnalysisDetail.school.asc(),
-            ErrorAnalysisDetail.id.asc(),
+    latest_snapshot = db.query(ErrorAnalysisDetail.snapshot_date).order_by(ErrorAnalysisDetail.snapshot_date.desc()).first()
+    
+    if latest_snapshot:
+        rows = (
+            db.query(ErrorAnalysisDetail)
+            .filter(ErrorAnalysisDetail.snapshot_date == latest_snapshot[0])
+            .order_by(
+                ErrorAnalysisDetail.school.asc(),
+                ErrorAnalysisDetail.id.asc(),
+            )
+            .all()
         )
-        .all()
-    )
+    else:
+        rows = []
+
+    rows_list = []
+    for row in rows:
+        data = row.to_dict()
+        data["rawError"] = None
+        data["fullErrorText"] = "Error details omitted in static export to save space."
+        rows_list.append(data)
+
     return {
         "metadata": {
             "historyStartsOn": history_start[0] if history_start else None,
             "lastCapturedAt": serialize_datetime(last_capture[0]) if last_capture else None,
             "exportedAt": exported_at,
         },
-        "rows": [row.to_dict() for row in rows],
+        "rows": rows_list,
     }
 
 

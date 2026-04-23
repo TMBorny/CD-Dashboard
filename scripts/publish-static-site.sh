@@ -17,9 +17,11 @@ cleanup() {
 
 trap cleanup EXIT
 
-if [[ -z "$SITE_BASE" ]]; then
-  echo "VITE_SITE_BASE is required, for example /your-repo-name/."
-  exit 1
+if [[ -z "$SITE_BASE" || "$SITE_BASE" != "./" ]]; then
+  if [[ -n "$SITE_BASE" && "$SITE_BASE" != "./" ]]; then
+    echo "Notice: Overriding VITE_SITE_BASE='$SITE_BASE' with './' to perfectly support GitHub Pages subfolder routing."
+  fi
+  SITE_BASE="./"
 fi
 
 echo "Exporting static data into $STATIC_DATA_DIR"

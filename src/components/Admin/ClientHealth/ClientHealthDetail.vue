@@ -970,9 +970,12 @@ watch([currentErrorCategoryFilter, currentErrorEntityTypeFilter, currentErrorSig
               </div>
             </div>
 
-            <details v-if="selectedErrorDetail.rawPayload" class="mt-6 rounded-3xl border border-slate-200 bg-slate-50 p-5">
+            <details v-if="selectedErrorDetail.rawPayload || isStaticDataMode" class="mt-6 rounded-3xl border border-slate-200 bg-slate-50 p-5">
               <summary class="cursor-pointer text-sm font-semibold text-slate-900">Raw sample payload</summary>
-              <pre class="mt-4 overflow-x-auto whitespace-pre-wrap break-words text-xs leading-5 text-slate-700">{{ selectedErrorDetail.rawPayload }}</pre>
+              <div v-if="isStaticDataMode" class="mt-4 rounded-xl border border-slate-200 bg-white p-4 text-xs text-slate-500">
+                Raw error payloads are excluded from static dashboard exports to minimize file size. To view full raw payloads, you must run the dashboard in live development mode connected to the local database.
+              </div>
+              <pre v-else class="mt-4 overflow-x-auto whitespace-pre-wrap break-words text-xs leading-5 text-slate-700">{{ selectedErrorDetail.rawPayload }}</pre>
             </details>
           </div>
         </div>
