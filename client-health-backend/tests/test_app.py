@@ -3745,6 +3745,52 @@ class StaticErrorExportTests(unittest.TestCase):
         self.assertEqual(len(payload["groups"]), 4)
 
 
+class StaticClientHealthExportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_build_latest_client_health_initializes_and_closes_api_client(self):
+        init_db()
+        db = get_db()
+        try:
+            db.query(SchoolSnapshot).filter(SchoolSnapshot.snapshot_date == "2099-01-01").delete(
+                synchronize_session=False
+            )
+            db.add(
+                SchoolSnapshot.from_dict(
+                    {
+                        "snapshotDate": "2099-01-01",
+                        "school": "alpha01",
+                        "displayName": "Alpha College",
+                        "products": [{"name": "Courses"}],
+                        "merges": {
+                            "nightly": {},
+                            "realtime": {},
+                            "manual": {},
+                        },
+                    }
+                )
+            )
+            db.commit()
+
+            async def fake_api_get(path, params=None):
+                if path == "/api/v1/admin/schools/products":
+                    return [{"_id": "alpha01", "displayName": "Alpha College", "products": []}]
+                if path == "/api/v1/admin/schools/displayNames":
+                    return {"alpha01": {"displayName": "Alpha College"}}
+                raise AssertionError(f"Unexpected api_get call: {path} params={params}")
+
+            with patch.object(export_static_data, "connect_api") as mock_connect_api, patch.object(
+                export_static_data, "close_api"
+            ) as mock_close_api, patch.object(export_static_data, "api_get", side_effect=fake_api_get) as mock_api_get:
+                payload = await export_static_data.build_latest_client_health(db)
+
+            self.assertEqual(payload["snapshotDate"], "2099-01-01")
+            self.assertEqual(payload["schools"][0]["school"], "alpha01")
+            self.assertEqual(mock_api_get.await_count, 2)
+            mock_connect_api.assert_awaited_once()
+            mock_close_api.assert_awaited_once()
+        finally:
+            db.close()
+
+
 class SyncRunListEndpointTests(unittest.TestCase):
     @staticmethod
     async def _async_noop():

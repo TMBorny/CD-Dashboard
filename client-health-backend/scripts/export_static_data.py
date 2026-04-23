@@ -62,21 +62,24 @@ async def build_latest_client_health(db) -> dict[str, Any]:
         .order_by(SchoolSnapshot.school)
         .all()
     )
-
-    products_data, display_names_data = await asyncio.gather(
-        api_get("/api/v1/admin/schools/products"),
-        api_get("/api/v1/admin/schools/displayNames"),
-    )
-    all_schools = normalize_school_catalog(products_data, display_names_data)
-    additional_excluded_schools = get_additional_excluded_schools(db)
-    _, excluded_schools = split_school_catalog(all_schools, additional_excluded_schools)
-    return {
-        "snapshotDate": latest_date,
-        "schools": [snapshot.to_dict() for snapshot in snapshots],
-        "excludedSchools": excluded_schools,
-        "excludedTerms": list(EXCLUDED_SCHOOL_TERMS),
-        "additionalExcludedSchools": sorted(additional_excluded_schools),
-    }
+    await connect_api()
+    try:
+        products_data, display_names_data = await asyncio.gather(
+            api_get("/api/v1/admin/schools/products"),
+            api_get("/api/v1/admin/schools/displayNames"),
+        )
+        all_schools = normalize_school_catalog(products_data, display_names_data)
+        additional_excluded_schools = get_additional_excluded_schools(db)
+        _, excluded_schools = split_school_catalog(all_schools, additional_excluded_schools)
+        return {
+            "snapshotDate": latest_date,
+            "schools": [snapshot.to_dict() for snapshot in snapshots],
+            "excludedSchools": excluded_schools,
+            "excludedTerms": list(EXCLUDED_SCHOOL_TERMS),
+            "additionalExcludedSchools": sorted(additional_excluded_schools),
+        }
+    finally:
+        await close_api()
 
 
 def build_client_health_history(db) -> dict[str, Any]:
