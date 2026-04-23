@@ -32,6 +32,40 @@ from app.routes import (  # noqa: E402
 )
 
 
+def first_non_empty_string(*values: object) -> str | None:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def extract_merge_report_reference(sample_errors: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for sample_error in sample_errors:
+        merge_report = sample_error.get("mergeReport")
+        merge_report_payload = merge_report if isinstance(merge_report, dict) else {}
+        merge_report_id = first_non_empty_string(
+            sample_error.get("lastSyncMergeReportId"),
+            sample_error.get("mergeReportId"),
+            merge_report_payload.get("id"),
+        )
+        if not merge_report_id:
+            continue
+
+        return {
+            "school": "",
+            "mergeReportId": merge_report_id,
+            "scheduleType": merge_report_payload.get("scheduleType") if isinstance(merge_report_payload.get("scheduleType"), str) else None,
+            "entityDisplayName": first_non_empty_string(
+                sample_error.get("entityDisplayName"),
+                sample_error.get("entityId"),
+                sample_error.get("message"),
+            ),
+            "snapshotDate": "",
+        }
+
+    return None
+
+
 def write_json(path: Path, payload: Any, bundle_root: Path) -> dict[str, Any]:
     path.parent.mkdir(parents=True, exist_ok=True)
     serialized = json.dumps(payload, indent=2, sort_keys=True)
@@ -202,7 +236,17 @@ def build_error_summary_export(db, exported_at: str) -> dict[str, Any]:
     groups_list = []
     for group in groups:
         data = group.to_dict()
+        merge_report_reference = extract_merge_report_reference(data["sampleErrors"])
         data["sampleErrors"] = []
+        data["latestMergeReport"] = (
+            {
+                **merge_report_reference,
+                "school": group.school,
+                "snapshotDate": group.snapshot_date,
+            }
+            if merge_report_reference
+            else None
+        )
         groups_list.append(data)
 
     return {

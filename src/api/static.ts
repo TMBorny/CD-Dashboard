@@ -419,7 +419,7 @@ const buildErrorAnalysisResponse = async (
   for (const group of groups) {
     const resolutionHint = buildResolutionHint(group.normalizedMessage, group.entityType, group.errorCode);
     const sisLabel = group.sisPlatform || 'Unknown';
-    const mergeReportReference = extractMergeReportReference(group.sampleErrors);
+    const mergeReportReference = group.latestMergeReport ?? extractMergeReportReference(group.sampleErrors);
 
     affectedSchools.add(group.school);
     affectedSis.add(sisLabel);

@@ -246,4 +246,59 @@ describe('client health api helpers', () => {
     expect(response.data.syncRuns).toEqual([{ jobId: 'job-2' }]);
     expect(response.data.totalCount).toBe(2);
   });
+
+  it('builds example merge report links from compact static error summary references', async () => {
+    vi.stubEnv('VITE_DATA_MODE', 'static');
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        metadata: {
+          historyStartsOn: '2026-04-12',
+          lastCapturedAt: '2026-04-13T12:00:00Z',
+          exportedAt: '2026-04-15T00:00:00Z',
+        },
+        groups: [
+          {
+            snapshotDate: '2026-04-13',
+            school: 'foo01',
+            displayName: 'Foo State',
+            sisPlatform: 'PeopleSoftDirect',
+            entityType: 'courses',
+            errorCode: 'duplicate_course',
+            signatureKey: 'sig-b',
+            normalizedMessage: 'duplicate course <num>',
+            sampleMessage: 'Duplicate course 12345',
+            count: 4,
+            sampleErrors: [],
+            latestMergeReport: {
+              school: 'foo01',
+              mergeReportId: 'report-b1',
+              scheduleType: 'realtime',
+              entityDisplayName: 'Duplicate course 12345',
+              snapshotDate: '2026-04-13',
+            },
+            termCodes: ['202505'],
+          },
+        ],
+      }),
+    });
+    const { getErrorAnalysis } = await import('./index');
+
+    const response = await getErrorAnalysis({});
+
+    expect(fetchMock).toHaveBeenCalledWith('/static-data/error-analysis/summary.json', {
+      headers: { Accept: 'application/json' },
+    });
+    expect(response.data.signatures[0].latestMergeReport?.mergeReportId).toBe('report-b1');
+    expect(response.data.signatures[0].dominantSchoolMergeReport?.mergeReportId).toBe('report-b1');
+    expect(response.data.signatures[0].exampleMergeReports).toEqual([
+      {
+        school: 'foo01',
+        mergeReportId: 'report-b1',
+        scheduleType: 'realtime',
+        entityDisplayName: 'Duplicate course 12345',
+        snapshotDate: '2026-04-13',
+      },
+    ]);
+  });
 });

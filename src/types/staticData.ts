@@ -1,4 +1,4 @@
-import type { ErrorDetailRow } from '@/types/errorAnalysis';
+import type { ErrorDetailRow, MergeReportReference } from '@/types/errorAnalysis';
 
 export interface StaticExportFileManifestEntry {
   path: string;
@@ -26,6 +26,7 @@ export interface StaticErrorGroupRow {
   sampleMessage: string;
   count: number;
   sampleErrors: Record<string, unknown>[];
+  latestMergeReport?: MergeReportReference | null;
   termCodes: string[];
   createdAt?: string | null;
 }

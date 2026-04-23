@@ -3744,6 +3744,66 @@ class StaticErrorExportTests(unittest.TestCase):
         )
         self.assertEqual(len(payload["groups"]), 4)
 
+    def test_error_summary_export_keeps_compact_merge_report_references(self):
+        init_db()
+        db = get_db()
+        try:
+            db.query(ErrorAnalysisGroup).filter(
+                ErrorAnalysisGroup.school == "foo01",
+                ErrorAnalysisGroup.snapshot_date == "2026-04-13",
+                ErrorAnalysisGroup.signature_key == "sig-b",
+            ).delete(synchronize_session=False)
+            db.add(
+                ErrorAnalysisGroup.from_dict(
+                    {
+                        "snapshotDate": "2026-04-13",
+                        "school": "foo01",
+                        "displayName": "Foo State",
+                        "sisPlatform": "PeopleSoftDirect",
+                        "entityType": "courses",
+                        "errorCode": "duplicate_course",
+                        "signatureKey": "sig-b",
+                        "normalizedMessage": "duplicate course",
+                        "sampleMessage": "Duplicate course 12345",
+                        "count": 4,
+                        "sampleErrors": [
+                            {
+                                "message": "Duplicate course 12345",
+                                "entityDisplayName": "Duplicate course 12345",
+                                "lastSyncMergeReportId": "report-b1",
+                                "mergeReport": {
+                                    "scheduleType": "realtime",
+                                },
+                            }
+                        ],
+                        "termCodes": ["202506"],
+                    }
+                )
+            )
+            db.commit()
+
+            payload = export_static_data.build_error_summary_export(db, exported_at="2026-04-15T00:00:00Z")
+        finally:
+            db.close()
+
+        exported_group = next(
+            group
+            for group in payload["groups"]
+            if group["school"] == "foo01" and group["snapshotDate"] == "2026-04-13" and group["signatureKey"] == "sig-b"
+        )
+
+        self.assertEqual(exported_group["sampleErrors"], [])
+        self.assertEqual(
+            exported_group["latestMergeReport"],
+            {
+                "school": "foo01",
+                "mergeReportId": "report-b1",
+                "scheduleType": "realtime",
+                "entityDisplayName": "Duplicate course 12345",
+                "snapshotDate": "2026-04-13",
+            },
+        )
+
 
 class StaticClientHealthExportTests(unittest.IsolatedAsyncioTestCase):
     async def test_build_latest_client_health_initializes_and_closes_api_client(self):
