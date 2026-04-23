@@ -1,8 +1,13 @@
 {
-  "capturedAt": "2026-04-23T14:21:39.108111+00:00",
-  "count": 1,
+  "capturedAt": "2026-04-23T17:29:40.037335+00:00",
+  "count": 6,
   "snapshotDate": "2026-04-23",
   "users": [
-    "devin@coursedog.com"
+    "devin@coursedog.com",
+    "dramirez@odessa.edu",
+    "gvilla@odessa.edu",
+    "hhukinney@coursedog.com",
+    "lortiz@odessa.edu",
+    "mcompean@odessa.edu"
   ]
 }

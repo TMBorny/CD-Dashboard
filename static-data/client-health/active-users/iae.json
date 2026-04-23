@@ -1,6 +1,18 @@
 {
-  "capturedAt": "2026-04-10T22:35:04.974736+00:00",
-  "count": 0,
-  "snapshotDate": "2026-04-10",
-  "users": []
+  "capturedAt": "2026-04-23T17:29:40.037307+00:00",
+  "count": 11,
+  "snapshotDate": "2026-04-23",
+  "users": [
+    "alombardo@iae.edu.ar",
+    "amaleman@iae.edu.ar",
+    "bmoreno@iae.edu.ar",
+    "camador@iae.edu.ar",
+    "emartin@iae.edu.ar",
+    "eramundo@iae.edu.ar",
+    "lmazuryk@iae.edu.ar",
+    "mantenimientosistemas@austral.edu.ar",
+    "mrepetto@iae.edu.ar",
+    "secretaria.incompany@iae.edu.ar",
+    "tdorrego@iae.edu.ar"
+  ]
 }
