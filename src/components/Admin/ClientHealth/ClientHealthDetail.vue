@@ -9,14 +9,13 @@ import type { ErrorAnalysisResponse, ErrorDetailRow, ErrorDetailTableResponse, E
 import VueApexCharts from 'vue3-apexcharts';
 import Card from '@/components/ui/Card.vue';
 import { useChartOptions, useStackedBarChartOptions } from '@/composables/useChartOptions';
-import { formatLocalDateTime, getLocalTimeZoneLabel } from '@/utils/dateTime';
+import { formatLocalDateTime } from '@/utils/dateTime';
 import { formatSchoolLabel } from '@/utils/schoolNames';
 
 const route = useRoute();
 const school = computed(() => String(route.params.school ?? ''));
 const coursedogBaseUrl = (import.meta.env.VITE_COURSEDOG_PRD_URL?.trim() || 'https://app.coursedog.com').replace(/\/+$/, '');
 const mergeReportsUrl = computed(() => `${coursedogBaseUrl}/#/int/${school.value}/merge-history`);
-const localTimeZoneLabel = getLocalTimeZoneLabel();
 
 const { data: history, isLoading: isLoadingHistory, error: historyError } = useQuery({
   queryKey: computed(() => ['clientHealthHistory', school.value]),
@@ -78,7 +77,6 @@ const { data: currentErrorRows, isLoading: isLoadingCurrentErrorRows, error: cur
 
 const loading = computed(() => isLoadingHistory.value || isLoadingUsers.value || isLoadingSyncMetadata.value);
 const error = computed(() => historyError.value || usersError.value ? 'Failed to load data' : null);
-const snapshotCount = computed(() => history.value?.snapshots?.length ?? 0);
 const latestSnapshot = computed(() => {
   const snapshots = history.value?.snapshots ?? [];
   return snapshots.length > 0 ? snapshots[snapshots.length - 1] : null;
@@ -89,20 +87,7 @@ const lastSuccessfulSyncLabel = computed(() => {
   if (!createdAt) return 'No successful sync yet';
   return formatLocalDateTime(createdAt);
 });
-const lastAttemptedSyncLabel = computed(() => {
-  const attemptedAt = syncMetadata.value?.lastAttemptedSync?.attemptedAt;
-  if (!attemptedAt) return 'No attempted sync yet';
-  return formatLocalDateTime(attemptedAt);
-});
-const lastAttemptStatusLabel = computed(() => {
-  const status = syncMetadata.value?.lastAttemptedSync?.status;
-  if (!status) return null;
-  return status.charAt(0).toUpperCase() + status.slice(1);
-});
-const latestSnapshotCapturedAtLabel = computed(() => {
-  const createdAt = latestSnapshot.value?.createdAt;
-  return createdAt ? formatLocalDateTime(createdAt) : null;
-});
+
 const formatDuration = (ms?: number) => {
   if (!ms) return 'N/A';
   const totalMinutes = Math.floor(ms / 60000);
