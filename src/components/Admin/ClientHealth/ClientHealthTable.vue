@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import type { ClientHealthSnapshot } from '@/types/clientHealth';
 import Badge from '@/components/ui/Badge.vue';
 import { formatSchoolLabel } from '@/utils/schoolNames';
@@ -13,9 +14,37 @@ const emit = defineEmits<{
   rowClick: [school: ClientHealthSnapshot];
 }>();
 
-const sortBy = ref<'displayName' | 'sisPlatform' | 'nightlySuccess' | 'nightlyTotals' | 'nightlyHalts' | 'nightlyDuration' | 'realtimeSuccess' | 'realtimeTotals' | 'mergeErrors' | 'activeUsers' | 'health'>('health');
-const sortOrder = ref<'asc' | 'desc'>('desc');
+const route = useRoute();
+const router = useRouter();
+
+const validSortBy = [
+  'displayName', 'sisPlatform', 'nightlySuccess', 'nightlyTotals',
+  'nightlyHalts', 'nightlyDuration', 'realtimeSuccess', 'realtimeTotals',
+  'mergeErrors', 'activeUsers', 'health'
+] as const;
+
+type SortByKey = typeof validSortBy[number];
+
+const initialSortBy = route.query.sortBy as string;
+const initialSortOrder = route.query.sortOrder as string;
+
+const sortBy = ref<SortByKey>(
+  validSortBy.includes(initialSortBy as SortByKey) ? (initialSortBy as SortByKey) : 'health'
+);
+const sortOrder = ref<'asc' | 'desc'>(
+  initialSortOrder === 'asc' ? 'asc' : 'desc'
+);
 const searchQuery = ref('');
+
+watch([sortBy, sortOrder], ([newSortBy, newSortOrder]) => {
+  router.replace({
+    query: {
+      ...route.query,
+      sortBy: newSortBy,
+      sortOrder: newSortOrder,
+    },
+  });
+});
 
 const sortLabels: Record<typeof sortBy.value, string> = {
   displayName: 'School',
