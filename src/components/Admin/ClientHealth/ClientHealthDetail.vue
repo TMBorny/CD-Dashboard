@@ -108,6 +108,9 @@ const currentErrorSnapshotLabel = computed(() => {
   if (!currentErrorSnapshotDate.value) return 'No current detailed error snapshot captured yet.';
   return `Current detailed error snapshot: ${currentErrorSnapshotDate.value}`;
 });
+const signaturesTooltipTitle = 'What are signatures?';
+const signaturesTooltipBody = 'Signatures group repeat merge errors into normalized patterns by combining the entity type, error code, and a cleaned version of the message with IDs and other one-off values stripped out.';
+const signaturesTooltipDevelopment = 'They are developed from captured merge-error rows in the latest snapshot so similar failures roll up together and recurring issues are easier to spot.';
 const currentErrorSignatures = computed(() => currentErrorAnalysis.value?.signatures ?? []);
 const currentErrorDetailRows = computed(() => currentErrorRows.value?.rows ?? []);
 const currentErrorDetailTotal = computed(() => currentErrorRows.value?.total ?? 0);
@@ -236,6 +239,9 @@ const currentErrorSignatureOptions = computed(() =>
 const hasCurrentErrorContent = computed(() => currentErrorSignatures.value.length > 0 || currentErrorDetailRows.value.length > 0);
 const recentFailedMerges = computed(() => (latestSnapshot.value?.recentFailedMerges as FailedMerge[] | undefined) ?? []);
 const hasIssueTabsContent = computed(() => hasCurrentErrorContent.value || recentFailedMerges.value.length > 0);
+const descriptorClass = 'group relative inline-flex items-center gap-2';
+const descriptorButtonClass = 'flex h-5 w-5 items-center justify-center rounded-full border border-slate-300 bg-white text-[11px] font-semibold text-slate-500 transition hover:border-slate-400 hover:text-slate-700 focus-visible:border-slate-500 focus-visible:text-slate-700 focus-visible:outline-none';
+const descriptorPopoverClass = 'pointer-events-none absolute left-1/2 top-full z-20 mt-2 hidden w-72 -translate-x-1/2 rounded-2xl border border-slate-200 bg-white p-3 text-left text-[11px] normal-case leading-5 text-slate-600 shadow-lg group-hover:block group-focus-within:block';
 const currentErrorTabs = computed(() => [
   { key: 'rows', label: `Errors (${currentErrorTotals.value})` },
   { key: 'categories', label: `Categories (${currentErrorCategories.value.length})` },
@@ -516,6 +522,10 @@ watch(school, () => {
   currentErrorSignatureFilter.value = '';
 });
 
+watch(schoolLabel, (label) => {
+  document.title = `${label} - Client Health Detail - CD Dashboard`;
+}, { immediate: true });
+
 watch(currentErrorRows, (value) => {
   if (!value) return;
   const totalPages = Math.max(1, Math.ceil((value.total ?? 0) / currentErrorPageSize));
@@ -626,11 +636,31 @@ watch([currentErrorCategoryFilter, currentErrorEntityTypeFilter, currentErrorSig
               v-for="tab in currentErrorTabs"
               :key="tab.key"
               type="button"
-              class="rounded-full px-4 py-2 text-sm font-semibold transition"
+              class="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition"
               :class="currentErrorTab === tab.key ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
               @click="currentErrorTab = tab.key"
             >
-              {{ tab.label }}
+              <span>{{ tab.label }}</span>
+              <span
+                v-if="tab.key === 'signatures'"
+                :class="descriptorClass"
+                data-testid="signatures-tooltip"
+              >
+                <button
+                  type="button"
+                  class="cursor-help"
+                  :class="descriptorButtonClass"
+                  :aria-label="signaturesTooltipTitle"
+                  @click.stop
+                >
+                  ?
+                </button>
+                <div :class="descriptorPopoverClass">
+                  <p class="font-semibold text-slate-900">{{ signaturesTooltipTitle }}</p>
+                  <p class="mt-1">{{ signaturesTooltipBody }}</p>
+                  <p class="mt-2">{{ signaturesTooltipDevelopment }}</p>
+                </div>
+              </span>
             </button>
           </div>
 

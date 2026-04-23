@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount, RouterLinkStub } from '@vue/test-utils';
 import { nextTick, ref } from 'vue';
+import type { VueWrapper } from '@vue/test-utils';
 import type { ErrorAnalysisResponse, ErrorDetailTableResponse } from '@/types/errorAnalysis';
 
 const queryData = ref<ErrorAnalysisResponse | null>(null);
 const sisCountsQueryData = ref<ErrorAnalysisResponse | null>(null);
 const detailQueryData = ref<ErrorDetailTableResponse | null>(null);
+const findViewToggleButton = (wrapper: VueWrapper<any>, label: string) =>
+  wrapper.get('[data-testid="view-toggle"]').findAll('button').find((button) => button.text().trim() === label);
 const queryLoading = ref(false);
 const queryError = ref<Error | null>(null);
 const downloadErrorAnalysisExportMock = vi.fn().mockResolvedValue({
@@ -458,12 +461,17 @@ describe('ErrorAnalysisDashboard', () => {
     });
 
     expect(wrapper.text()).toContain('Top error signatures');
+    expect(wrapper.get('[data-testid="error-analysis-signatures-tooltip"]').text()).toContain('What are signatures?');
+    expect(wrapper.get('[data-testid="error-analysis-signatures-tooltip"]').text()).toContain('normalized patterns');
+    expect(wrapper.get('[data-testid="error-analysis-signatures-tooltip"]').text()).toContain('captured merge-error rows');
     expect(wrapper.text()).toContain('Duplicate or conflicting record');
     expect(wrapper.text()).toContain('View full error');
     expect(wrapper.html()).toContain('/#/int/foo01/merge-history/report-b1');
     expect(wrapper.html()).not.toContain('/#/int/bar01/merge-history/report-b2');
 
-    await wrapper.get('[data-testid="view-toggle"]').findAll('button')[2].trigger('click');
+    const bySchoolButton = findViewToggleButton(wrapper, 'By School');
+    expect(bySchoolButton).toBeTruthy();
+    await bySchoolButton!.trigger('click');
 
     expect(wrapper.text()).toContain('Where recurring errors concentrate');
     expect(wrapper.text()).toContain('Foo State');
@@ -514,7 +522,9 @@ describe('ErrorAnalysisDashboard', () => {
       },
     });
 
-    await wrapper.get('[data-testid="view-toggle"]').findAll('button')[2].trigger('click');
+    const bySchoolButton = findViewToggleButton(wrapper, 'By School');
+    expect(bySchoolButton).toBeTruthy();
+    await bySchoolButton!.trigger('click');
     const schoolButtons = wrapper.findAll('button').filter((button) => button.text() === 'View full error');
     await schoolButtons[0].trigger('click');
 
@@ -580,7 +590,9 @@ describe('ErrorAnalysisDashboard', () => {
       },
     });
 
-    await wrapper.get('[data-testid="view-toggle"]').findAll('button')[1].trigger('click');
+    const allErrorsButton = findViewToggleButton(wrapper, 'All Errors');
+    expect(allErrorsButton).toBeTruthy();
+    await allErrorsButton!.trigger('click');
 
     expect(wrapper.text()).toContain('All captured merge errors');
     expect(wrapper.text()).toContain('Duplicate course 12345 already exists in CourseDog');
@@ -603,7 +615,9 @@ describe('ErrorAnalysisDashboard', () => {
       },
     });
 
-    await wrapper.get('[data-testid="view-toggle"]').findAll('button')[1].trigger('click');
+    const allErrorsButton = findViewToggleButton(wrapper, 'All Errors');
+    expect(allErrorsButton).toBeTruthy();
+    await allErrorsButton!.trigger('click');
     await wrapper.get('[data-testid="detail-row"] button').trigger('click');
 
     const modal = wrapper.get('[data-testid="error-detail-modal"]');
@@ -632,7 +646,9 @@ describe('ErrorAnalysisDashboard', () => {
       },
     });
 
-    await wrapper.get('[data-testid="view-toggle"]').findAll('button')[3].trigger('click');
+    const bySisButton = findViewToggleButton(wrapper, 'By SIS');
+    expect(bySisButton).toBeTruthy();
+    await bySisButton!.trigger('click');
     expect(wrapper.text()).toContain('Recurring patterns by SIS');
 
     const sisButton = wrapper.findAll('button').find((button) => button.text().includes('View all 1 signature'));
@@ -658,7 +674,9 @@ describe('ErrorAnalysisDashboard', () => {
       },
     });
 
-    await wrapper.get('[data-testid="view-toggle"]').findAll('button')[3].trigger('click');
+    const bySisButton = findViewToggleButton(wrapper, 'By SIS');
+    expect(bySisButton).toBeTruthy();
+    await bySisButton!.trigger('click');
 
     const before = wrapper.findAll('tbody tr td:first-child p.font-semibold').map((node) => node.text());
     expect(before[0]).toBe('PeopleSoftDirect');

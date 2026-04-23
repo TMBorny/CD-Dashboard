@@ -63,6 +63,12 @@ const sisSortBy = ref<SisSortKey>('totalErrors');
 const sisSortDir = ref<ErrorSortDir>('desc');
 const localTimeZoneLabel = getLocalTimeZoneLabel();
 const coursedogBaseUrl = (import.meta.env.VITE_COURSEDOG_PRD_URL?.trim() || 'https://app.coursedog.com').replace(/\/+$/, '');
+const signaturesTooltipTitle = 'What are signatures?';
+const signaturesTooltipBody = 'Signatures group repeat merge errors into normalized patterns by combining the entity type, error code, and a cleaned version of the message with IDs and other one-off values stripped out.';
+const signaturesTooltipDevelopment = 'They are developed from captured merge-error rows in the latest snapshot so similar failures roll up together and recurring issues are easier to spot.';
+const descriptorClass = 'group relative inline-flex items-center gap-2 align-middle';
+const descriptorButtonClass = 'flex h-5 w-5 items-center justify-center rounded-full border border-slate-300 bg-white text-[11px] font-semibold text-slate-500 transition hover:border-slate-400 hover:text-slate-700 focus-visible:border-slate-500 focus-visible:text-slate-700 focus-visible:outline-none';
+const descriptorPopoverClass = 'pointer-events-none absolute left-1/2 top-full z-20 mt-2 hidden w-72 -translate-x-1/2 rounded-2xl border border-slate-200 bg-white p-3 text-left text-[11px] normal-case leading-5 text-slate-600 shadow-lg group-hover:block group-focus-within:block';
 
 const daysParam = computed<number | undefined>(() => {
   if (selectedWindow.value === 'all') return undefined;
@@ -742,15 +748,39 @@ const handleExport = async () => {
               <div>
                 <label class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">View</label>
                 <div class="flex flex-wrap gap-2" data-testid="view-toggle">
-                  <button
+                  <div
                     v-for="option in viewOptions"
                     :key="option.value"
-                    class="rounded-full px-4 py-2 text-sm font-semibold transition"
-                    :class="activeView === option.value ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
-                    @click="activeView = option.value"
+                    class="inline-flex items-center gap-2"
                   >
-                    {{ option.label }}
-                  </button>
+                    <button
+                      class="rounded-full px-4 py-2 text-sm font-semibold transition"
+                      :class="activeView === option.value ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
+                      @click="activeView = option.value"
+                    >
+                      {{ option.label }}
+                    </button>
+                    <span
+                      v-if="option.value === 'aggregate'"
+                      :class="descriptorClass"
+                      data-testid="error-analysis-signatures-tooltip"
+                    >
+                      <button
+                        type="button"
+                        class="cursor-help"
+                        :class="descriptorButtonClass"
+                        :aria-label="signaturesTooltipTitle"
+                        @click.stop
+                      >
+                        ?
+                      </button>
+                      <div :class="descriptorPopoverClass">
+                        <p class="font-semibold text-slate-900">{{ signaturesTooltipTitle }}</p>
+                        <p class="mt-1">{{ signaturesTooltipBody }}</p>
+                        <p class="mt-2">{{ signaturesTooltipDevelopment }}</p>
+                      </div>
+                    </span>
+                  </div>
                 </div>
                 <p class="mt-3 max-w-2xl text-sm leading-6 text-slate-500">{{ activeViewDescription }}</p>
               </div>

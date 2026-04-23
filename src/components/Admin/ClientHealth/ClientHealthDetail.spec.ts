@@ -336,7 +336,7 @@ describe('ClientHealthDetail', () => {
     });
 
     expect(wrapper.findAll('.chart-stub').some((node) => node.text().includes('Halted'))).toBe(true);
-    const recentFailuresTab = wrapper.get('[data-testid="current-error-tabs"]').findAll('button').find((node) => node.text() === 'Recent Failed Merges (1)');
+    const recentFailuresTab = wrapper.get('[data-testid="current-error-tabs"]').findAll('button').find((node) => node.text().includes('Recent Failed Merges (1)'));
     expect(recentFailuresTab).toBeTruthy();
     await recentFailuresTab!.trigger('click');
     expect(wrapper.find('[data-testid="current-error-panel-recent-failures"]').exists()).toBe(true);
@@ -361,13 +361,16 @@ describe('ClientHealthDetail', () => {
     expect(wrapper.get('[data-testid="current-error-tabs"]').text()).toContain('Signatures (2)');
     expect(wrapper.get('[data-testid="current-error-tabs"]').text()).toContain('Errors (21)');
     expect(wrapper.get('[data-testid="current-error-tabs"]').text()).toContain('Recent Failed Merges (1)');
+    expect(wrapper.get('[data-testid="signatures-tooltip"]').text()).toContain('What are signatures?');
+    expect(wrapper.get('[data-testid="signatures-tooltip"]').text()).toContain('normalized patterns');
+    expect(wrapper.get('[data-testid="signatures-tooltip"]').text()).toContain('captured merge-error rows');
     expect(wrapper.find('[data-testid="current-error-panel-rows"]').exists()).toBe(true);
     expect(wrapper.findAll('[data-testid="current-error-row"]')).toHaveLength(20);
     await wrapper.get('[data-testid="current-error-row"]').trigger('click');
     expect(wrapper.find('[data-testid="current-error-detail-modal"]').exists()).toBe(true);
     expect(wrapper.text()).toContain('Course 202602 missing dependency 987654');
 
-    const categoriesTab = wrapper.get('[data-testid="current-error-tabs"]').findAll('button').find((node) => node.text() === 'Categories (3)');
+    const categoriesTab = wrapper.get('[data-testid="current-error-tabs"]').findAll('button').find((node) => node.text().includes('Categories (3)'));
     expect(categoriesTab).toBeTruthy();
     await categoriesTab!.trigger('click');
     expect(wrapper.find('[data-testid="current-error-panel-categories"]').exists()).toBe(true);
@@ -375,7 +378,7 @@ describe('ClientHealthDetail', () => {
     expect(wrapper.text()).toContain('Duplicate or conflicting record');
     expect(wrapper.text()).toContain('General investigation recommended');
 
-    const capturedErrorsTab = wrapper.get('[data-testid="current-error-tabs"]').findAll('button').find((node) => node.text() === 'Errors (21)');
+    const capturedErrorsTab = wrapper.get('[data-testid="current-error-tabs"]').findAll('button').find((node) => node.text().includes('Errors (21)'));
     expect(capturedErrorsTab).toBeTruthy();
     await capturedErrorsTab!.trigger('click');
     expect(wrapper.find('[data-testid="current-error-panel-rows"]').exists()).toBe(true);
@@ -393,7 +396,7 @@ describe('ClientHealthDetail', () => {
     expect(wrapper.findAll('[data-testid="current-error-row"]')).toHaveLength(1);
     expect(wrapper.text()).toContain('Duplicate course 123470 already exists in CourseDog');
 
-    const recentFailuresTab = wrapper.get('[data-testid="current-error-tabs"]').findAll('button').find((node) => node.text() === 'Recent Failed Merges (1)');
+    const recentFailuresTab = wrapper.get('[data-testid="current-error-tabs"]').findAll('button').find((node) => node.text().includes('Recent Failed Merges (1)'));
     expect(recentFailuresTab).toBeTruthy();
     await recentFailuresTab!.trigger('click');
     expect(wrapper.find('[data-testid="current-error-panel-recent-failures"]').exists()).toBe(true);
@@ -413,7 +416,7 @@ describe('ClientHealthDetail', () => {
       },
     });
 
-    const capturedErrorsTab = wrapper.get('[data-testid="current-error-tabs"]').findAll('button').find((node) => node.text() === 'Errors (21)');
+    const capturedErrorsTab = wrapper.get('[data-testid="current-error-tabs"]').findAll('button').find((node) => node.text().includes('Errors (21)'));
     expect(capturedErrorsTab).toBeTruthy();
     await capturedErrorsTab!.trigger('click');
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, watch } from 'vue';
 import { RouterLink } from 'vue-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
 import { getSyncRun, resumeHistoryBackfill, retryHistoryBackfillFailures } from '@/api';
@@ -115,6 +115,12 @@ const triggerRetryFailures = async () => {
   if (!run.value) return;
   await retryFailuresMutation.mutateAsync(run.value.jobId);
 };
+
+watch(() => props.jobId, (id) => {
+  if (id) {
+    document.title = `Job ${id.substring(0, 8)} - CD Dashboard`;
+  }
+}, { immediate: true });
 </script>
 
 <template>
