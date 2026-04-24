@@ -30,7 +30,7 @@ import { formatLocalDateTime, getLocalTimeZoneLabel } from '@/utils/dateTime';
 import { formatSchoolLabel } from '@/utils/schoolNames';
 
 type ErrorViewMode = 'aggregate' | 'all' | 'school' | 'sis';
-type WindowOption = '7' | '30' | 'all';
+type WindowOption = 'current' | 'historical';
 type ErrorSortDir = 'asc' | 'desc';
 type SisSortKey = 'label' | 'affectedSchools' | 'totalErrors' | 'dominantSignature' | 'commonResolutionTheme';
 type SignatureExplorerContext = ErrorSignatureCluster;
@@ -79,7 +79,7 @@ interface SignatureExplorerSchoolsContext {
 const route = useRoute();
 const router = useRouter();
 
-const defaultWindow: WindowOption = '7';
+const defaultWindow: WindowOption = 'current';
 const defaultView: ErrorViewMode = 'aggregate';
 const defaultDetailSortBy = 'snapshotDate';
 const defaultDetailSortDir: ErrorSortDir = 'desc';
@@ -87,7 +87,7 @@ const defaultSisSortBy: SisSortKey = 'totalErrors';
 const defaultSisSortDir: ErrorSortDir = 'desc';
 const defaultSignatureExplorerGroupBy: ErrorSignatureExplorerGroupBy = 'sis';
 const validViews: ErrorViewMode[] = ['aggregate', 'all', 'school', 'sis'];
-const validWindows: WindowOption[] = ['7', '30', 'all'];
+const validWindows: WindowOption[] = ['current', 'historical'];
 const validSortDirections: ErrorSortDir[] = ['asc', 'desc'];
 const validDetailSortColumns = ['snapshotDate', 'displayName', 'sisPlatform', 'entityType', 'errorCode', 'signatureLabel'] as const;
 const validSisSortKeys: SisSortKey[] = ['label', 'affectedSchools', 'totalErrors', 'dominantSignature', 'commonResolutionTheme'];
@@ -132,8 +132,11 @@ const parsePositiveInt = (value: string | undefined, fallback = 1) => {
 const coerceViewQuery = (value: string | undefined): ErrorViewMode =>
   validViews.includes(value as ErrorViewMode) ? (value as ErrorViewMode) : defaultView;
 
-const coerceWindowQuery = (value: string | undefined): WindowOption =>
-  validWindows.includes(value as WindowOption) ? (value as WindowOption) : defaultWindow;
+const coerceWindowQuery = (value: string | undefined): WindowOption => {
+  if (value === '7') return 'current';
+  if (value === '30' || value === 'all') return 'historical';
+  return validWindows.includes(value as WindowOption) ? (value as WindowOption) : defaultWindow;
+};
 
 const coerceSortDirQuery = (value: string | undefined, fallback: ErrorSortDir): ErrorSortDir =>
   validSortDirections.includes(value as ErrorSortDir) ? (value as ErrorSortDir) : fallback;
@@ -214,9 +217,10 @@ const interactiveRowClass = 'cursor-pointer focus-visible:outline-none focus-vis
 const isApplyingRouteState = ref(false);
 
 const daysParam = computed<number | undefined>(() => {
-  if (selectedWindow.value === 'all') return undefined;
-  return Number(selectedWindow.value);
+  if (selectedWindow.value === 'historical') return undefined;
+  return 7;
 });
+const currentSnapshotOnly = computed(() => isStaticDataMode && selectedWindow.value === 'current');
 
 const { data, isLoading, error } = useQuery({
   queryKey: computed(() => [
@@ -225,6 +229,7 @@ const { data, isLoading, error } = useQuery({
         days: daysParam.value ?? 'all',
         school: selectedSchool.value,
         sisPlatform: selectedSis.value,
+        latestOnly: currentSnapshotOnly.value,
       },
   ]),
   queryFn: () =>
@@ -232,6 +237,7 @@ const { data, isLoading, error } = useQuery({
       days: daysParam.value,
       school: selectedSchool.value === 'all' ? undefined : selectedSchool.value,
       sisPlatform: selectedSis.value === 'all' ? undefined : selectedSis.value,
+      latestOnly: currentSnapshotOnly.value || undefined,
     }).then((res) => res.data as ErrorAnalysisResponse),
   placeholderData: keepPreviousData,
 });
@@ -243,11 +249,13 @@ const { data: sisCountsData } = useQuery({
     'errorAnalysisSisCounts',
     {
       days: daysParam.value ?? 'all',
+      latestOnly: currentSnapshotOnly.value,
     },
   ]),
   queryFn: () =>
     getErrorAnalysis({
       days: daysParam.value,
+      latestOnly: currentSnapshotOnly.value || undefined,
     }).then((res) => res.data as ErrorAnalysisResponse),
   placeholderData: keepPreviousData,
 });
@@ -262,6 +270,7 @@ const { data: detailData, isLoading: isLoadingDetails } = useQuery({
         school: selectedSchool.value,
         sisPlatform: selectedSis.value,
         q: detailSearch.value,
+      latestOnly: currentSnapshotOnly.value,
       page: detailPage.value,
       pageSize: detailPageSize,
       sortBy: detailSortBy.value,
@@ -273,6 +282,7 @@ const { data: detailData, isLoading: isLoadingDetails } = useQuery({
       days: daysParam.value,
       school: selectedSchool.value === 'all' ? undefined : selectedSchool.value,
       sisPlatform: selectedSis.value === 'all' ? undefined : selectedSis.value,
+      latestOnly: currentSnapshotOnly.value || undefined,
       q: detailSearch.value || undefined,
       page: detailPage.value,
       pageSize: detailPageSize,
@@ -618,10 +628,23 @@ const viewOptions: Array<{ value: ErrorViewMode; label: string }> = [
 ];
 
 const windowOptions: Array<{ value: WindowOption; label: string }> = [
-  { value: '7', label: '7d' },
-  { value: '30', label: '30d' },
-  { value: 'all', label: 'All captured' },
+  { value: 'current', label: 'Current' },
+  { value: 'historical', label: 'Historical' },
 ];
+
+const detailSearchTitle = computed(() =>
+  selectedWindow.value === 'historical' ? 'Historical merge errors' : 'Current merge errors',
+);
+
+const detailSearchPlaceholder = computed(() =>
+  selectedWindow.value === 'historical' ? 'Search historical merge errors' : 'Search current merge errors',
+);
+
+const emptyFilterHint = computed(() =>
+  selectedWindow.value === 'historical'
+    ? 'Try narrowing the school/SIS filters.'
+    : 'Try switching to Historical or clearing the school/SIS filters.',
+);
 
 const activeViewDescription = computed(() => {
   switch (activeView.value) {
@@ -1353,7 +1376,7 @@ const handleExport = async () => {
       </div>
       <div v-else-if="isEmptyState" class="rounded-[28px] border border-slate-200 bg-white p-8 shadow-sm">
         <p class="text-lg font-semibold text-slate-950">No matching captured errors</p>
-        <p class="mt-2 text-sm text-slate-500">Try widening the window or clearing the school/SIS filters.</p>
+        <p class="mt-2 text-sm text-slate-500">{{ emptyFilterHint }}</p>
       </div>
       <div v-else class="space-y-6">
         <div class="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
@@ -1651,7 +1674,7 @@ const handleExport = async () => {
             </div>
           </Card>
 
-          <Card subtitle="Detailed Search" title="All captured merge errors">
+          <Card subtitle="Detailed Search" :title="detailSearchTitle">
             <div class="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div class="max-w-xl">
                 <p class="text-sm text-slate-500">Search across error text, signature, school, SIS, entity, and merge-report metadata. Results are paginated server-side.</p>
@@ -1659,14 +1682,14 @@ const handleExport = async () => {
               <input
                 v-model="detailSearch"
                 type="search"
-                placeholder="Search all captured errors"
+                :placeholder="detailSearchPlaceholder"
                 data-testid="error-detail-search"
                 class="w-full rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm focus:border-slate-400 focus:outline-none lg:max-w-sm"
               >
             </div>
 
             <div v-if="isLoadingDetails" class="rounded-2xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-600">
-              Loading captured error rows...
+              Loading merge error rows...
             </div>
             <div v-else-if="!hasDetailRows" class="rounded-2xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-600">
               No individual captured errors match the current filters yet. Detailed per-error history starts with the new persistence pipeline.
@@ -2015,7 +2038,7 @@ const handleExport = async () => {
           <div>
             <p class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">SIS signatures</p>
             <h2 class="mt-2 text-2xl font-semibold text-slate-950">{{ selectedSisSignatureContext.label }}</h2>
-            <p class="mt-2 text-sm text-slate-600">All associated signatures captured for this SIS in the current filter window.</p>
+            <p class="mt-2 text-sm text-slate-600">All associated signatures captured for this SIS in the current selection.</p>
           </div>
           <button
             type="button"

@@ -4214,6 +4214,75 @@ class StaticErrorExportTests(unittest.TestCase):
             },
         )
 
+    def test_error_detail_export_keeps_full_details_for_latest_snapshot_only(self):
+        init_db()
+        db = get_db()
+        try:
+            db.add_all(
+                [
+                    ErrorAnalysisDetail.from_dict(
+                        {
+                            "snapshotDate": "2026-04-13",
+                            "school": "foo01",
+                            "displayName": "Foo State",
+                            "sisPlatform": "PeopleSoftDirect",
+                            "entityType": "courses",
+                            "errorCode": "duplicate_course",
+                            "signatureKey": "sig-older",
+                            "signatureLabel": "courses | duplicate_course | duplicate course",
+                            "normalizedMessage": "duplicate course",
+                            "fullErrorText": "Older duplicate course",
+                            "entityDisplayName": "Course 10001",
+                            "mergeReport": {
+                                "school": "foo01",
+                                "mergeReportId": "report-old",
+                                "scheduleType": "realtime",
+                                "snapshotDate": "2026-04-13",
+                            },
+                            "termCodes": ["202505"],
+                            "rawError": {"message": "Older duplicate course", "details": {"courseId": "10001"}},
+                        }
+                    ),
+                    ErrorAnalysisDetail.from_dict(
+                        {
+                            "snapshotDate": "2026-04-14",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": "Banner",
+                            "entityType": "sections",
+                            "errorCode": "missing_course",
+                            "signatureKey": "sig-latest",
+                            "signatureLabel": "sections | missing_course | missing course",
+                            "normalizedMessage": "missing course",
+                            "fullErrorText": "Latest missing course 20002",
+                            "entityDisplayName": "Section 20002",
+                            "mergeReport": {
+                                "school": "bar01",
+                                "mergeReportId": "report-new",
+                                "scheduleType": "nightly",
+                                "snapshotDate": "2026-04-14",
+                            },
+                            "termCodes": ["202506"],
+                            "rawError": {"message": "Latest missing course 20002", "details": {"sectionId": "20002"}},
+                        }
+                    ),
+                ]
+            )
+            db.commit()
+
+            payload = export_static_data.build_error_detail_export(db, exported_at="2026-04-15T00:00:00Z")
+        finally:
+            db.close()
+
+        self.assertEqual(payload["metadata"]["historyStartsOn"], "2026-04-13")
+        self.assertEqual([row["snapshotDate"] for row in payload["rows"]], ["2026-04-14"])
+        self.assertEqual(len(payload["rows"]), 1)
+        self.assertEqual(payload["rows"][0]["fullErrorText"], "Latest missing course 20002")
+        self.assertEqual(
+            payload["rows"][0]["rawError"],
+            {"message": "Latest missing course 20002", "details": {"sectionId": "20002"}},
+        )
+
 
 class StaticClientHealthExportTests(unittest.IsolatedAsyncioTestCase):
     async def test_build_latest_client_health_initializes_and_closes_api_client(self):

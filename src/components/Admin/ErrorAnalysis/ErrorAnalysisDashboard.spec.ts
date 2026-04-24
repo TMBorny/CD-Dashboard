@@ -513,6 +513,17 @@ const buildPaginatedSignatures = (count: number) =>
     };
   });
 
+const getUseQueryOptionsByKey = async (queryName: string) => {
+  const vueQuery = await import('@tanstack/vue-query');
+  const useQueryMock = vi.mocked(vueQuery.useQuery);
+  return useQueryMock.mock.calls
+    .map(([options]) => options)
+    .findLast((options) => {
+      const queryKey = options?.queryKey?.value ?? options?.queryKey;
+      return Array.isArray(queryKey) && queryKey[0] === queryName;
+    });
+};
+
 describe('ErrorAnalysisDashboard', () => {
   beforeEach(() => {
     route.query = {};
@@ -600,6 +611,49 @@ describe('ErrorAnalysisDashboard', () => {
     expect(wrapper.html()).toContain('/#/int/foo01/merge-history/report-b1');
   });
 
+  it('requests latest-only aggregate data for the static current window', async () => {
+    vi.stubEnv('VITE_DATA_MODE', 'static');
+    vi.resetModules();
+    const apiModule = await import('@/api');
+    const getErrorAnalysisMock = vi.mocked(apiModule.getErrorAnalysis);
+    getErrorAnalysisMock.mockClear();
+
+    const { default: ErrorAnalysisDashboard } = await import('./ErrorAnalysisDashboard.vue');
+    mount(ErrorAnalysisDashboard, {
+      global: {
+        stubs: {
+          RouterLink: RouterLinkStub,
+          VueApexCharts: { template: '<div class="chart-stub" />' },
+        },
+      },
+    });
+
+    const aggregateQuery = await getUseQueryOptionsByKey('errorAnalysis');
+    const sisCountsQuery = await getUseQueryOptionsByKey('errorAnalysisSisCounts');
+    const detailQuery = await getUseQueryOptionsByKey('errorAnalysisDetails');
+
+    await aggregateQuery?.queryFn?.();
+    await sisCountsQuery?.queryFn?.();
+    await detailQuery?.queryFn?.();
+
+    expect(getErrorAnalysisMock).toHaveBeenNthCalledWith(1, {
+      days: 7,
+      school: undefined,
+      sisPlatform: undefined,
+      latestOnly: true,
+    });
+    expect(getErrorAnalysisMock).toHaveBeenNthCalledWith(2, {
+      days: 7,
+      latestOnly: true,
+    });
+
+    const getErrorAnalysisErrorsMock = vi.mocked(apiModule.getErrorAnalysisErrors);
+    expect(getErrorAnalysisErrorsMock).toHaveBeenCalledWith(expect.objectContaining({
+      days: 7,
+      latestOnly: true,
+    }));
+  });
+
   it('paginates recurring signatures and resets the page when filters change', async () => {
     const paginatedSignatures = buildPaginatedSignatures(13);
     queryData.value = {
@@ -638,7 +692,7 @@ describe('ErrorAnalysisDashboard', () => {
     expect(wrapper.text()).toContain('recurring pattern 13');
     expect(wrapper.text()).not.toContain('recurring pattern 01');
 
-    await wrapper.findAll('button').find((button) => button.text().trim() === '30d')!.trigger('click');
+    await wrapper.findAll('button').find((button) => button.text().trim() === 'Historical')!.trigger('click');
 
     expect(wrapper.text()).toContain('Page 1 of 2');
     expect(wrapper.findAll('[data-testid="signature-row"]')).toHaveLength(12);
@@ -971,7 +1025,7 @@ describe('ErrorAnalysisDashboard', () => {
     expect(allErrorsButton).toBeTruthy();
     await allErrorsButton!.trigger('click');
 
-    expect(wrapper.text()).toContain('All captured merge errors');
+    expect(wrapper.text()).toContain('Current merge errors');
     expect(wrapper.text()).toContain('Duplicate course 12345 already exists in CourseDog');
     expect(wrapper.findAll('[data-testid="detail-row"]')).toHaveLength(2);
 

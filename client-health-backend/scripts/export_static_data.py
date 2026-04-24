@@ -280,8 +280,6 @@ def build_error_detail_export(db, exported_at: str) -> dict[str, Any]:
     rows_list = []
     for row in rows:
         data = row.to_dict()
-        data["rawError"] = None
-        data["fullErrorText"] = "Error details omitted in static export to save space."
         rows_list.append(data)
 
     return {
