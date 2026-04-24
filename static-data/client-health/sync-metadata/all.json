@@ -1,6 +1,6 @@
 {
   "lastAttemptedSync": {
-    "attemptedAt": "2026-04-24T13:29:24.211221+00:00",
+    "attemptedAt": "2026-04-24T19:37:22.052590+00:00",
     "checkpointState": null,
     "completedUnits": 0,
     "currentSchool": null,
@@ -13,8 +13,8 @@
     "failedUnits": 0,
     "failedUnitsSample": [],
     "failureReason": null,
-    "finishedAt": "2026-04-24T13:32:39.332796+00:00",
-    "jobId": "4b0d9c2f-0d26-4cf2-8398-34ec1c868ed2",
+    "finishedAt": "2026-04-24T19:43:42.604494+00:00",
+    "jobId": "41ba31fc-89b9-4a28-84f9-a467be4730b9",
     "lastHeartbeatAt": null,
     "lastProgressAt": null,
     "school": null,
@@ -23,20 +23,20 @@
     "skippedUnits": 0,
     "snapshotDate": "2026-04-24",
     "startDate": null,
-    "startedAt": "2026-04-24T13:29:24.211221+00:00",
+    "startedAt": "2026-04-24T19:37:22.052590+00:00",
     "status": "completed",
     "statusDetail": null,
     "timing": {
-      "fetchHealthSec": 191.08,
-      "listSchoolsSec": 2.51,
-      "persistDbSec": 1.53,
-      "totalSec": 195.12
+      "fetchHealthSec": 375.96,
+      "listSchoolsSec": 2.81,
+      "persistDbSec": 1.79,
+      "totalSec": 380.55
     },
     "totalSchools": 451
   },
   "lastSuccessfulSync": {
-    "createdAt": "2026-04-24T13:32:38.233043+00:00",
-    "school": "yrk01",
+    "createdAt": "2026-04-24T19:43:41.355222+00:00",
+    "school": "yavapai_banner_ethos",
     "snapshotDate": "2026-04-24"
   }
 }

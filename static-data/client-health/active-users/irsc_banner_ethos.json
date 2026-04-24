@@ -1,6 +1,9 @@
 {
-  "capturedAt": "2026-04-24T13:32:38.232969+00:00",
-  "count": 0,
+  "capturedAt": "2026-04-24T19:43:41.355148+00:00",
+  "count": 2,
   "snapshotDate": "2026-04-24",
-  "users": []
+  "users": [
+    "htemp@coursedog.com",
+    "sgrant@irsc.edu"
+  ]
 }

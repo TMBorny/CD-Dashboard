@@ -1,21 +1,23 @@
 {
-  "capturedAt": "2026-04-24T13:32:38.232932+00:00",
-  "count": 14,
+  "capturedAt": "2026-04-24T19:43:41.355110+00:00",
+  "count": 16,
   "snapshotDate": "2026-04-24",
   "users": [
+    "afleming@astate.edu",
+    "ahurdle@astate.edu",
     "amjenkins@astate.edu",
     "aselig@astate.edu",
+    "awheeler@astate.edu",
     "bmayberry@astate.edu",
     "caallen@AState.edu",
     "cahinkle@astate.edu",
-    "cgabe@astate.edu",
     "chbrown@astate.edu",
-    "hbalakrishnan@astate.edu",
-    "kbrueilly@astate.edu",
+    "dbatson@astate.edu",
+    "jnowlin@astate.edu",
     "mtrusty@astate.edu",
     "mwebber@astate.edu",
     "rsterling@astate.edu",
-    "tdaffron@astate.edu",
-    "vgilmer@astate.edu"
+    "tcravens@astate.edu",
+    "tdaffron@astate.edu"
   ]
 }

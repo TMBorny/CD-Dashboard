@@ -1,13 +1,14 @@
 {
-  "capturedAt": "2026-04-24T13:32:38.233038+00:00",
-  "count": 6,
+  "capturedAt": "2026-04-24T19:43:41.355217+00:00",
+  "count": 7,
   "snapshotDate": "2026-04-24",
   "users": [
     "bnewton@wc.edu",
-    "kblack@wc.edu",
+    "ehampe@wc.edu",
+    "jtrotter@wc.edu",
+    "kstaub@wc.edu",
+    "msharp@wc.edu",
     "sstoker@wc.edu",
-    "starnowieckyi@wc.edu",
-    "sydoyaga@wc.edu",
     "vchristie@wc.edu"
   ]
 }

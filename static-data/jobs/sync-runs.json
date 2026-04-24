@@ -1,7 +1,42 @@
 {
-  "limit": 54,
+  "limit": 55,
   "offset": 0,
   "syncRuns": [
+    {
+      "attemptedAt": "2026-04-24T19:37:22.052590+00:00",
+      "checkpointState": null,
+      "completedUnits": 0,
+      "currentSchool": null,
+      "currentSnapshotDate": null,
+      "dateCount": null,
+      "endDate": null,
+      "errorCount": 0,
+      "errorMessage": null,
+      "errors": [],
+      "failedUnits": 0,
+      "failedUnitsSample": [],
+      "failureReason": null,
+      "finishedAt": "2026-04-24T19:43:42.604494+00:00",
+      "jobId": "41ba31fc-89b9-4a28-84f9-a467be4730b9",
+      "lastHeartbeatAt": null,
+      "lastProgressAt": null,
+      "school": null,
+      "schoolsProcessed": 451,
+      "scope": "bulk",
+      "skippedUnits": 0,
+      "snapshotDate": "2026-04-24",
+      "startDate": null,
+      "startedAt": "2026-04-24T19:37:22.052590+00:00",
+      "status": "completed",
+      "statusDetail": null,
+      "timing": {
+        "fetchHealthSec": 375.96,
+        "listSchoolsSec": 2.81,
+        "persistDbSec": 1.79,
+        "totalSec": 380.55
+      },
+      "totalSchools": 451
+    },
     {
       "attemptedAt": "2026-04-24T13:29:24.211221+00:00",
       "checkpointState": null,
@@ -1896,5 +1931,5 @@
       "totalSchools": 0
     }
   ],
-  "totalCount": 54
+  "totalCount": 55
 }
