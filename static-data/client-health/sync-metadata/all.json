@@ -1,6 +1,6 @@
 {
   "lastAttemptedSync": {
-    "attemptedAt": "2026-04-23T17:26:14.600195+00:00",
+    "attemptedAt": "2026-04-24T13:29:24.211221+00:00",
     "checkpointState": null,
     "completedUnits": 0,
     "currentSchool": null,
@@ -13,30 +13,30 @@
     "failedUnits": 0,
     "failedUnitsSample": [],
     "failureReason": null,
-    "finishedAt": "2026-04-23T17:29:41.013666+00:00",
-    "jobId": "a02d1705-2f0a-4229-a77e-e972044415d9",
+    "finishedAt": "2026-04-24T13:32:39.332796+00:00",
+    "jobId": "4b0d9c2f-0d26-4cf2-8398-34ec1c868ed2",
     "lastHeartbeatAt": null,
     "lastProgressAt": null,
     "school": null,
     "schoolsProcessed": 451,
     "scope": "bulk",
     "skippedUnits": 0,
-    "snapshotDate": "2026-04-23",
+    "snapshotDate": "2026-04-24",
     "startDate": null,
-    "startedAt": "2026-04-23T17:26:14.600195+00:00",
+    "startedAt": "2026-04-24T13:29:24.211221+00:00",
     "status": "completed",
     "statusDetail": null,
     "timing": {
-      "fetchHealthSec": 202.08,
-      "listSchoolsSec": 2.9,
-      "persistDbSec": 1.44,
-      "totalSec": 206.41
+      "fetchHealthSec": 191.08,
+      "listSchoolsSec": 2.51,
+      "persistDbSec": 1.53,
+      "totalSec": 195.12
     },
     "totalSchools": 451
   },
   "lastSuccessfulSync": {
-    "createdAt": "2026-04-23T17:29:40.037378+00:00",
-    "school": "yosemite_colleague_ethos",
-    "snapshotDate": "2026-04-23"
+    "createdAt": "2026-04-24T13:32:38.233043+00:00",
+    "school": "yrk01",
+    "snapshotDate": "2026-04-24"
   }
 }

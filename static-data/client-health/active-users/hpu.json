@@ -1,14 +1,15 @@
 {
-  "capturedAt": "2026-04-23T17:29:40.037307+00:00",
-  "count": 7,
-  "snapshotDate": "2026-04-23",
+  "capturedAt": "2026-04-24T13:32:38.232967+00:00",
+  "count": 8,
+  "snapshotDate": "2026-04-24",
   "users": [
-    "adewald@hpu.edu",
     "amatthews@hpu.edu",
     "bchildress@hpu.edu",
-    "gdericks@hpu.edu",
-    "lnakayama@hpu.edu",
-    "lyamamura@hpu.edu",
+    "dbarrowclough@hpu.edu",
+    "jtbutler@hpu.edu",
+    "leader@my.hpu.edu",
+    "pjnorris@hpu.edu",
+    "scrawford@hpu.edu",
     "ssumulong@hpu.edu"
   ]
 }

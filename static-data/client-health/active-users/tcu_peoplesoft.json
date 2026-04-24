@@ -1,11 +1,12 @@
 {
-  "capturedAt": "2026-04-23T17:29:40.037359+00:00",
-  "count": 4,
-  "snapshotDate": "2026-04-23",
+  "capturedAt": "2026-04-24T13:32:38.233023+00:00",
+  "count": 5,
+  "snapshotDate": "2026-04-24",
   "users": [
+    "ANNA.M.HUDSON@tcu.edu",
     "j.hardy@tcu.edu",
-    "jasmine.jackson@tcu.edu",
-    "m.jeffries@tcu.edu",
-    "m.kitchens@tcu.edu"
+    "m.kitchens@tcu.edu",
+    "r.hopper@tcu.edu",
+    "r.sharpless@tcu.edu"
   ]
 }

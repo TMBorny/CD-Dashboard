@@ -1,17 +1,22 @@
 {
-  "capturedAt": "2026-04-23T17:29:40.037350+00:00",
-  "count": 10,
-  "snapshotDate": "2026-04-23",
+  "capturedAt": "2026-04-24T13:32:38.233013+00:00",
+  "count": 15,
+  "snapshotDate": "2026-04-24",
   "users": [
+    "akerkesl@sju.edu",
     "appserv@sju.edu",
     "brooks@sju.edu",
-    "cforrest@sju.edu",
     "chammond@sju.edu",
     "cr10886640@sju.edu",
-    "dwatsons@sju.edu",
     "ekonjarv@sju.edu",
     "jhasse@sju.edu",
-    "sj10884896@sju.edu",
-    "tpurcell@sju.edu"
+    "knuckols@sju.edu",
+    "mg10793811@sju.edu",
+    "njohnson@sju.edu",
+    "sparks@sju.edu",
+    "tfasy@sju.edu",
+    "tkolas@sju.edu",
+    "tpurcell@sju.edu",
+    "tstolz@sju.edu"
   ]
 }

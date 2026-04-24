@@ -1,13 +1,12 @@
 {
-  "capturedAt": "2026-04-23T17:29:40.037273+00:00",
-  "count": 6,
-  "snapshotDate": "2026-04-23",
+  "capturedAt": "2026-04-24T13:32:38.232931+00:00",
+  "count": 5,
+  "snapshotDate": "2026-04-24",
   "users": [
+    "asorg@arizona.edu",
     "cbartlett1@arizona.edu",
-    "dembry@arizona.edu",
     "eriesgo@arizona.edu",
     "jaded@arizona.edu",
-    "schristian1@arizona.edu",
     "sparkles@arizona.edu"
   ]
 }

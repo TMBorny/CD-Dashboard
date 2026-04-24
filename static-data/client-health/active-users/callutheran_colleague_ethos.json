@@ -1,17 +1,20 @@
 {
-  "capturedAt": "2026-04-23T17:29:40.037279+00:00",
-  "count": 10,
-  "snapshotDate": "2026-04-23",
+  "capturedAt": "2026-04-24T13:32:38.232939+00:00",
+  "count": 13,
+  "snapshotDate": "2026-04-24",
   "users": [
+    "davidmartin@callutheran.edu",
+    "dtravis@callutheran.edu",
     "elizabethgarcia@callutheran.edu",
     "eyamamoto@callutheran.edu",
+    "ghanraha@callutheran.edu",
+    "jrussell@coursedog.com",
     "jwaters@callutheran.edu",
     "lacontre@callutheran.edu",
-    "mlea@callutheran.edu",
-    "mmaciel@callutheran.edu",
+    "mromano@callutheran.edu",
     "nporter@callutheran.edu",
-    "pvaltierra@callutheran.edu",
-    "tsettem@callutheran.edu",
-    "tsymonds@callutheran.edu"
+    "ovtrujillo@callutheran.edu",
+    "seruth@callutheran.edu",
+    "vdanko@callutheran.edu"
   ]
 }

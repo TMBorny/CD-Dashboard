@@ -1,13 +1,12 @@
 {
-  "capturedAt": "2026-04-23T17:29:40.037270+00:00",
-  "count": 6,
-  "snapshotDate": "2026-04-23",
+  "capturedAt": "2026-04-24T13:32:38.232929+00:00",
+  "count": 5,
+  "snapshotDate": "2026-04-24",
   "users": [
     "abigail.clark@abac.edu",
+    "calvin.sinkfield@abac.edu",
     "cepperly@abac.edu",
-    "christopher.hunt@abac.edu",
     "douglas.burnette@abac.edu",
-    "sydney.rogers@abac.edu",
-    "zheng.huang@abac.edu"
+    "sydney.rogers@abac.edu"
   ]
 }

@@ -1,12 +1,14 @@
 {
-  "capturedAt": "2026-04-23T17:29:40.037295+00:00",
-  "count": 5,
-  "snapshotDate": "2026-04-23",
+  "capturedAt": "2026-04-24T13:32:38.232955+00:00",
+  "count": 7,
+  "snapshotDate": "2026-04-24",
   "users": [
+    "cdomanski@esu.edu",
     "igarcia8@esu.edu",
+    "jevarts@coursedog.com",
+    "jsmith239@esu.edu",
     "kdevine5@esu.edu",
-    "mrosen1@esu.edu",
-    "szhang4@esu.edu",
-    "tparker10@esu.edu"
+    "pdrennen@esu.edu",
+    "spena2@esu.edu"
   ]
 }

@@ -1,17 +1,22 @@
 {
-  "capturedAt": "2026-04-23T17:29:40.037288+00:00",
-  "count": 10,
-  "snapshotDate": "2026-04-23",
+  "capturedAt": "2026-04-24T13:32:38.232947+00:00",
+  "count": 15,
+  "snapshotDate": "2026-04-24",
   "users": [
-    "amoore@commonwealthu.edu",
+    "afradkin@commonwealthu.edu",
+    "alavalle@commonwealthu.edu",
     "beverhar@commonwealthu.edu",
-    "bfaus@commonwealthu.edu",
-    "cernst@commonwealthu.edu",
     "dfrohlic@commonwealthu.edu",
     "dthoma2@commonwealthu.edu",
     "hab206@commonwealthu.edu",
+    "jrussell@coursedog.com",
+    "mdecker@commonwealthu.edu",
     "mnovitsk@commonwealthu.edu",
     "mpolyuha@commonwealthu.edu",
-    "tbell@commonwealthu.edu"
+    "plawton@commonwealthu.edu",
+    "tbell@commonwealthu.edu",
+    "tfetterman@commonwealthu.edu",
+    "thudson@commonwealthu.edu",
+    "tstarmac@commonwealthu.edu"
   ]
 }

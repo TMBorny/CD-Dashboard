@@ -1,12 +1,14 @@
 {
-  "capturedAt": "2026-04-23T17:29:40.037306+00:00",
-  "count": 5,
-  "snapshotDate": "2026-04-23",
+  "capturedAt": "2026-04-24T13:32:38.232966+00:00",
+  "count": 7,
+  "snapshotDate": "2026-04-24",
   "users": [
     "ccrosby@hilbert.edu",
-    "jdahl@hilbert.edu",
+    "dopera@hilbert.edu",
     "lgill@hilbert.edu",
-    "sbraidich@hilbert.edu",
-    "sga@hilbert.edu"
+    "mlaidman@hilbert.edu",
+    "rdegrandpre@hilbert.edu",
+    "sga@hilbert.edu",
+    "tseil@hilbert.edu"
   ]
 }

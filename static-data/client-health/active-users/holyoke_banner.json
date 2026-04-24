@@ -1,18 +1,19 @@
 {
-  "capturedAt": "2026-04-23T17:29:40.037306+00:00",
-  "count": 11,
-  "snapshotDate": "2026-04-23",
+  "capturedAt": "2026-04-24T13:32:38.232966+00:00",
+  "count": 12,
+  "snapshotDate": "2026-04-24",
   "users": [
+    "afunk@hcc.edu",
     "bfrisbie@hcc.edu",
     "bmannix@hcc.edu",
     "etolton@hcc.edu",
+    "gcoffelt@hcc.edu",
     "jderidder@hcc.edu",
+    "jkerr@hcc.edu",
     "ktrombley@hcc.edu",
     "lprovidenti@hcc.edu",
     "mdowning@hcc.edu",
-    "mgacek@hcc.edu",
-    "mmurphy@hcc.edu",
-    "mvargas@hcc.edu",
+    "mstarzyk@hcc.edu",
     "ndanis@hcc.edu"
   ]
 }
