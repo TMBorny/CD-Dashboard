@@ -226,6 +226,36 @@ export async function getErrorAnalysisErrors(params: {
   return { data: res.data };
 }
 
+export async function getErrorAnalysisSignatureExplorer(params: {
+  days?: number;
+  school?: string;
+  sisPlatform?: string;
+  latestOnly?: boolean;
+  signature: string;
+  groupBy: 'sis' | 'school' | 'term';
+  bucket?: string;
+  page?: number;
+  pageSize?: number;
+}) {
+  if (isStaticDataMode) {
+    return staticApi.getErrorAnalysisSignatureExplorer(params);
+  }
+  const res = await backend.get('/error-analysis/signature-explorer', {
+    params: {
+      ...(typeof params.days === 'number' ? { days: params.days } : {}),
+      ...(params.school ? { school: params.school } : {}),
+      ...(params.sisPlatform ? { sisPlatform: params.sisPlatform } : {}),
+      ...(params.latestOnly !== undefined ? { latestOnly: params.latestOnly } : {}),
+      signature: params.signature,
+      groupBy: params.groupBy,
+      ...(params.bucket ? { bucket: params.bucket } : {}),
+      ...(params.page ? { page: params.page } : {}),
+      ...(params.pageSize ? { pageSize: params.pageSize } : {}),
+    },
+  });
+  return { data: res.data };
+}
+
 export async function downloadErrorAnalysisDetailedExport(params: {
   days?: number;
   school?: string;

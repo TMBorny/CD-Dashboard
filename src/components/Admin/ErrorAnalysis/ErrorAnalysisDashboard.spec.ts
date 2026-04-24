@@ -1,12 +1,17 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { mount, RouterLinkStub } from '@vue/test-utils';
-import { nextTick, ref } from 'vue';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { enableAutoUnmount, mount, RouterLinkStub } from '@vue/test-utils';
+import { computed, nextTick, ref } from 'vue';
 import type { VueWrapper } from '@vue/test-utils';
-import type { ErrorAnalysisResponse, ErrorDetailTableResponse } from '@/types/errorAnalysis';
+import type {
+  ErrorAnalysisResponse,
+  ErrorDetailTableResponse,
+  ErrorSignatureExplorerResponse,
+} from '@/types/errorAnalysis';
 
 const queryData = ref<ErrorAnalysisResponse | null>(null);
 const sisCountsQueryData = ref<ErrorAnalysisResponse | null>(null);
 const detailQueryData = ref<ErrorDetailTableResponse | null>(null);
+const signatureExplorerQueryData = ref<ErrorSignatureExplorerResponse | null>(null);
 const findViewToggleButton = (wrapper: VueWrapper<any>, label: string) =>
   wrapper.get('[data-testid="view-toggle"]').findAll('button').find((button) => button.text().trim() === label);
 const queryLoading = ref(false);
@@ -19,20 +24,38 @@ const downloadErrorAnalysisDetailedExportMock = vi.fn().mockResolvedValue({
   blob: new Blob(['{"ok":true}'], { type: 'application/json' }),
   filename: 'error-analysis-all-errors.json',
 });
+const route = {
+  query: {} as Record<string, unknown>,
+};
+const replace = vi.fn().mockImplementation(({ query }: { query: Record<string, unknown> }) => {
+  route.query = { ...query };
+  return Promise.resolve();
+});
+const push = vi.fn();
 
 vi.mock('@tanstack/vue-query', () => ({
   keepPreviousData: Symbol('keepPreviousData'),
   useQuery: vi.fn((options) => {
-    const keyValue = options.queryKey?.value ?? options.queryKey;
-    const queryName = Array.isArray(keyValue) ? keyValue[0] : null;
-    if (queryName === 'errorAnalysisDetails') {
+    const queryRef = computed(() => options.queryKey?.value ?? options.queryKey);
+    const queryName = computed(() => {
+      const keyValue = queryRef.value;
+      return Array.isArray(keyValue) ? keyValue[0] : null;
+    });
+    if (queryName.value === 'errorAnalysisDetails') {
       return {
         data: detailQueryData,
         isLoading: queryLoading,
         error: queryError,
       };
     }
-    if (queryName === 'errorAnalysisSisCounts') {
+    if (queryName.value === 'errorAnalysisSignatureExplorer') {
+      return {
+        data: signatureExplorerQueryData,
+        isLoading: queryLoading,
+        error: queryError,
+      };
+    }
+    if (queryName.value === 'errorAnalysisSisCounts') {
       return {
         data: sisCountsQueryData,
         isLoading: queryLoading,
@@ -50,6 +73,7 @@ vi.mock('@tanstack/vue-query', () => ({
 vi.mock('@/api', () => ({
   getErrorAnalysis: vi.fn().mockResolvedValue({ data: {} }),
   getErrorAnalysisErrors: vi.fn().mockResolvedValue({ data: {} }),
+  getErrorAnalysisSignatureExplorer: vi.fn().mockResolvedValue({ data: {} }),
   downloadErrorAnalysisExport: downloadErrorAnalysisExportMock,
   downloadErrorAnalysisDetailedExport: downloadErrorAnalysisDetailedExportMock,
 }));
@@ -60,6 +84,17 @@ vi.mock('vue3-apexcharts', () => ({
     template: '<div class="chart-stub" />',
   },
 }));
+
+vi.mock('vue-router', async () => {
+  const actual = await vi.importActual<typeof import('vue-router')>('vue-router');
+  return {
+    ...actual,
+    useRoute: () => route,
+    useRouter: () => ({ replace, push }),
+  };
+});
+
+enableAutoUnmount(afterEach);
 
 const buildResponse = (): ErrorAnalysisResponse => ({
   metadata: {
@@ -396,13 +431,99 @@ const buildDetailResponse = (): ErrorDetailTableResponse => ({
   },
 });
 
+const buildSignatureExplorerResponse = (): ErrorSignatureExplorerResponse => ({
+  rows: [
+    {
+      key: 'Duplicate course 12345 already exists in CourseDog',
+      id: 11,
+      snapshotDate: '2026-04-13',
+      school: 'foo01',
+      displayName: 'Foo State',
+      sisPlatform: 'PeopleSoftDirect',
+      entityType: 'courses',
+      errorCode: 'duplicate_course',
+      signatureKey: 'sig-b',
+      signatureLabel: 'courses | duplicate_course | duplicate course <num>',
+      normalizedMessage: 'duplicate course <num>',
+      fullErrorText: 'Duplicate course 12345 already exists in CourseDog',
+      entityDisplayName: 'Course 12345',
+      mergeReport: {
+        school: 'foo01',
+        mergeReportId: 'report-b1',
+        scheduleType: 'realtime',
+        entityDisplayName: 'Course 12345',
+        snapshotDate: '2026-04-13',
+      },
+      termCodes: ['202505'],
+      rawError: { message: 'Duplicate course 12345 already exists in CourseDog' },
+      createdAt: '2026-04-13T12:00:00Z',
+      instanceCount: 3,
+      schools: [
+        { school: 'bar01', label: 'Baruch College', count: 1 },
+        { school: 'foo01', label: 'Foo State', count: 2 },
+      ],
+    },
+  ],
+  total: 1,
+  page: 1,
+  pageSize: 25,
+  metadata: {
+    appliedFilters: {
+      days: 7,
+      school: null,
+      sisPlatform: null,
+      latestOnly: true,
+      signature: 'sig-b',
+      groupBy: 'sis',
+      bucket: 'PeopleSoftDirect',
+    },
+    resolvedSnapshotDate: '2026-04-13',
+    signatureTotal: 3,
+    bucketTotal: 3,
+  },
+  breakdowns: {
+    sis: [
+      { key: 'PeopleSoftDirect', label: 'PeopleSoftDirect', count: 3, share: 1 },
+    ],
+    school: [
+      { key: 'foo01', label: 'Foo State', count: 2, share: 2 / 3 },
+      { key: 'bar01', label: 'Baruch College', count: 1, share: 1 / 3 },
+    ],
+    term: [
+      { key: '202505', label: '202505', count: 3, share: 1 },
+    ],
+  },
+});
+
+const buildPaginatedSignatures = (count: number) =>
+  Array.from({ length: count }, (_, index) => {
+    const baseSignature = buildResponse().signatures[index % buildResponse().signatures.length];
+    const itemNumber = index + 1;
+    const itemLabel = String(itemNumber).padStart(2, '0');
+
+    return {
+      ...baseSignature,
+      signatureKey: `sig-${itemNumber}`,
+      signatureLabel: `${baseSignature.entityType} | ${baseSignature.errorCode} | recurring pattern ${itemLabel}`,
+      normalizedMessage: `recurring pattern ${itemLabel}`,
+      sampleMessage: `Recurring pattern ${itemLabel}`,
+      totalCount: count - index,
+      recurrenceDays: (index % 3) + 1,
+      termCodes: [`2025${String(itemNumber).padStart(2, '0')}`],
+    };
+  });
+
 describe('ErrorAnalysisDashboard', () => {
   beforeEach(() => {
+    route.query = {};
+    replace.mockClear();
+    push.mockClear();
     queryLoading.value = false;
     queryError.value = null;
     queryData.value = buildResponse();
     sisCountsQueryData.value = buildResponse();
     detailQueryData.value = buildDetailResponse();
+    signatureExplorerQueryData.value = buildSignatureExplorerResponse();
     downloadErrorAnalysisExportMock.mockClear();
     downloadErrorAnalysisDetailedExportMock.mockClear();
     window.URL.createObjectURL = vi.fn(() => 'blob:download-url');
@@ -465,7 +586,7 @@ describe('ErrorAnalysisDashboard', () => {
     expect(wrapper.get('[data-testid="error-analysis-signatures-tooltip"]').text()).toContain('normalized patterns');
     expect(wrapper.get('[data-testid="error-analysis-signatures-tooltip"]').text()).toContain('captured merge-error rows');
     expect(wrapper.text()).toContain('Duplicate or conflicting record');
-    expect(wrapper.text()).toContain('View full error');
+    expect(wrapper.text()).toContain('Explore signature');
     expect(wrapper.html()).toContain('/#/int/foo01/merge-history/report-b1');
     expect(wrapper.html()).not.toContain('/#/int/bar01/merge-history/report-b2');
 
@@ -479,7 +600,21 @@ describe('ErrorAnalysisDashboard', () => {
     expect(wrapper.html()).toContain('/#/int/foo01/merge-history/report-b1');
   });
 
-  it('opens a full error modal with nested upstream text and links', async () => {
+  it('paginates recurring signatures and resets the page when filters change', async () => {
+    const paginatedSignatures = buildPaginatedSignatures(13);
+    queryData.value = {
+      ...buildResponse(),
+      signatures: paginatedSignatures,
+      summary: {
+        ...buildResponse().summary,
+        totalGroupedErrors: paginatedSignatures.length,
+        distinctSignatures: paginatedSignatures.length,
+        totalErrorInstances: paginatedSignatures.reduce((sum, signature) => sum + signature.totalCount, 0),
+      },
+      schoolBreakdowns: [],
+      sisBreakdowns: [],
+    };
+
     const { default: ErrorAnalysisDashboard } = await import('./ErrorAnalysisDashboard.vue');
     const wrapper = mount(ErrorAnalysisDashboard, {
       global: {
@@ -490,11 +625,225 @@ describe('ErrorAnalysisDashboard', () => {
       },
     });
 
-    await wrapper.get('[data-testid="signature-row"] button').trigger('click');
+    expect(wrapper.findAll('[data-testid="signature-row"]')).toHaveLength(12);
+    expect(wrapper.text()).toContain('13 signature patterns total');
+    expect(wrapper.text()).toContain('Page 1 of 2');
+    expect(wrapper.text()).toContain('recurring pattern 01');
+    expect(wrapper.text()).not.toContain('recurring pattern 13');
+
+    await wrapper.findAll('button').find((button) => button.text().trim() === 'Next')!.trigger('click');
+
+    expect(wrapper.findAll('[data-testid="signature-row"]')).toHaveLength(1);
+    expect(wrapper.text()).toContain('Page 2 of 2');
+    expect(wrapper.text()).toContain('recurring pattern 13');
+    expect(wrapper.text()).not.toContain('recurring pattern 01');
+
+    await wrapper.findAll('button').find((button) => button.text().trim() === '30d')!.trigger('click');
+
+    expect(wrapper.text()).toContain('Page 1 of 2');
+    expect(wrapper.findAll('[data-testid="signature-row"]')).toHaveLength(12);
+    expect(wrapper.text()).toContain('recurring pattern 01');
+    expect(wrapper.text()).not.toContain('recurring pattern 13');
+  });
+
+  it('restores the current view, page, and modal from the url query', async () => {
+    const paginatedSignatures = buildPaginatedSignatures(13);
+    queryData.value = {
+      ...buildResponse(),
+      signatures: paginatedSignatures,
+      summary: {
+        ...buildResponse().summary,
+        totalGroupedErrors: paginatedSignatures.length,
+        distinctSignatures: paginatedSignatures.length,
+        totalErrorInstances: paginatedSignatures.reduce((sum, signature) => sum + signature.totalCount, 0),
+      },
+      schoolBreakdowns: [],
+      sisBreakdowns: [],
+    };
+    route.query = {
+      signaturePage: '2',
+      modal: 'signature-explorer',
+      signature: paginatedSignatures[12].signatureKey,
+    };
+
+    const { default: ErrorAnalysisDashboard } = await import('./ErrorAnalysisDashboard.vue');
+    const wrapper = mount(ErrorAnalysisDashboard, {
+      global: {
+        stubs: {
+          RouterLink: RouterLinkStub,
+          VueApexCharts: { template: '<div class="chart-stub" />' },
+        },
+      },
+    });
+
+    expect(wrapper.text()).toContain('Page 2 of 2');
+    expect(wrapper.text()).toContain('recurring pattern 13');
+    expect(wrapper.get('[data-testid="signature-explorer-modal"]').text()).toContain('Signature explorer');
+  });
+
+  it('writes the current page and open modal into the url query', async () => {
+    const paginatedSignatures = buildPaginatedSignatures(13);
+    queryData.value = {
+      ...buildResponse(),
+      signatures: paginatedSignatures,
+      summary: {
+        ...buildResponse().summary,
+        totalGroupedErrors: paginatedSignatures.length,
+        distinctSignatures: paginatedSignatures.length,
+        totalErrorInstances: paginatedSignatures.reduce((sum, signature) => sum + signature.totalCount, 0),
+      },
+      schoolBreakdowns: [],
+      sisBreakdowns: [],
+    };
+
+    const { default: ErrorAnalysisDashboard } = await import('./ErrorAnalysisDashboard.vue');
+    const wrapper = mount(ErrorAnalysisDashboard, {
+      global: {
+        stubs: {
+          RouterLink: RouterLinkStub,
+          VueApexCharts: { template: '<div class="chart-stub" />' },
+        },
+      },
+    });
+
+    await wrapper.findAll('button').find((button) => button.text().trim() === 'Next')!.trigger('click');
+    await wrapper.get('[data-testid="signature-row"]').trigger('click');
+    await nextTick();
+
+    expect(replace).toHaveBeenCalled();
+    expect(replace).toHaveBeenLastCalledWith({
+      query: {
+        signaturePage: '2',
+        modal: 'signature-explorer',
+        signature: paginatedSignatures[12].signatureKey,
+      },
+    });
+  });
+
+  it('opens the signature explorer and lets analysts inspect matching rows', async () => {
+    const { default: ErrorAnalysisDashboard } = await import('./ErrorAnalysisDashboard.vue');
+    const wrapper = mount(ErrorAnalysisDashboard, {
+      global: {
+        stubs: {
+          RouterLink: RouterLinkStub,
+          VueApexCharts: { template: '<div class="chart-stub" />' },
+        },
+      },
+    });
+
+    await wrapper.get('[data-testid="signature-row"]').trigger('click');
+
+    const modal = wrapper.get('[data-testid="signature-explorer-modal"]');
+    expect(modal.text()).toContain('Signature explorer');
+    expect(modal.text()).toContain('Check for duplicate source records or conflicting identifiers');
+    expect(modal.text()).toContain('Uses the latest captured snapshot');
+    expect(modal.text()).toContain('PeopleSoftDirect');
+    expect(modal.text()).toContain('100%');
+    expect(modal.text()).toContain('Showing 1 of 1 grouped error covering 3 rows');
+    expect(modal.text()).toContain('Affected schools');
+    expect(modal.text()).toContain('Count');
+    expect(modal.text()).toContain('2 schools');
+    expect(modal.text()).toContain('View school list');
+    expect(modal.text()).toContain('Duplicate course 12345 already exists in CourseDog');
+    expect(modal.text()).toContain('Representative sample');
+
+    await modal.get('[data-testid="signature-explorer-row"]').trigger('click');
+
+    const errorModal = wrapper.get('[data-testid="error-detail-modal"]');
+    expect(errorModal.text()).toContain('Full upstream error');
+    expect(errorModal.text()).toContain('Duplicate course 12345 already exists in CourseDog');
+    expect(errorModal.text()).toContain('Foo State (foo01)');
+    expect(errorModal.text()).toContain('PeopleSoftDirect');
+    expect(errorModal.text()).toContain('Term 202505');
+    expect(errorModal.text()).toContain('realtime');
+    expect(errorModal.html()).toContain('/#/int/foo01/merge-history/report-b1');
+  });
+
+  it('opens the affected schools modal from a compact school summary', async () => {
+    const { default: ErrorAnalysisDashboard } = await import('./ErrorAnalysisDashboard.vue');
+    const wrapper = mount(ErrorAnalysisDashboard, {
+      global: {
+        stubs: {
+          RouterLink: RouterLinkStub,
+          VueApexCharts: { template: '<div class="chart-stub" />' },
+        },
+      },
+    });
+
+    await wrapper.get('[data-testid="signature-row"]').trigger('click');
+    await wrapper.get('[data-testid="signature-explorer-school-summary-trigger"]').trigger('click');
+
+    const modal = wrapper.get('[data-testid="signature-explorer-schools-modal"]');
+    expect(modal.text()).toContain('Affected schools');
+    expect(modal.text()).toContain('2 schools');
+    expect(modal.text()).toContain('Duplicate course 12345 already exists in CourseDog');
+    expect(modal.text()).toContain('PeopleSoftDirect');
+    expect(modal.text()).toContain('Term 202505');
+    expect(modal.text()).toContain('3 open rows');
+    expect(modal.text()).toContain('Foo State (foo01)');
+    expect(modal.text()).toContain('2 matching rows');
+    expect(modal.text()).toContain('Baruch College (CUNY) (bar01)');
+    expect(modal.text()).toContain('1 matching row');
+  });
+
+  it('switches signature explorer tabs and resets to the first bucket', async () => {
+    signatureExplorerQueryData.value = {
+      ...buildSignatureExplorerResponse(),
+      metadata: {
+        ...buildSignatureExplorerResponse().metadata,
+        appliedFilters: {
+          ...buildSignatureExplorerResponse().metadata.appliedFilters,
+          groupBy: 'school',
+          bucket: 'foo01',
+        },
+      },
+      breakdowns: {
+        sis: [{ key: 'PeopleSoftDirect', label: 'PeopleSoftDirect', count: 1, share: 1 }],
+        school: [{ key: 'foo01', label: 'Foo State', count: 1, share: 1 }],
+        term: [{ key: '202505', label: '202505', count: 1, share: 1 }],
+      },
+    };
+
+    const { default: ErrorAnalysisDashboard } = await import('./ErrorAnalysisDashboard.vue');
+    const wrapper = mount(ErrorAnalysisDashboard, {
+      global: {
+        stubs: {
+          RouterLink: RouterLinkStub,
+          VueApexCharts: { template: '<div class="chart-stub" />' },
+        },
+      },
+    });
+
+    await wrapper.get('[data-testid="signature-row"]').trigger('click');
+    await wrapper.get('[data-testid="signature-explorer-tab-school"]').trigger('click');
+    await nextTick();
+
+    const modal = wrapper.get('[data-testid="signature-explorer-modal"]');
+    expect(modal.text()).toContain('Foo State (foo01)');
+
+    await wrapper.get('[data-testid="signature-explorer-tab-term"]').trigger('click');
+    await nextTick();
+
+    expect(modal.text()).toContain('202505');
+  });
+
+  it('opens a representative sample from the signature explorer', async () => {
+    const { default: ErrorAnalysisDashboard } = await import('./ErrorAnalysisDashboard.vue');
+    const wrapper = mount(ErrorAnalysisDashboard, {
+      global: {
+        stubs: {
+          RouterLink: RouterLinkStub,
+          VueApexCharts: { template: '<div class="chart-stub" />' },
+        },
+      },
+    });
+
+    await wrapper.get('[data-testid="signature-row"]').trigger('click');
+    await wrapper.get('[data-testid="signature-explorer-modal"]').findAll('button')
+      .find((button) => button.text() === 'Representative sample')!
+      .trigger('click');
 
     const modal = wrapper.get('[data-testid="error-detail-modal"]');
-    expect(modal.text()).toContain('Full upstream error');
-    expect(modal.text()).toContain('Duplicate course 12345 already exists in CourseDog');
     expect(modal.text()).toContain('courses');
     expect(modal.text()).toContain('duplicate_course');
     expect(modal.text()).toContain('Foo State (foo01)');
@@ -506,9 +855,6 @@ describe('ErrorAnalysisDashboard', () => {
     expect(modal.text()).toContain('Example merge reports');
     expect(modal.html()).toContain('/#/int/foo01/merge-history/report-b1');
     expect(modal.text()).toContain('Integration Hub');
-
-    await modal.get('button[aria-label="Close full error modal"]').trigger('click');
-    expect(wrapper.find('[data-testid="error-detail-modal"]').exists()).toBe(false);
   });
 
   it('opens a school-specific full error modal from the school view', async () => {
@@ -525,8 +871,7 @@ describe('ErrorAnalysisDashboard', () => {
     const bySchoolButton = findViewToggleButton(wrapper, 'By School');
     expect(bySchoolButton).toBeTruthy();
     await bySchoolButton!.trigger('click');
-    const schoolButtons = wrapper.findAll('button').filter((button) => button.text() === 'View full error');
-    await schoolButtons[0].trigger('click');
+    await wrapper.get('[data-testid="school-row"]').trigger('click');
 
     const modal = wrapper.get('[data-testid="error-detail-modal"]');
     expect(modal.text()).toContain('Foo State (foo01) sample error');
@@ -650,7 +995,7 @@ describe('ErrorAnalysisDashboard', () => {
     const allErrorsButton = findViewToggleButton(wrapper, 'All Errors');
     expect(allErrorsButton).toBeTruthy();
     await allErrorsButton!.trigger('click');
-    await wrapper.get('[data-testid="detail-row"] button').trigger('click');
+    await wrapper.get('[data-testid="detail-row"]').trigger('click');
 
     const modal = wrapper.get('[data-testid="error-detail-modal"]');
     expect(modal.text()).toContain('Duplicate course 12345 already exists in CourseDog');
@@ -683,16 +1028,14 @@ describe('ErrorAnalysisDashboard', () => {
     await bySisButton!.trigger('click');
     expect(wrapper.text()).toContain('Recurring patterns by SIS');
 
-    const sisButton = wrapper.findAll('button').find((button) => button.text().includes('View all 1 signature'));
-    expect(sisButton).toBeTruthy();
-    await sisButton!.trigger('click');
+    await wrapper.get('[data-testid="sis-row"]').trigger('click');
 
     const modal = wrapper.get('[data-testid="sis-signatures-modal"]');
     expect(modal.text()).toContain('PeopleSoftDirect');
     expect(modal.text()).toContain('courses | duplicate_course | duplicate course <num>');
 
-    await modal.findAll('button').find((button) => button.text() === 'View full error')!.trigger('click');
-    expect(wrapper.get('[data-testid="error-detail-modal"]').text()).toContain('Duplicate course 12345 already exists in CourseDog');
+    await modal.findAll('button').find((button) => button.text() === 'Open signature')!.trigger('click');
+    expect(wrapper.get('[data-testid="signature-explorer-modal"]').text()).toContain('Signature explorer');
   });
 
   it('sorts the SIS table when a header is clicked', async () => {

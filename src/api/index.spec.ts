@@ -301,4 +301,144 @@ describe('client health api helpers', () => {
       },
     ]);
   });
+
+  it('requests the signature explorer from the backend in live mode', async () => {
+    get.mockResolvedValue({ data: { rows: [], total: 0, page: 1, pageSize: 25, metadata: {}, breakdowns: {} } });
+    const { getErrorAnalysisSignatureExplorer } = await import('./index');
+
+    await getErrorAnalysisSignatureExplorer({
+      days: 7,
+      school: 'foo01',
+      sisPlatform: 'PeopleSoftDirect',
+      signature: 'sig-b',
+      groupBy: 'sis',
+      bucket: 'PeopleSoftDirect',
+      page: 2,
+      pageSize: 25,
+    });
+
+    expect(get).toHaveBeenCalledWith('/error-analysis/signature-explorer', {
+      params: {
+        days: 7,
+        school: 'foo01',
+        sisPlatform: 'PeopleSoftDirect',
+        signature: 'sig-b',
+        groupBy: 'sis',
+        bucket: 'PeopleSoftDirect',
+        page: 2,
+        pageSize: 25,
+      },
+    });
+  });
+
+  it('builds a signature explorer from static detailed rows', async () => {
+    vi.stubEnv('VITE_DATA_MODE', 'static');
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        metadata: {
+          historyStartsOn: '2026-04-12',
+          lastCapturedAt: '2026-04-13T12:00:00Z',
+          exportedAt: '2026-04-15T00:00:00Z',
+        },
+        rows: [
+          {
+            id: 1,
+            snapshotDate: '2026-04-13',
+            school: 'foo01',
+            displayName: 'Foo State',
+            sisPlatform: 'PeopleSoftDirect',
+            entityType: 'courses',
+            errorCode: 'duplicate_course',
+            signatureKey: 'sig-b',
+            signatureLabel: 'courses | duplicate_course | duplicate course <num>',
+            normalizedMessage: 'duplicate course <num>',
+            fullErrorText: 'Duplicate course 12345 already exists in CourseDog',
+            entityDisplayName: 'Course 12345',
+            mergeReport: {
+              school: 'foo01',
+              mergeReportId: 'report-b1',
+              scheduleType: 'realtime',
+              entityDisplayName: 'Course 12345',
+              snapshotDate: '2026-04-13',
+            },
+            termCodes: ['202505'],
+            rawError: { message: 'Duplicate course 12345 already exists in CourseDog' },
+          },
+          {
+            id: 2,
+            snapshotDate: '2026-04-13',
+            school: 'foo01',
+            displayName: 'Foo State',
+            sisPlatform: 'PeopleSoftDirect',
+            entityType: 'courses',
+            errorCode: 'duplicate_course',
+            signatureKey: 'sig-b',
+            signatureLabel: 'courses | duplicate_course | duplicate course <num>',
+            normalizedMessage: 'duplicate course <num>',
+            fullErrorText: 'Duplicate course 12345 already exists in CourseDog',
+            entityDisplayName: 'Course 12345 copy',
+            mergeReport: {
+              school: 'foo01',
+              mergeReportId: 'report-b2',
+              scheduleType: 'realtime',
+              entityDisplayName: 'Course 12345 copy',
+              snapshotDate: '2026-04-13',
+            },
+            termCodes: ['202505'],
+            rawError: { message: 'Duplicate course 12345 already exists in CourseDog' },
+          },
+          {
+            id: 3,
+            snapshotDate: '2026-04-13',
+            school: 'bar01',
+            displayName: 'Baruch College',
+            sisPlatform: 'PeopleSoftDirect',
+            entityType: 'courses',
+            errorCode: 'duplicate_course',
+            signatureKey: 'sig-b',
+            signatureLabel: 'courses | duplicate_course | duplicate course <num>',
+            normalizedMessage: 'duplicate course <num>',
+            fullErrorText: 'Duplicate course 12345 already exists in CourseDog',
+            entityDisplayName: 'Course 67890',
+            mergeReport: {
+              school: 'bar01',
+              mergeReportId: 'report-b3',
+              scheduleType: 'nightly',
+              entityDisplayName: 'Course 67890',
+              snapshotDate: '2026-04-13',
+            },
+            termCodes: ['202505'],
+            rawError: { message: 'Duplicate course 12345 already exists in CourseDog' },
+          },
+        ],
+      }),
+    });
+    const { getErrorAnalysisSignatureExplorer } = await import('./index');
+
+    const response = await getErrorAnalysisSignatureExplorer({
+      signature: 'sig-b',
+      groupBy: 'sis',
+      bucket: 'PeopleSoftDirect',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith('/static-data/error-analysis/errors.json', {
+      headers: { Accept: 'application/json' },
+    });
+    expect(response.data.metadata.signatureTotal).toBe(3);
+    expect(response.data.metadata.bucketTotal).toBe(3);
+    expect(response.data.total).toBe(1);
+    expect(response.data.breakdowns.sis[0]).toEqual({
+      key: 'PeopleSoftDirect',
+      label: 'PeopleSoftDirect',
+      count: 3,
+      share: 1,
+    });
+    expect(response.data.rows[0].instanceCount).toBe(3);
+    expect(response.data.rows[0].schools).toEqual([
+      { school: 'bar01', label: 'Baruch College', count: 1 },
+      { school: 'foo01', label: 'Foo State', count: 2 },
+    ]);
+    expect(response.data.rows[0].mergeReport?.mergeReportId).toBe('report-b3');
+  });
 });

@@ -2,7 +2,14 @@
 import { computed, ref, watch } from 'vue';
 import { keepPreviousData, useQuery } from '@tanstack/vue-query';
 import VueApexCharts from 'vue3-apexcharts';
-import { downloadErrorAnalysisDetailedExport, downloadErrorAnalysisExport, getErrorAnalysis, getErrorAnalysisErrors } from '@/api';
+import { useRoute, useRouter } from 'vue-router';
+import {
+  downloadErrorAnalysisDetailedExport,
+  downloadErrorAnalysisExport,
+  getErrorAnalysis,
+  getErrorAnalysisErrors,
+  getErrorAnalysisSignatureExplorer,
+} from '@/api';
 import Card from '@/components/ui/Card.vue';
 import { useChartOptions } from '@/composables/useChartOptions';
 import { isStaticDataMode } from '@/config/runtime';
@@ -11,6 +18,10 @@ import type {
   ErrorBreakdownRow,
   ErrorDetailRow,
   ErrorDetailTableResponse,
+  ErrorSignatureExplorerBucket,
+  ErrorSignatureExplorerGroupBy,
+  ErrorSignatureExplorerSchoolCount,
+  ErrorSignatureExplorerResponse,
   ErrorSignatureCluster,
   MergeReportReference,
   ResolutionHint,
@@ -22,6 +33,13 @@ type ErrorViewMode = 'aggregate' | 'all' | 'school' | 'sis';
 type WindowOption = '7' | '30' | 'all';
 type ErrorSortDir = 'asc' | 'desc';
 type SisSortKey = 'label' | 'affectedSchools' | 'totalErrors' | 'dominantSignature' | 'commonResolutionTheme';
+type SignatureExplorerContext = ErrorSignatureCluster;
+type ErrorAnalysisModalKind = 'sis-signatures' | 'signature-explorer' | 'error-detail' | 'signature-explorer-schools';
+type ErrorDetailRouteState =
+  | { origin: 'all'; rowId: number }
+  | { origin: 'signature-explorer'; rowId: number; signatureKey: string }
+  | { origin: 'signature-sample'; signatureKey: string }
+  | { origin: 'school-sample'; schoolKey: string };
 
 interface ErrorDetailContext {
   title: string;
@@ -40,27 +58,150 @@ interface ErrorDetailContext {
   exampleMergeReports?: ErrorSignatureCluster['exampleMergeReports'];
   rawPayload?: string | null;
   resolutionHint?: ResolutionHint | null;
+  routeState?: ErrorDetailRouteState;
 }
 
 interface SisSignatureContext {
+  key: string;
   label: string;
   associatedSignatures: NonNullable<ErrorBreakdownRow['associatedSignatures']>;
 }
 
-const selectedWindow = ref<WindowOption>('7');
-const selectedSchool = ref('all');
-const selectedSis = ref('all');
-const activeView = ref<ErrorViewMode>('aggregate');
+interface SignatureExplorerSchoolsContext {
+  rowId: number;
+  fullErrorText: string;
+  instanceCount: number;
+  schools: ErrorSignatureExplorerSchoolCount[];
+  sisPlatform?: string | null;
+  termCode?: string | null;
+}
+
+const route = useRoute();
+const router = useRouter();
+
+const defaultWindow: WindowOption = '7';
+const defaultView: ErrorViewMode = 'aggregate';
+const defaultDetailSortBy = 'snapshotDate';
+const defaultDetailSortDir: ErrorSortDir = 'desc';
+const defaultSisSortBy: SisSortKey = 'totalErrors';
+const defaultSisSortDir: ErrorSortDir = 'desc';
+const defaultSignatureExplorerGroupBy: ErrorSignatureExplorerGroupBy = 'sis';
+const validViews: ErrorViewMode[] = ['aggregate', 'all', 'school', 'sis'];
+const validWindows: WindowOption[] = ['7', '30', 'all'];
+const validSortDirections: ErrorSortDir[] = ['asc', 'desc'];
+const validDetailSortColumns = ['snapshotDate', 'displayName', 'sisPlatform', 'entityType', 'errorCode', 'signatureLabel'] as const;
+const validSisSortKeys: SisSortKey[] = ['label', 'affectedSchools', 'totalErrors', 'dominantSignature', 'commonResolutionTheme'];
+const validSignatureExplorerGroupBy: ErrorSignatureExplorerGroupBy[] = ['sis', 'school', 'term'];
+const validModalKinds: ErrorAnalysisModalKind[] = ['sis-signatures', 'signature-explorer', 'error-detail', 'signature-explorer-schools'];
+const validErrorDetailOrigins: ErrorDetailRouteState['origin'][] = ['all', 'signature-explorer', 'signature-sample', 'school-sample'];
+const managedQueryKeys = [
+  'view',
+  'window',
+  'sis',
+  'school',
+  'q',
+  'signaturePage',
+  'detailPage',
+  'detailSortBy',
+  'detailSortDir',
+  'sisSortBy',
+  'sisSortDir',
+  'signature',
+  'signatureGroupBy',
+  'signatureBucket',
+  'signatureExplorerPage',
+  'modal',
+  'modalSis',
+  'modalSchool',
+  'modalRowId',
+  'detailOrigin',
+  'detailId',
+] as const;
+
+const readQueryValue = (value: unknown) => {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : undefined;
+  return undefined;
+};
+
+const parsePositiveInt = (value: string | undefined, fallback = 1) => {
+  const parsed = Number.parseInt(value || '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const coerceViewQuery = (value: string | undefined): ErrorViewMode =>
+  validViews.includes(value as ErrorViewMode) ? (value as ErrorViewMode) : defaultView;
+
+const coerceWindowQuery = (value: string | undefined): WindowOption =>
+  validWindows.includes(value as WindowOption) ? (value as WindowOption) : defaultWindow;
+
+const coerceSortDirQuery = (value: string | undefined, fallback: ErrorSortDir): ErrorSortDir =>
+  validSortDirections.includes(value as ErrorSortDir) ? (value as ErrorSortDir) : fallback;
+
+const coerceDetailSortByQuery = (value: string | undefined) =>
+  validDetailSortColumns.includes(value as (typeof validDetailSortColumns)[number]) ? value : defaultDetailSortBy;
+
+const coerceSisSortByQuery = (value: string | undefined): SisSortKey =>
+  validSisSortKeys.includes(value as SisSortKey) ? (value as SisSortKey) : defaultSisSortBy;
+
+const coerceSignatureExplorerGroupByQuery = (value: string | undefined): ErrorSignatureExplorerGroupBy =>
+  validSignatureExplorerGroupBy.includes(value as ErrorSignatureExplorerGroupBy)
+    ? (value as ErrorSignatureExplorerGroupBy)
+    : defaultSignatureExplorerGroupBy;
+
+const coerceModalQuery = (value: string | undefined): ErrorAnalysisModalKind | null =>
+  validModalKinds.includes(value as ErrorAnalysisModalKind) ? (value as ErrorAnalysisModalKind) : null;
+
+const coerceDetailOriginQuery = (value: string | undefined): ErrorDetailRouteState['origin'] | null =>
+  validErrorDetailOrigins.includes(value as ErrorDetailRouteState['origin'])
+    ? (value as ErrorDetailRouteState['origin'])
+    : null;
+
+const normalizeQueryRecord = (query: Record<string, unknown>) =>
+  Object.fromEntries(
+    Object.entries(query)
+      .map(([key, value]) => [key, readQueryValue(value)])
+      .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].length > 0),
+  );
+
+const areQueryRecordsEqual = (left: Record<string, unknown>, right: Record<string, unknown>) => {
+  const normalizedLeft = normalizeQueryRecord(left);
+  const normalizedRight = normalizeQueryRecord(right);
+  const keys = new Set([...Object.keys(normalizedLeft), ...Object.keys(normalizedRight)]);
+
+  for (const key of keys) {
+    if (normalizedLeft[key] !== normalizedRight[key]) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const selectedWindow = ref<WindowOption>(coerceWindowQuery(readQueryValue(route.query.window)));
+const selectedSchool = ref(readQueryValue(route.query.school) || 'all');
+const selectedSis = ref(readQueryValue(route.query.sis) || 'all');
+const activeView = ref<ErrorViewMode>(coerceViewQuery(readQueryValue(route.query.view)));
+const selectedSignatureExplorer = ref<SignatureExplorerContext | null>(null);
+const signatureExplorerGroupBy = ref<ErrorSignatureExplorerGroupBy>(
+  coerceSignatureExplorerGroupByQuery(readQueryValue(route.query.signatureGroupBy)),
+);
+const signatureExplorerBucket = ref<string | null>(readQueryValue(route.query.signatureBucket) ?? null);
+const signatureExplorerPage = ref(parsePositiveInt(readQueryValue(route.query.signatureExplorerPage)));
+const signatureExplorerPageSize = 25;
+const signaturePage = ref(parsePositiveInt(readQueryValue(route.query.signaturePage)));
+const signaturePageSize = 12;
 const selectedErrorDetail = ref<ErrorDetailContext | null>(null);
 const selectedSisSignatureContext = ref<SisSignatureContext | null>(null);
+const selectedSignatureExplorerSchools = ref<SignatureExplorerSchoolsContext | null>(null);
 const isExporting = ref(false);
-const detailSearch = ref('');
-const detailPage = ref(1);
+const detailSearch = ref(readQueryValue(route.query.q) ?? '');
+const detailPage = ref(parsePositiveInt(readQueryValue(route.query.detailPage)));
 const detailPageSize = 50;
-const detailSortBy = ref('snapshotDate');
-const detailSortDir = ref<ErrorSortDir>('desc');
-const sisSortBy = ref<SisSortKey>('totalErrors');
-const sisSortDir = ref<ErrorSortDir>('desc');
+const detailSortBy = ref(coerceDetailSortByQuery(readQueryValue(route.query.detailSortBy)));
+const detailSortDir = ref<ErrorSortDir>(coerceSortDirQuery(readQueryValue(route.query.detailSortDir), defaultDetailSortDir));
+const sisSortBy = ref<SisSortKey>(coerceSisSortByQuery(readQueryValue(route.query.sisSortBy)));
+const sisSortDir = ref<ErrorSortDir>(coerceSortDirQuery(readQueryValue(route.query.sisSortDir), defaultSisSortDir));
 const localTimeZoneLabel = getLocalTimeZoneLabel();
 const coursedogBaseUrl = (import.meta.env.VITE_COURSEDOG_PRD_URL?.trim() || 'https://app.coursedog.com').replace(/\/+$/, '');
 const signaturesTooltipTitle = 'What are signatures?';
@@ -69,6 +210,8 @@ const signaturesTooltipDevelopment = 'They are developed from captured merge-err
 const descriptorClass = 'group relative inline-flex items-center gap-2 align-middle';
 const descriptorButtonClass = 'flex h-5 w-5 items-center justify-center rounded-full border border-slate-300 bg-white text-[11px] font-semibold text-slate-500 transition hover:border-slate-400 hover:text-slate-700 focus-visible:border-slate-500 focus-visible:text-slate-700 focus-visible:outline-none';
 const descriptorPopoverClass = 'pointer-events-none absolute left-1/2 top-full z-20 mt-2 hidden w-72 -translate-x-1/2 rounded-2xl border border-slate-200 bg-white p-3 text-left text-[11px] normal-case leading-5 text-slate-600 shadow-lg group-hover:block group-focus-within:block';
+const interactiveRowClass = 'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2';
+const isApplyingRouteState = ref(false);
 
 const daysParam = computed<number | undefined>(() => {
   if (selectedWindow.value === 'all') return undefined;
@@ -141,10 +284,61 @@ const { data: detailData, isLoading: isLoadingDetails } = useQuery({
 
 const detailResponse = computed(() => detailData.value);
 
+const { data: signatureExplorerData, isLoading: isLoadingSignatureExplorer } = useQuery({
+  queryKey: computed(() => [
+    'errorAnalysisSignatureExplorer',
+    {
+      days: daysParam.value ?? 'all',
+      school: selectedSchool.value,
+      sisPlatform: selectedSis.value,
+      signature: selectedSignatureExplorer.value?.signatureKey ?? null,
+      groupBy: signatureExplorerGroupBy.value,
+      bucket: signatureExplorerBucket.value,
+      page: signatureExplorerPage.value,
+      pageSize: signatureExplorerPageSize,
+    },
+  ]),
+  queryFn: () =>
+    getErrorAnalysisSignatureExplorer({
+      days: daysParam.value,
+      school: selectedSchool.value === 'all' ? undefined : selectedSchool.value,
+      sisPlatform: selectedSis.value === 'all' ? undefined : selectedSis.value,
+      latestOnly: true,
+      signature: selectedSignatureExplorer.value!.signatureKey,
+      groupBy: signatureExplorerGroupBy.value,
+      bucket: signatureExplorerBucket.value ?? undefined,
+      page: signatureExplorerPage.value,
+      pageSize: signatureExplorerPageSize,
+    }).then((res) => res.data as ErrorSignatureExplorerResponse),
+  enabled: computed(() => Boolean(selectedSignatureExplorer.value?.signatureKey)),
+  placeholderData: keepPreviousData,
+});
+
+const signatureExplorerResponse = computed(() => signatureExplorerData.value);
+
 const formatCountLabel = (value?: number | null) => new Intl.NumberFormat('en-US').format(value ?? 0);
 
 watch(selectedSis, () => {
+  if (isApplyingRouteState.value) return;
   selectedSchool.value = 'all';
+});
+
+watch(selectedSignatureExplorer, () => {
+  if (isApplyingRouteState.value) return;
+  signatureExplorerGroupBy.value = defaultSignatureExplorerGroupBy;
+  signatureExplorerBucket.value = null;
+  signatureExplorerPage.value = 1;
+});
+
+watch(signatureExplorerGroupBy, () => {
+  if (isApplyingRouteState.value) return;
+  signatureExplorerBucket.value = null;
+  signatureExplorerPage.value = 1;
+});
+
+watch(signatureExplorerBucket, () => {
+  if (isApplyingRouteState.value) return;
+  signatureExplorerPage.value = 1;
 });
 
 const sisOptions = computed(() => {
@@ -202,9 +396,105 @@ const schoolOptions = computed(() => {
   ];
 });
 
-watch([selectedWindow, selectedSchool, selectedSis, detailSearch], () => {
+watch([selectedWindow, selectedSchool, selectedSis], () => {
+  if (isApplyingRouteState.value) return;
+  signaturePage.value = 1;
   detailPage.value = 1;
 });
+
+watch(detailSearch, () => {
+  if (isApplyingRouteState.value) return;
+  detailPage.value = 1;
+});
+
+const buildRouteQuery = () => {
+  const nextQuery: Record<string, string | undefined> = {};
+
+  if (activeView.value !== defaultView) nextQuery.view = activeView.value;
+  if (selectedWindow.value !== defaultWindow) nextQuery.window = selectedWindow.value;
+  if (selectedSis.value !== 'all') nextQuery.sis = selectedSis.value;
+  if (selectedSchool.value !== 'all') nextQuery.school = selectedSchool.value;
+  if (detailSearch.value.trim()) nextQuery.q = detailSearch.value.trim();
+  if (activeView.value === 'aggregate' && signaturePage.value > 1) nextQuery.signaturePage = String(signaturePage.value);
+  if (activeView.value === 'all' && detailPage.value > 1) nextQuery.detailPage = String(detailPage.value);
+  if (detailSortBy.value !== defaultDetailSortBy) nextQuery.detailSortBy = detailSortBy.value;
+  if (detailSortDir.value !== defaultDetailSortDir) nextQuery.detailSortDir = detailSortDir.value;
+  if (sisSortBy.value !== defaultSisSortBy) nextQuery.sisSortBy = sisSortBy.value;
+  if (sisSortDir.value !== defaultSisSortDir) nextQuery.sisSortDir = sisSortDir.value;
+
+  if (selectedSignatureExplorer.value?.signatureKey) {
+    nextQuery.signature = selectedSignatureExplorer.value.signatureKey;
+    if (signatureExplorerGroupBy.value !== defaultSignatureExplorerGroupBy) {
+      nextQuery.signatureGroupBy = signatureExplorerGroupBy.value;
+    }
+    if (signatureExplorerBucket.value) nextQuery.signatureBucket = signatureExplorerBucket.value;
+    if (signatureExplorerPage.value > 1) nextQuery.signatureExplorerPage = String(signatureExplorerPage.value);
+  }
+
+  if (selectedSignatureExplorerSchools.value) {
+    nextQuery.modal = 'signature-explorer-schools';
+    nextQuery.modalRowId = String(selectedSignatureExplorerSchools.value.rowId);
+    return nextQuery;
+  }
+
+  if (selectedErrorDetail.value?.routeState) {
+    nextQuery.modal = 'error-detail';
+    nextQuery.detailOrigin = selectedErrorDetail.value.routeState.origin;
+
+    switch (selectedErrorDetail.value.routeState.origin) {
+      case 'all':
+        nextQuery.detailId = String(selectedErrorDetail.value.routeState.rowId);
+        break;
+      case 'signature-explorer':
+        nextQuery.detailId = String(selectedErrorDetail.value.routeState.rowId);
+        nextQuery.signature = selectedErrorDetail.value.routeState.signatureKey;
+        if (signatureExplorerGroupBy.value !== defaultSignatureExplorerGroupBy) {
+          nextQuery.signatureGroupBy = signatureExplorerGroupBy.value;
+        }
+        if (signatureExplorerBucket.value) nextQuery.signatureBucket = signatureExplorerBucket.value;
+        if (signatureExplorerPage.value > 1) nextQuery.signatureExplorerPage = String(signatureExplorerPage.value);
+        break;
+      case 'signature-sample':
+        nextQuery.signature = selectedErrorDetail.value.routeState.signatureKey;
+        break;
+      case 'school-sample':
+        nextQuery.modalSchool = selectedErrorDetail.value.routeState.schoolKey;
+        break;
+    }
+
+    return nextQuery;
+  }
+
+  if (selectedSisSignatureContext.value) {
+    nextQuery.modal = 'sis-signatures';
+    nextQuery.modalSis = selectedSisSignatureContext.value.key;
+    return nextQuery;
+  }
+
+  if (selectedSignatureExplorer.value) {
+    nextQuery.modal = 'signature-explorer';
+  }
+
+  return nextQuery;
+};
+
+const buildFullRouteQuery = () => {
+  const preservedQuery = Object.fromEntries(
+    Object.entries(route.query).filter(([key]) => !managedQueryKeys.includes(key as (typeof managedQueryKeys)[number])),
+  );
+
+  return {
+    ...preservedQuery,
+    ...buildRouteQuery(),
+  };
+};
+
+const syncRouteQuery = () => {
+  if (isApplyingRouteState.value) return;
+  const nextQuery = buildFullRouteQuery();
+  if (areQueryRecordsEqual(route.query as Record<string, unknown>, nextQuery)) return;
+  router.replace({ query: nextQuery });
+};
 
 const hasCapturedData = computed(() => response.value?.metadata.hasCapturedData ?? false);
 const hasFilteredRows = computed(() => (response.value?.summary.totalErrorInstances ?? 0) > 0);
@@ -267,13 +557,58 @@ const trendOptions = computed(() => ({
 }));
 
 const allSignatures = computed(() => response.value?.signatures ?? []);
-const topSignatures = computed(() => allSignatures.value.slice(0, 12));
+const signatureTotal = computed(() => allSignatures.value.length);
+const signatureTotalPages = computed(() => Math.max(1, Math.ceil(signatureTotal.value / signaturePageSize)));
+const topSignatures = computed(() => {
+  const start = (signaturePage.value - 1) * signaturePageSize;
+  return allSignatures.value.slice(start, start + signaturePageSize);
+});
 const schoolRows = computed(() => response.value?.schoolBreakdowns ?? []);
 const sisRows = computed(() => response.value?.sisBreakdowns ?? []);
 const detailRows = computed(() => detailResponse.value?.rows ?? []);
 const detailTotal = computed(() => detailResponse.value?.total ?? 0);
 const detailTotalPages = computed(() => Math.max(1, Math.ceil(detailTotal.value / detailPageSize)));
 const hasDetailRows = computed(() => detailRows.value.length > 0);
+const signatureExplorerTabs: Array<{ value: ErrorSignatureExplorerGroupBy; label: string }> = [
+  { value: 'sis', label: 'SIS' },
+  { value: 'school', label: 'School' },
+  { value: 'term', label: 'Term' },
+];
+const signatureExplorerBuckets = computed(() =>
+  signatureExplorerResponse.value?.breakdowns[signatureExplorerGroupBy.value] ?? [],
+);
+const signatureExplorerRows = computed(() => signatureExplorerResponse.value?.rows ?? []);
+const signatureExplorerTotal = computed(() => signatureExplorerResponse.value?.total ?? 0);
+const signatureExplorerBucketTotal = computed(() => signatureExplorerResponse.value?.metadata.bucketTotal ?? 0);
+const signatureExplorerTotalPages = computed(() =>
+  Math.max(1, Math.ceil(signatureExplorerTotal.value / signatureExplorerPageSize)),
+);
+const hasSignatureExplorerRows = computed(() => signatureExplorerRows.value.length > 0);
+const selectedSignatureExplorerBucketSummary = computed(() =>
+  signatureExplorerBuckets.value.find((bucket) => bucket.key === signatureExplorerBucket.value) ?? null,
+);
+
+watch(signatureTotalPages, (pages) => {
+  if (signaturePage.value > pages) {
+    signaturePage.value = pages;
+  }
+});
+
+watch(signatureExplorerBuckets, (buckets) => {
+  if (!selectedSignatureExplorer.value) return;
+  if (!buckets.length) {
+    if (signatureExplorerBucket.value !== null) {
+      signatureExplorerBucket.value = null;
+    }
+    return;
+  }
+
+  if (signatureExplorerBucket.value && buckets.some((bucket) => bucket.key === signatureExplorerBucket.value)) {
+    return;
+  }
+
+  signatureExplorerBucket.value = buckets[0].key;
+});
 
 const viewOptions: Array<{ value: ErrorViewMode; label: string }> = [
   { value: 'aggregate', label: 'Signatures' },
@@ -359,6 +694,32 @@ const getDominantDrilldownLabel = (signature: ErrorSignatureCluster) => {
 };
 
 const formatCount = (value?: number | null) => formatCountLabel(value);
+
+const formatShare = (value?: number | null) => `${Math.round((value ?? 0) * 100)}%`;
+
+const formatSignatureExplorerBucketLabel = (bucket: ErrorSignatureExplorerBucket) => {
+  if (signatureExplorerGroupBy.value === 'school') {
+    return formatSchoolLabel(bucket.key, bucket.label);
+  }
+  return bucket.label;
+};
+
+const formatSignatureExplorerSchoolCount = (school: ErrorSignatureExplorerSchoolCount) => {
+  const label = school.label === 'Unknown' ? 'Unknown' : formatSchoolLabel(school.school, school.label);
+  if (school.count <= 1) {
+    return label;
+  }
+  return `${label} · ${formatCount(school.count)}`;
+};
+
+const sortSignatureExplorerSchools = (schools: ErrorSignatureExplorerSchoolCount[]) =>
+  [...schools].sort((left, right) => {
+    const countDiff = right.count - left.count;
+    if (countDiff !== 0) return countDiff;
+    return formatSignatureExplorerSchoolCount(left).localeCompare(formatSignatureExplorerSchoolCount(right), undefined, {
+      sensitivity: 'base',
+    });
+  });
 
 const schoolRoute = (school: string) => ({
   name: 'AdminClientHealthDetail',
@@ -550,6 +911,10 @@ const buildSignatureErrorDetail = (signature: ErrorSignatureCluster): ErrorDetai
   exampleMergeReports: signature.exampleMergeReports,
   rawPayload: stringifyPayload(getBestSamplePayload(signature.sampleErrors)),
   resolutionHint: signature.resolutionHint,
+  routeState: {
+    origin: 'signature-sample',
+    signatureKey: signature.signatureKey,
+  },
 });
 
 const findDominantSignature = (row: ErrorBreakdownRow) => {
@@ -571,10 +936,17 @@ const buildSchoolErrorDetail = (row: ErrorBreakdownRow): ErrorDetailContext | nu
     mergeReport: row.latestMergeReport || signature.dominantSchoolMergeReport || signature.latestMergeReport || null,
     scheduleType: extractSampleScheduleType(signature.sampleErrors, row.latestMergeReport || signature.dominantSchoolMergeReport || signature.latestMergeReport),
     entityDisplayName: extractSampleEntityDisplayName(signature.sampleErrors, row.latestMergeReport || signature.dominantSchoolMergeReport || signature.latestMergeReport),
+    routeState: {
+      origin: 'school-sample',
+      schoolKey: row.key,
+    },
   };
 };
 
-const buildDetailRowErrorContext = (row: ErrorDetailRow): ErrorDetailContext => ({
+const buildDetailRowErrorContext = (
+  row: ErrorDetailRow,
+  routeState: Extract<ErrorDetailRouteState, { origin: 'all' | 'signature-explorer' }>,
+): ErrorDetailContext => ({
   title: `${formatSchoolLabel(row.school, row.displayName)} error`,
   signatureLabel: row.signatureLabel,
   fullErrorText: row.fullErrorText,
@@ -589,10 +961,11 @@ const buildDetailRowErrorContext = (row: ErrorDetailRow): ErrorDetailContext => 
   mergeReport: row.mergeReport || null,
   rawPayload: stringifyPayload(row.rawError),
   resolutionHint: null,
+  routeState,
 });
 
-const openSignatureDetail = (signature: ErrorSignatureCluster) => {
-  selectedErrorDetail.value = buildSignatureErrorDetail(signature);
+const openSignatureExplorer = (signature: ErrorSignatureCluster) => {
+  selectedSignatureExplorer.value = signature;
 };
 
 const openSchoolErrorDetail = (row: ErrorBreakdownRow) => {
@@ -600,18 +973,107 @@ const openSchoolErrorDetail = (row: ErrorBreakdownRow) => {
 };
 
 const openDetailRowError = (row: ErrorDetailRow) => {
-  selectedErrorDetail.value = buildDetailRowErrorContext(row);
+  selectedErrorDetail.value = buildDetailRowErrorContext(row, {
+    origin: 'all',
+    rowId: row.id,
+  });
+};
+
+const openSignatureExplorerDetailRow = (row: (typeof signatureExplorerRows.value)[number]) => {
+  if (!selectedSignatureExplorer.value) return;
+  selectedErrorDetail.value = buildDetailRowErrorContext(row, {
+    origin: 'signature-explorer',
+    rowId: row.id,
+    signatureKey: selectedSignatureExplorer.value.signatureKey,
+  });
+};
+
+const openSignatureExplorerSchools = (row: (typeof signatureExplorerRows.value)[number]) => {
+  selectedSignatureExplorerSchools.value = {
+    rowId: row.id,
+    fullErrorText: row.fullErrorText,
+    instanceCount: row.instanceCount,
+    schools: sortSignatureExplorerSchools(row.schools),
+    sisPlatform: row.sisPlatform,
+    termCode: row.termCodes[0] || null,
+  };
 };
 
 const openSisSignatures = (row: ErrorBreakdownRow) => {
   selectedSisSignatureContext.value = {
+    key: row.key,
     label: row.label,
     associatedSignatures: row.associatedSignatures ?? [],
   };
 };
 
+const openDominantSignature = (row: ErrorBreakdownRow) => {
+  const signature = findDominantSignature(row);
+  if (!signature) return;
+  openSignatureExplorer(signature);
+};
+
+const shouldIgnoreRowActivation = (target: EventTarget | null) =>
+  target instanceof Element && Boolean(target.closest('a, button, input, select, textarea, summary'));
+
+const activateRow = (event: MouseEvent | KeyboardEvent, action?: (() => void) | null) => {
+  if (!action || shouldIgnoreRowActivation(event.target)) return;
+  if (event instanceof KeyboardEvent) {
+    event.preventDefault();
+  }
+  action();
+};
+
+const handleSignatureRowActivation = (event: MouseEvent | KeyboardEvent, signature: ErrorSignatureCluster) => {
+  activateRow(event, () => openSignatureExplorer(signature));
+};
+
+const handleDetailRowActivation = (event: MouseEvent | KeyboardEvent, row: ErrorDetailRow) => {
+  activateRow(event, () => openDetailRowError(row));
+};
+
+const hasSchoolRowModal = (row: ErrorBreakdownRow) => Boolean(findDominantSignature(row));
+
+const handleSchoolRowActivation = (event: MouseEvent | KeyboardEvent, row: ErrorBreakdownRow) => {
+  activateRow(event, hasSchoolRowModal(row) ? () => openSchoolErrorDetail(row) : null);
+};
+
+const hasSisRowModal = (row: ErrorBreakdownRow) => Boolean(row.associatedSignatures?.length || findDominantSignature(row));
+
+const handleSisRowActivation = (event: MouseEvent | KeyboardEvent, row: ErrorBreakdownRow) => {
+  activateRow(event, hasSisRowModal(row)
+    ? () => {
+      if (row.associatedSignatures?.length) {
+        openSisSignatures(row);
+        return;
+      }
+      openDominantSignature(row);
+    }
+    : null);
+};
+
+const handleSignatureExplorerRowActivation = (
+  event: MouseEvent | KeyboardEvent,
+  row: (typeof signatureExplorerRows.value)[number],
+) => {
+  activateRow(event, () => openSignatureExplorerDetailRow(row));
+};
+
+const openSignatureRepresentativeSample = () => {
+  if (!selectedSignatureExplorer.value) return;
+  selectedErrorDetail.value = buildSignatureErrorDetail(selectedSignatureExplorer.value);
+};
+
+const closeSignatureExplorer = () => {
+  selectedSignatureExplorer.value = null;
+};
+
 const closeErrorDetail = () => {
   selectedErrorDetail.value = null;
+};
+
+const closeSignatureExplorerSchools = () => {
+  selectedSignatureExplorerSchools.value = null;
 };
 
 const closeSisSignatures = () => {
@@ -622,7 +1084,24 @@ const openSignatureDetailByKey = (signatureKey: string) => {
   const signature = allSignatures.value.find((item) => item.signatureKey === signatureKey);
   if (!signature) return;
   selectedSisSignatureContext.value = null;
-  openSignatureDetail(signature);
+  openSignatureExplorer(signature);
+};
+
+const selectSignatureExplorerBucket = (bucketKey: string) => {
+  if (signatureExplorerBucket.value === bucketKey) return;
+  signatureExplorerBucket.value = bucketKey;
+};
+
+const changeSignatureExplorerPage = (nextPage: number) => {
+  const boundedPage = Math.min(Math.max(nextPage, 1), signatureExplorerTotalPages.value);
+  if (boundedPage === signatureExplorerPage.value) return;
+  signatureExplorerPage.value = boundedPage;
+};
+
+const changeSignaturePage = (nextPage: number) => {
+  const boundedPage = Math.min(Math.max(nextPage, 1), signatureTotalPages.value);
+  if (boundedPage === signaturePage.value) return;
+  signaturePage.value = boundedPage;
 };
 
 const toggleDetailSort = (column: string) => {
@@ -644,6 +1123,160 @@ const toggleSisSort = (column: SisSortKey) => {
     ? 'asc'
     : 'desc';
 };
+
+const applyStateFromRouteQuery = () => {
+  selectedWindow.value = coerceWindowQuery(readQueryValue(route.query.window));
+  selectedSis.value = readQueryValue(route.query.sis) || 'all';
+  selectedSchool.value = readQueryValue(route.query.school) || 'all';
+  activeView.value = coerceViewQuery(readQueryValue(route.query.view));
+  detailSearch.value = readQueryValue(route.query.q) ?? '';
+  signaturePage.value = parsePositiveInt(readQueryValue(route.query.signaturePage));
+  detailPage.value = parsePositiveInt(readQueryValue(route.query.detailPage));
+  detailSortBy.value = coerceDetailSortByQuery(readQueryValue(route.query.detailSortBy));
+  detailSortDir.value = coerceSortDirQuery(readQueryValue(route.query.detailSortDir), defaultDetailSortDir);
+  sisSortBy.value = coerceSisSortByQuery(readQueryValue(route.query.sisSortBy));
+  sisSortDir.value = coerceSortDirQuery(readQueryValue(route.query.sisSortDir), defaultSisSortDir);
+  signatureExplorerGroupBy.value = coerceSignatureExplorerGroupByQuery(readQueryValue(route.query.signatureGroupBy));
+  signatureExplorerBucket.value = readQueryValue(route.query.signatureBucket) ?? null;
+  signatureExplorerPage.value = parsePositiveInt(readQueryValue(route.query.signatureExplorerPage));
+};
+
+const restoreModalStateFromRouteQuery = () => {
+  const modal = coerceModalQuery(readQueryValue(route.query.modal));
+  const signatureKey = readQueryValue(route.query.signature);
+  const detailOrigin = coerceDetailOriginQuery(readQueryValue(route.query.detailOrigin));
+  const detailId = parsePositiveInt(readQueryValue(route.query.detailId), 0);
+  const modalSisKey = readQueryValue(route.query.modalSis);
+  const modalSchoolKey = readQueryValue(route.query.modalSchool);
+  const modalRowId = parsePositiveInt(readQueryValue(route.query.modalRowId), 0);
+  const signature = signatureKey
+    ? allSignatures.value.find((item) => item.signatureKey === signatureKey) ?? null
+    : null;
+
+  if (!modal) {
+    selectedSisSignatureContext.value = null;
+    selectedSignatureExplorerSchools.value = null;
+    selectedErrorDetail.value = null;
+    selectedSignatureExplorer.value = null;
+    return;
+  }
+
+  switch (modal) {
+    case 'sis-signatures': {
+      const row = modalSisKey ? sortSisRows.value.find((item) => item.key === modalSisKey) ?? null : null;
+      selectedSignatureExplorer.value = null;
+      selectedSignatureExplorerSchools.value = null;
+      selectedErrorDetail.value = null;
+      selectedSisSignatureContext.value = row
+        ? {
+          key: row.key,
+          label: row.label,
+          associatedSignatures: row.associatedSignatures ?? [],
+        }
+        : null;
+      return;
+    }
+    case 'signature-explorer': {
+      selectedSisSignatureContext.value = null;
+      selectedSignatureExplorerSchools.value = null;
+      selectedErrorDetail.value = null;
+      selectedSignatureExplorer.value = signature;
+      return;
+    }
+    case 'signature-explorer-schools': {
+      selectedSisSignatureContext.value = null;
+      selectedErrorDetail.value = null;
+      selectedSignatureExplorer.value = signature;
+
+      const row = modalRowId
+        ? signatureExplorerRows.value.find((item) => item.id === modalRowId) ?? null
+        : null;
+
+      selectedSignatureExplorerSchools.value = row
+        ? {
+          rowId: row.id,
+          fullErrorText: row.fullErrorText,
+          instanceCount: row.instanceCount,
+          schools: sortSignatureExplorerSchools(row.schools),
+          sisPlatform: row.sisPlatform,
+          termCode: row.termCodes[0] || null,
+        }
+        : null;
+      return;
+    }
+    case 'error-detail': {
+      selectedSisSignatureContext.value = null;
+      selectedSignatureExplorerSchools.value = null;
+
+      switch (detailOrigin) {
+        case 'all': {
+          const row = detailId ? detailRows.value.find((item) => item.id === detailId) ?? null : null;
+          selectedSignatureExplorer.value = null;
+          selectedErrorDetail.value = row
+            ? buildDetailRowErrorContext(row, {
+              origin: 'all',
+              rowId: row.id,
+            })
+            : null;
+          return;
+        }
+        case 'school-sample': {
+          const row = modalSchoolKey ? sortSchoolRows.value.find((item) => item.key === modalSchoolKey) ?? null : null;
+          selectedSignatureExplorer.value = null;
+          selectedErrorDetail.value = row ? buildSchoolErrorDetail(row) : null;
+          return;
+        }
+        case 'signature-sample': {
+          selectedSignatureExplorer.value = signature;
+          selectedErrorDetail.value = signature ? buildSignatureErrorDetail(signature) : null;
+          return;
+        }
+        case 'signature-explorer': {
+          const row = detailId ? signatureExplorerRows.value.find((item) => item.id === detailId) ?? null : null;
+          selectedSignatureExplorer.value = signature;
+          selectedErrorDetail.value = row && signature
+            ? buildDetailRowErrorContext(row, {
+              origin: 'signature-explorer',
+              rowId: row.id,
+              signatureKey: signature.signatureKey,
+            })
+            : null;
+          return;
+        }
+        default:
+          selectedSignatureExplorer.value = null;
+          selectedErrorDetail.value = null;
+          return;
+      }
+    }
+  }
+};
+
+watch(
+  () => route.query,
+  () => {
+    isApplyingRouteState.value = true;
+    applyStateFromRouteQuery();
+    restoreModalStateFromRouteQuery();
+    isApplyingRouteState.value = false;
+  },
+  { immediate: true, deep: true },
+);
+
+watch([response, detailResponse, signatureExplorerResponse], () => {
+  if (!coerceModalQuery(readQueryValue(route.query.modal))) return;
+  isApplyingRouteState.value = true;
+  restoreModalStateFromRouteQuery();
+  isApplyingRouteState.value = false;
+});
+
+watch(
+  () => buildRouteQuery(),
+  () => {
+    syncRouteQuery();
+  },
+  { deep: true },
+);
 
 const handleExport = async () => {
   if (isExporting.value) return;
@@ -833,7 +1466,28 @@ const handleExport = async () => {
           </Card>
 
           <Card subtitle="Recurring Patterns" title="Top error signatures">
-            <p class="mb-4 text-sm text-slate-500">Use the actions column to inspect a representative error without crowding the table with raw payload text.</p>
+            <div class="mt-4 flex flex-col gap-3 border-b border-slate-200 pb-4 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+              <p>{{ formatCount(signatureTotal) }} signature pattern{{ signatureTotal === 1 ? '' : 's' }} total</p>
+              <div class="flex items-center gap-3">
+                <button
+                  type="button"
+                  class="rounded-full border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+                  :disabled="signaturePage <= 1"
+                  @click="changeSignaturePage(signaturePage - 1)"
+                >
+                  Previous
+                </button>
+                <span>Page {{ signaturePage }} of {{ signatureTotalPages }}</span>
+                <button
+                  type="button"
+                  class="rounded-full border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+                  :disabled="signaturePage >= signatureTotalPages"
+                  @click="changeSignaturePage(signaturePage + 1)"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
             <div class="overflow-x-auto">
               <table class="min-w-full table-fixed border-separate border-spacing-y-3 text-left text-sm text-slate-600">
                 <colgroup>
@@ -851,7 +1505,16 @@ const handleExport = async () => {
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="signature in topSignatures" :key="signature.signatureKey" data-testid="signature-row">
+                  <tr
+                    v-for="signature in topSignatures"
+                    :key="signature.signatureKey"
+                    :class="interactiveRowClass"
+                    data-testid="signature-row"
+                    tabindex="0"
+                    @click="handleSignatureRowActivation($event, signature)"
+                    @keydown.enter="handleSignatureRowActivation($event, signature)"
+                    @keydown.space="handleSignatureRowActivation($event, signature)"
+                  >
                     <td class="rounded-l-3xl border-y border-l border-slate-200 bg-slate-50 px-4 py-4 align-top">
                       <div class="flex flex-wrap items-center gap-2">
                         <span class="rounded-full bg-slate-900 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-white">
@@ -893,9 +1556,9 @@ const handleExport = async () => {
                         <button
                           type="button"
                           class="inline-flex w-full items-center justify-center rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700 sm:w-auto"
-                          @click="openSignatureDetail(signature)"
+                          @click="openSignatureExplorer(signature)"
                         >
-                          View full error
+                          Explore signature
                         </button>
                         <router-link
                           v-if="signature.dominantSchool"
@@ -918,6 +1581,29 @@ const handleExport = async () => {
                   </tr>
                 </tbody>
               </table>
+            </div>
+
+            <div class="mt-4 flex flex-col gap-3 border-t border-slate-200 pt-4 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+              <p>{{ formatCount(signatureTotal) }} signature pattern{{ signatureTotal === 1 ? '' : 's' }} total</p>
+              <div class="flex items-center gap-3">
+                <button
+                  type="button"
+                  class="rounded-full border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+                  :disabled="signaturePage <= 1"
+                  @click="changeSignaturePage(signaturePage - 1)"
+                >
+                  Previous
+                </button>
+                <span>Page {{ signaturePage }} of {{ signatureTotalPages }}</span>
+                <button
+                  type="button"
+                  class="rounded-full border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+                  :disabled="signaturePage >= signatureTotalPages"
+                  @click="changeSignaturePage(signaturePage + 1)"
+                >
+                  Next
+                </button>
+              </div>
             </div>
           </Card>
         </template>
@@ -1012,7 +1698,16 @@ const handleExport = async () => {
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="row in detailRows" :key="row.id" data-testid="detail-row">
+                  <tr
+                    v-for="row in detailRows"
+                    :key="row.id"
+                    :class="interactiveRowClass"
+                    data-testid="detail-row"
+                    tabindex="0"
+                    @click="handleDetailRowActivation($event, row)"
+                    @keydown.enter="handleDetailRowActivation($event, row)"
+                    @keydown.space="handleDetailRowActivation($event, row)"
+                  >
                     <td class="rounded-l-3xl border-y border-l border-slate-200 bg-slate-50 px-4 py-4 align-top text-xs text-slate-500">{{ row.snapshotDate }}</td>
                     <td class="border-y border-slate-200 bg-slate-50 px-4 py-4 align-top">
                       <p class="font-medium text-slate-900">{{ formatSchoolLabel(row.school, row.displayName) }}</p>
@@ -1138,7 +1833,16 @@ const handleExport = async () => {
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="row in sortSchoolRows" :key="row.key">
+                  <tr
+                    v-for="row in sortSchoolRows"
+                    :key="row.key"
+                    :class="hasSchoolRowModal(row) ? interactiveRowClass : ''"
+                    data-testid="school-row"
+                    :tabindex="hasSchoolRowModal(row) ? 0 : undefined"
+                    @click="handleSchoolRowActivation($event, row)"
+                    @keydown.enter="handleSchoolRowActivation($event, row)"
+                    @keydown.space="handleSchoolRowActivation($event, row)"
+                  >
                     <td class="rounded-l-3xl border-y border-l border-slate-200 bg-slate-50 px-4 py-4 align-top">
                       <router-link :to="schoolRoute(row.key)" class="font-semibold text-slate-950 hover:text-blue-700">
                         {{ formatSchoolLabel(row.key, row.label) }}
@@ -1252,7 +1956,16 @@ const handleExport = async () => {
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="row in sortSisRows" :key="row.key">
+                  <tr
+                    v-for="row in sortSisRows"
+                    :key="row.key"
+                    :class="hasSisRowModal(row) ? interactiveRowClass : ''"
+                    data-testid="sis-row"
+                    :tabindex="hasSisRowModal(row) ? 0 : undefined"
+                    @click="handleSisRowActivation($event, row)"
+                    @keydown.enter="handleSisRowActivation($event, row)"
+                    @keydown.space="handleSisRowActivation($event, row)"
+                  >
                     <td class="rounded-l-3xl border-y border-l border-slate-200 bg-slate-50 px-4 py-4 align-top">
                       <p class="font-semibold text-slate-950">{{ row.label }}</p>
                       <p class="mt-1 text-xs text-slate-500">Last seen {{ row.lastSeen }}</p>
@@ -1343,7 +2056,259 @@ const handleExport = async () => {
                   class="inline-flex items-center rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700"
                   @click="openSignatureDetailByKey(signature.signatureKey)"
                 >
-                  View full error
+                  Open signature
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="selectedSignatureExplorer"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-8"
+      data-testid="signature-explorer-modal"
+      @click.self="closeSignatureExplorer"
+    >
+      <div class="max-h-[90vh] w-full max-w-6xl overflow-y-auto rounded-[28px] border border-slate-200 bg-white p-6 shadow-2xl sm:p-8">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Signature explorer</p>
+            <h2 class="mt-2 text-2xl font-semibold text-slate-950">{{ buildSignatureHeadline(selectedSignatureExplorer.signatureLabel) }}</h2>
+            <p class="mt-3 text-sm leading-6 text-slate-600">{{ selectedSignatureExplorer.signatureLabel }}</p>
+          </div>
+          <button
+            type="button"
+            class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-lg text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
+            aria-label="Close signature explorer modal"
+            @click="closeSignatureExplorer"
+          >
+            ×
+          </button>
+        </div>
+
+        <div class="mt-6 flex flex-wrap gap-2 text-xs text-slate-600">
+          <span v-if="selectedSignatureExplorer.entityType" class="rounded-full bg-slate-100 px-3 py-1.5">{{ selectedSignatureExplorer.entityType }}</span>
+          <span v-if="selectedSignatureExplorer.errorCode" class="rounded-full bg-slate-100 px-3 py-1.5">{{ selectedSignatureExplorer.errorCode }}</span>
+          <span class="rounded-full bg-slate-100 px-3 py-1.5">{{ formatCount(selectedSignatureExplorer.totalCount) }} captured occurrences</span>
+          <span class="rounded-full bg-slate-100 px-3 py-1.5">{{ selectedSignatureExplorer.recurrenceDays }} captured day{{ selectedSignatureExplorer.recurrenceDays === 1 ? '' : 's' }}</span>
+          <span class="rounded-full bg-slate-100 px-3 py-1.5">{{ selectedSignatureExplorer.affectedSchools }} school{{ selectedSignatureExplorer.affectedSchools === 1 ? '' : 's' }}</span>
+        </div>
+
+        <div class="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+          <div class="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+            <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Pattern summary</p>
+            <p class="mt-3 text-sm leading-6 text-slate-900">{{ selectedSignatureExplorer.resolutionHint.action }}</p>
+            <div class="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                class="inline-flex items-center rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700"
+                @click="openSignatureRepresentativeSample"
+              >
+                Representative sample
+              </button>
+              <router-link
+                v-if="selectedSignatureExplorer.dominantSchool"
+                :to="schoolRoute(selectedSignatureExplorer.dominantSchool)"
+                class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+              >
+                School detail
+              </router-link>
+              <a
+                v-if="selectedSignatureExplorer.dominantSchoolMergeReport"
+                :href="getMergeReportUrl(selectedSignatureExplorer.dominantSchoolMergeReport)"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+              >
+                Merge report ↗
+              </a>
+            </div>
+          </div>
+
+          <div class="rounded-3xl border border-slate-200 bg-white p-5">
+            <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Current-state drilldown</p>
+            <p class="mt-3 text-sm leading-6 text-slate-600">
+              Uses the latest captured snapshot for this signature and the current page filters.
+            </p>
+            <div class="mt-4 grid gap-3 sm:grid-cols-2">
+              <div class="rounded-2xl bg-slate-50 p-4">
+                <p class="text-xs uppercase tracking-[0.08em] text-slate-500">Latest snapshot</p>
+                <p class="mt-2 text-lg font-semibold text-slate-950">{{ signatureExplorerResponse?.metadata.resolvedSnapshotDate || 'Unavailable' }}</p>
+              </div>
+              <div class="rounded-2xl bg-slate-50 p-4">
+                <p class="text-xs uppercase tracking-[0.08em] text-slate-500">Open rows now</p>
+                <p class="mt-2 text-lg font-semibold text-slate-950">{{ formatCount(signatureExplorerResponse?.metadata.signatureTotal) }}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-6 rounded-3xl border border-slate-200 bg-white p-5">
+          <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Within this signature</p>
+              <p class="mt-2 text-sm leading-6 text-slate-600">Pivot the currently open rows by SIS, school, or term, then inspect the captured errors for the selected bucket.</p>
+            </div>
+            <div class="inline-flex flex-wrap rounded-full border border-slate-200 bg-slate-50 p-1">
+              <button
+                v-for="tab in signatureExplorerTabs"
+                :key="tab.value"
+                type="button"
+                class="rounded-full px-3 py-1.5 text-sm font-medium transition"
+                :class="signatureExplorerGroupBy === tab.value ? 'bg-slate-900 text-white' : 'text-slate-600 hover:text-slate-900'"
+                :data-testid="`signature-explorer-tab-${tab.value}`"
+                @click="signatureExplorerGroupBy = tab.value"
+              >
+                {{ tab.label }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="isLoadingSignatureExplorer" class="mt-6 rounded-3xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+            Loading latest signature drilldown...
+          </div>
+
+          <div
+            v-else-if="(signatureExplorerResponse?.metadata.signatureTotal ?? 0) === 0"
+            class="mt-6 rounded-3xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-800"
+          >
+            No currently open rows match this signature in the latest captured snapshot for the active filters.
+          </div>
+
+          <div v-else class="mt-6 grid gap-5 xl:grid-cols-[minmax(260px,0.9fr)_minmax(0,2.1fr)]">
+            <div class="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+              <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Buckets</p>
+              <div class="mt-3 space-y-2">
+                <button
+                  v-for="bucket in signatureExplorerBuckets"
+                  :key="bucket.key"
+                  type="button"
+                  class="flex w-full items-center justify-between rounded-2xl border px-3 py-3 text-left transition"
+                  :class="signatureExplorerBucket === bucket.key ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-800 hover:border-slate-300'"
+                  data-testid="signature-explorer-bucket"
+                  @click="selectSignatureExplorerBucket(bucket.key)"
+                >
+                  <span class="min-w-0 pr-3">
+                    <span class="block truncate text-sm font-semibold">{{ formatSignatureExplorerBucketLabel(bucket) }}</span>
+                    <span class="mt-1 block text-xs" :class="signatureExplorerBucket === bucket.key ? 'text-slate-200' : 'text-slate-500'">
+                      {{ formatCount(bucket.count) }} rows · {{ formatShare(bucket.share) }}
+                    </span>
+                  </span>
+                  <span class="shrink-0 text-xs font-semibold">{{ formatShare(bucket.share) }}</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="rounded-3xl border border-slate-200 bg-white p-4">
+              <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Matching errors</p>
+                  <p class="mt-1 text-sm text-slate-600">
+                    Showing {{ formatCount(signatureExplorerRows.length) }} of {{ formatCount(signatureExplorerTotal) }} grouped error{{ signatureExplorerTotal === 1 ? '' : 's' }}
+                    covering {{ formatCount(signatureExplorerBucketTotal) }} row{{ signatureExplorerBucketTotal === 1 ? '' : 's' }}
+                    <span v-if="selectedSignatureExplorerBucketSummary">
+                      for {{ formatSignatureExplorerBucketLabel(selectedSignatureExplorerBucketSummary) }}
+                    </span>
+                  </p>
+                </div>
+                <p class="text-xs text-slate-500">Page {{ signatureExplorerPage }} of {{ signatureExplorerTotalPages }}</p>
+              </div>
+
+              <div v-if="hasSignatureExplorerRows" class="mt-4 overflow-x-auto">
+                <table class="min-w-full text-left text-sm text-slate-700">
+                  <thead class="text-xs uppercase tracking-[0.12em] text-slate-500">
+                    <tr>
+                      <th class="px-3 py-2 font-semibold">Affected schools</th>
+                      <th class="px-3 py-2 font-semibold">SIS</th>
+                      <th class="px-3 py-2 font-semibold">Term</th>
+                      <th class="px-3 py-2 font-semibold">Count</th>
+                      <th class="px-3 py-2 font-semibold">Error</th>
+                      <th class="px-3 py-2 font-semibold">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr
+                      v-for="row in signatureExplorerRows"
+                      :key="row.key"
+                      class="border-t border-slate-200"
+                      :class="interactiveRowClass"
+                      data-testid="signature-explorer-row"
+                      tabindex="0"
+                      @click="handleSignatureExplorerRowActivation($event, row)"
+                      @keydown.enter="handleSignatureExplorerRowActivation($event, row)"
+                      @keydown.space="handleSignatureExplorerRowActivation($event, row)"
+                    >
+                      <td class="px-3 py-3 align-top">
+                        <div class="min-w-0">
+                          <p class="font-semibold text-slate-900">
+                            {{ formatCount(row.schools.length) }} school{{ row.schools.length === 1 ? '' : 's' }}
+                          </p>
+                          <button
+                            v-if="row.schools.length > 1"
+                            type="button"
+                            class="mt-3 inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+                            data-testid="signature-explorer-school-summary-trigger"
+                            @click="openSignatureExplorerSchools(row)"
+                          >
+                            View school list
+                          </button>
+                        </div>
+                      </td>
+                      <td class="px-3 py-3 align-top">{{ row.sisPlatform || 'Unknown' }}</td>
+                      <td class="px-3 py-3 align-top">{{ row.termCodes[0] || 'Unknown' }}</td>
+                      <td class="px-3 py-3 align-top font-semibold text-slate-900">{{ formatCount(row.instanceCount) }}</td>
+                      <td class="px-3 py-3 align-top">
+                        <p class="font-medium leading-6 text-slate-900 break-words">{{ truncateText(row.fullErrorText, 180) }}</p>
+                        <p v-if="row.entityDisplayName" class="mt-1 text-xs text-slate-500">{{ row.entityDisplayName }}</p>
+                      </td>
+                      <td class="px-3 py-3 align-top">
+                        <div class="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            class="inline-flex items-center rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700"
+                            data-testid="signature-explorer-error-trigger"
+                            @click="openSignatureExplorerDetailRow(row)"
+                          >
+                            View full error
+                          </button>
+                          <a
+                            v-if="row.mergeReport"
+                            :href="getMergeReportUrl(row.mergeReport)"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+                          >
+                            Merge report ↗
+                          </a>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div v-else class="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+                No matching rows for the selected bucket.
+              </div>
+
+              <div class="mt-4 flex items-center justify-between">
+                <button
+                  type="button"
+                  class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+                  :disabled="signatureExplorerPage <= 1"
+                  @click="changeSignatureExplorerPage(signatureExplorerPage - 1)"
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+                  :disabled="signatureExplorerPage >= signatureExplorerTotalPages"
+                  @click="changeSignatureExplorerPage(signatureExplorerPage + 1)"
+                >
+                  Next
                 </button>
               </div>
             </div>
@@ -1478,6 +2443,63 @@ const handleExport = async () => {
           <summary class="cursor-pointer text-sm font-semibold text-slate-900">{{ isSignaturePatternDetail ? 'Raw sample payload' : 'Raw captured payload' }}</summary>
           <pre class="mt-4 overflow-x-auto whitespace-pre-wrap break-words text-xs leading-5 text-slate-700">{{ selectedErrorDetail.rawPayload }}</pre>
         </details>
+      </div>
+    </div>
+
+    <div
+      v-if="selectedSignatureExplorerSchools"
+      class="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/45 px-4 py-8"
+      data-testid="signature-explorer-schools-modal"
+      @click.self="closeSignatureExplorerSchools"
+    >
+      <div class="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-[28px] border border-slate-200 bg-white p-6 shadow-2xl sm:p-8">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Affected schools</p>
+            <h2 class="mt-2 text-2xl font-semibold text-slate-950">
+              {{ formatCount(selectedSignatureExplorerSchools.schools.length) }} school{{ selectedSignatureExplorerSchools.schools.length === 1 ? '' : 's' }}
+            </h2>
+            <p class="mt-3 text-sm leading-6 text-slate-600">
+              {{ truncateText(selectedSignatureExplorerSchools.fullErrorText, 180) }}
+            </p>
+          </div>
+          <button
+            type="button"
+            class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-lg text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
+            aria-label="Close affected schools modal"
+            @click="closeSignatureExplorerSchools"
+          >
+            ×
+          </button>
+        </div>
+
+        <div class="mt-6 flex flex-wrap gap-2 text-xs text-slate-600">
+          <span v-if="selectedSignatureExplorerSchools.sisPlatform" class="rounded-full bg-slate-100 px-3 py-1.5">
+            {{ selectedSignatureExplorerSchools.sisPlatform }}
+          </span>
+          <span v-if="selectedSignatureExplorerSchools.termCode" class="rounded-full bg-slate-100 px-3 py-1.5">
+            Term {{ selectedSignatureExplorerSchools.termCode }}
+          </span>
+          <span class="rounded-full bg-slate-100 px-3 py-1.5">
+            {{ formatCount(selectedSignatureExplorerSchools.instanceCount) }} open row{{ selectedSignatureExplorerSchools.instanceCount === 1 ? '' : 's' }}
+          </span>
+        </div>
+
+        <div class="mt-6 space-y-3">
+          <div
+            v-for="school in selectedSignatureExplorerSchools.schools"
+            :key="school.school"
+            class="flex items-center justify-between gap-4 rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3"
+          >
+            <div class="min-w-0">
+              <p class="font-semibold text-slate-900">{{ school.label === 'Unknown' ? 'Unknown' : formatSchoolLabel(school.school, school.label) }}</p>
+              <p class="mt-1 text-xs text-slate-500">{{ formatCount(school.count) }} matching row{{ school.count === 1 ? '' : 's' }}</p>
+            </div>
+            <span class="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700">
+              {{ formatCount(school.count) }}
+            </span>
+          </div>
+        </div>
       </div>
     </div>
   </div>

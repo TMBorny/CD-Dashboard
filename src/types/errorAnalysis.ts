@@ -132,6 +132,49 @@ export interface ErrorDetailTableResponse {
   };
 }
 
+export type ErrorSignatureExplorerGroupBy = 'sis' | 'school' | 'term';
+
+export interface ErrorSignatureExplorerBucket {
+  key: string;
+  label: string;
+  count: number;
+  share: number;
+}
+
+export interface ErrorSignatureExplorerSchoolCount {
+  school: string;
+  label: string;
+  count: number;
+}
+
+export interface ErrorSignatureExplorerRow extends ErrorDetailRow {
+  key: string;
+  instanceCount: number;
+  schools: ErrorSignatureExplorerSchoolCount[];
+}
+
+export interface ErrorSignatureExplorerResponse {
+  rows: ErrorSignatureExplorerRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  metadata: {
+    appliedFilters: {
+      days: number | null;
+      school: string | null;
+      sisPlatform: string | null;
+      latestOnly: boolean;
+      signature: string;
+      groupBy: ErrorSignatureExplorerGroupBy;
+      bucket: string | null;
+    };
+    resolvedSnapshotDate: string | null;
+    signatureTotal: number;
+    bucketTotal: number;
+  };
+  breakdowns: Record<ErrorSignatureExplorerGroupBy, ErrorSignatureExplorerBucket[]>;
+}
+
 export interface ErrorAnalysisResponse {
   metadata: {
     historyStartsOn: string | null;

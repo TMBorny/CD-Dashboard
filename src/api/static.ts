@@ -9,6 +9,10 @@ import type {
   ErrorBreakdownRow,
   ErrorDetailRow,
   ErrorDetailTableResponse,
+  ErrorSignatureExplorerBucket,
+  ErrorSignatureExplorerGroupBy,
+  ErrorSignatureExplorerRow,
+  ErrorSignatureExplorerResponse,
   ErrorSignatureCluster,
   ErrorTrendPoint,
   MergeReportReference,
@@ -24,6 +28,7 @@ import { resolveSitePath } from '@/config/runtime';
 
 const STATIC_MODE_ERROR = 'This action is unavailable in the static hosted dashboard.';
 const fileCache = new Map<string, Promise<unknown>>();
+const UNKNOWN_SIGNATURE_BUCKET_KEY = '__unknown__';
 
 type StaticSyncMetadataResponse = {
   lastAttemptedSync: Record<string, unknown> | null;
@@ -221,6 +226,96 @@ const getLatestSnapshotDate = <T extends { snapshotDate: string }>(rows: T[]) =>
   }
 
   return rows.reduce((latest, row) => (row.snapshotDate > latest ? row.snapshotDate : latest), rows[0].snapshotDate);
+};
+
+const getPrimaryTermCode = (row: ErrorDetailRow) => row.termCodes.find((value) => typeof value === 'string' && value.trim()) ?? null;
+
+const getExplorerBucketValue = (row: ErrorDetailRow, groupBy: ErrorSignatureExplorerGroupBy) => {
+  switch (groupBy) {
+    case 'sis':
+      return row.sisPlatform?.trim() || null;
+    case 'school':
+      return row.school?.trim() || null;
+    case 'term':
+      return getPrimaryTermCode(row);
+  }
+};
+
+const getExplorerBucketLabel = (row: ErrorDetailRow, groupBy: ErrorSignatureExplorerGroupBy) => {
+  switch (groupBy) {
+    case 'sis':
+      return row.sisPlatform?.trim() || 'Unknown';
+    case 'school':
+      return row.displayName?.trim() || row.school || 'Unknown';
+    case 'term':
+      return getPrimaryTermCode(row) || 'Unknown';
+  }
+};
+
+const buildSignatureExplorerBuckets = (
+  rows: ErrorDetailRow[],
+  groupBy: ErrorSignatureExplorerGroupBy,
+): ErrorSignatureExplorerBucket[] => {
+  const counts = new Map<string, { label: string; count: number }>();
+
+  rows.forEach((row) => {
+    const key = getExplorerBucketValue(row, groupBy) ?? UNKNOWN_SIGNATURE_BUCKET_KEY;
+    const label = getExplorerBucketValue(row, groupBy) ? getExplorerBucketLabel(row, groupBy) : 'Unknown';
+    const existing = counts.get(key) ?? { label, count: 0 };
+    existing.count += 1;
+    counts.set(key, existing);
+  });
+
+  const total = rows.length || 1;
+  return [...counts.entries()]
+    .map(([key, value]) => ({
+      key,
+      label: value.label,
+      count: value.count,
+      share: value.count / total,
+    }))
+    .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label));
+};
+
+const buildSignatureExplorerSchoolCounts = (rows: ErrorDetailRow[]) => {
+  const counts = new Map<string, { school: string; label: string; count: number }>();
+
+  rows.forEach((row) => {
+    const school = row.school?.trim() || UNKNOWN_SIGNATURE_BUCKET_KEY;
+    const label = row.displayName?.trim() || row.school || 'Unknown';
+    const existing = counts.get(school) ?? { school, label, count: 0 };
+    existing.count += 1;
+    counts.set(school, existing);
+  });
+
+  return [...counts.values()].sort(
+    (left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' }) || left.school.localeCompare(right.school),
+  );
+};
+
+const groupSignatureExplorerRows = (rows: ErrorDetailRow[]): ErrorSignatureExplorerRow[] => {
+  const groups = new Map<string, { representative: ErrorDetailRow; rows: ErrorDetailRow[] }>();
+
+  sortDetailRows(rows, 'snapshotDate', 'desc').forEach((row) => {
+    const groupKey = row.fullErrorText;
+    const existing = groups.get(groupKey);
+    if (existing) {
+      existing.rows.push(row);
+      return;
+    }
+
+    groups.set(groupKey, {
+      representative: row,
+      rows: [row],
+    });
+  });
+
+  return [...groups.entries()].map(([key, group]) => ({
+    ...group.representative,
+    key,
+    instanceCount: group.rows.length,
+    schools: buildSignatureExplorerSchoolCounts(group.rows),
+  }));
 };
 
 const normalizeDetailSearch = (row: ErrorDetailRow) => {
@@ -748,6 +843,67 @@ const buildErrorDetailTableResponse = async (params: {
   };
 };
 
+const buildErrorSignatureExplorerResponse = async (params: {
+  days?: number;
+  school?: string;
+  sisPlatform?: string;
+  latestOnly?: boolean;
+  signature: string;
+  groupBy: ErrorSignatureExplorerGroupBy;
+  bucket?: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<ErrorSignatureExplorerResponse> => {
+  const detailExport = await getStaticErrorDetailExport();
+  const rowsWithWindow = await applySnapshotWindow(detailExport.rows, params.days);
+  const filtered = rowsWithWindow.filter((row) => {
+    if (row.signatureKey !== params.signature) return false;
+    if (params.school && row.school !== params.school) return false;
+    if (params.sisPlatform && row.sisPlatform !== params.sisPlatform) return false;
+    return true;
+  });
+
+  const latestOnly = params.latestOnly ?? true;
+  const resolvedSnapshotDate = latestOnly ? getLatestSnapshotDate(filtered) : null;
+  const signatureRows = resolvedSnapshotDate
+    ? filtered.filter((row) => row.snapshotDate === resolvedSnapshotDate)
+    : filtered;
+  const breakdowns = {
+    sis: buildSignatureExplorerBuckets(signatureRows, 'sis'),
+    school: buildSignatureExplorerBuckets(signatureRows, 'school'),
+    term: buildSignatureExplorerBuckets(signatureRows, 'term'),
+  };
+  const bucketRows = params.bucket
+    ? signatureRows.filter((row) => (getExplorerBucketValue(row, params.groupBy) ?? UNKNOWN_SIGNATURE_BUCKET_KEY) === params.bucket)
+    : signatureRows;
+  const groupedRows = groupSignatureExplorerRows(bucketRows);
+  const page = params.page ?? 1;
+  const pageSize = params.pageSize ?? 25;
+  const start = (page - 1) * pageSize;
+
+  return {
+    rows: groupedRows.slice(start, start + pageSize),
+    total: groupedRows.length,
+    page,
+    pageSize,
+    metadata: {
+      appliedFilters: {
+        days: params.days ?? null,
+        school: params.school ?? null,
+        sisPlatform: params.sisPlatform ?? null,
+        latestOnly,
+        signature: params.signature,
+        groupBy: params.groupBy,
+        bucket: params.bucket ?? null,
+      },
+      resolvedSnapshotDate,
+      signatureTotal: signatureRows.length,
+      bucketTotal: bucketRows.length,
+    },
+    breakdowns,
+  };
+};
+
 const makeJsonDownload = <T extends Record<string, unknown>>(payload: T, filename: string) => ({
   blob: new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
   filename,
@@ -886,6 +1042,20 @@ export async function getErrorAnalysisErrors(params: {
   pageSize?: number;
 }) {
   return { data: await buildErrorDetailTableResponse(params) };
+}
+
+export async function getErrorAnalysisSignatureExplorer(params: {
+  days?: number;
+  school?: string;
+  sisPlatform?: string;
+  latestOnly?: boolean;
+  signature: string;
+  groupBy: ErrorSignatureExplorerGroupBy;
+  bucket?: string;
+  page?: number;
+  pageSize?: number;
+}) {
+  return { data: await buildErrorSignatureExplorerResponse(params) };
 }
 
 export async function downloadErrorAnalysisDetailedExport(params: {

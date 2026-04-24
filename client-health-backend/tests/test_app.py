@@ -3610,6 +3610,296 @@ class ErrorAnalysisEndpointTests(unittest.TestCase):
         self.assertEqual(payload["metadata"]["appliedFilters"]["signature"], "sig-b")
         self.assertEqual(payload["rows"][0]["signatureKey"], "sig-b")
 
+    def test_signature_explorer_uses_latest_snapshot_and_builds_breakdowns(self):
+        init_db()
+        db = get_db()
+        try:
+            db.add_all(
+                [
+                    ErrorAnalysisDetail.from_dict(
+                        {
+                            "snapshotDate": "2026-04-12",
+                            "school": "foo01",
+                            "displayName": "Foo State",
+                            "sisPlatform": "PeopleSoftDirect",
+                            "entityType": "courses",
+                            "errorCode": "duplicate_course",
+                            "signatureKey": "sig-b",
+                            "signatureLabel": "courses | duplicate_course | duplicate course",
+                            "normalizedMessage": "duplicate course",
+                            "fullErrorText": "Older duplicate course",
+                            "entityDisplayName": "Course 10001",
+                            "mergeReport": {"school": "foo01", "mergeReportId": "report-old", "scheduleType": "nightly", "snapshotDate": "2026-04-12"},
+                            "termCodes": ["202504"],
+                            "rawError": {"message": "Older duplicate course"},
+                        }
+                    ),
+                    ErrorAnalysisDetail.from_dict(
+                        {
+                            "snapshotDate": "2026-04-14",
+                            "school": "foo01",
+                            "displayName": "Foo State",
+                            "sisPlatform": "PeopleSoftDirect",
+                            "entityType": "courses",
+                            "errorCode": "duplicate_course",
+                            "signatureKey": "sig-b",
+                            "signatureLabel": "courses | duplicate_course | duplicate course",
+                            "normalizedMessage": "duplicate course",
+                            "fullErrorText": "Shared duplicate course",
+                            "entityDisplayName": "Course 10002",
+                            "mergeReport": {"school": "foo01", "mergeReportId": "report-b1", "scheduleType": "realtime", "snapshotDate": "2026-04-14"},
+                            "termCodes": ["202505"],
+                            "rawError": {"message": "Shared duplicate course"},
+                        }
+                    ),
+                    ErrorAnalysisDetail.from_dict(
+                        {
+                            "snapshotDate": "2026-04-14",
+                            "school": "foo02",
+                            "displayName": "Foo State Downtown",
+                            "sisPlatform": "PeopleSoftDirect",
+                            "entityType": "courses",
+                            "errorCode": "duplicate_course",
+                            "signatureKey": "sig-b",
+                            "signatureLabel": "courses | duplicate_course | duplicate course",
+                            "normalizedMessage": "duplicate course",
+                            "fullErrorText": "Shared duplicate course",
+                            "entityDisplayName": "Course 10003",
+                            "mergeReport": {"school": "foo02", "mergeReportId": "report-b2", "scheduleType": "realtime", "snapshotDate": "2026-04-14"},
+                            "termCodes": ["202505"],
+                            "rawError": {"message": "Shared duplicate course"},
+                        }
+                    ),
+                ]
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
+            "app.main.start_scheduled_sync_service",
+            new=self._async_noop,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=self._async_noop,
+        ):
+            with TestClient(app) as client:
+                response = client.get(
+                    "/api/error-analysis/signature-explorer",
+                    params={
+                        "signature": "sig-b",
+                        "groupBy": "school",
+                    },
+                    headers=AUTH_HEADERS,
+                )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["metadata"]["resolvedSnapshotDate"], "2026-04-14")
+        self.assertTrue(payload["metadata"]["appliedFilters"]["latestOnly"])
+        self.assertEqual(payload["metadata"]["signatureTotal"], 2)
+        self.assertEqual(sum(bucket["count"] for bucket in payload["breakdowns"]["sis"]), 2)
+        self.assertEqual(sum(bucket["count"] for bucket in payload["breakdowns"]["school"]), 2)
+        self.assertEqual(sum(bucket["count"] for bucket in payload["breakdowns"]["term"]), 2)
+        self.assertEqual(payload["breakdowns"]["sis"][0]["label"], "PeopleSoftDirect")
+        self.assertEqual(payload["breakdowns"]["term"][0]["label"], "202505")
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["rows"][0]["instanceCount"], 2)
+        self.assertEqual({school["school"] for school in payload["rows"][0]["schools"]}, {"foo01", "foo02"})
+        self.assertEqual(payload["rows"][0]["mergeReport"]["mergeReportId"], "report-b2")
+
+    def test_signature_explorer_uses_unknown_buckets_and_filters_by_current_bucket(self):
+        init_db()
+        db = get_db()
+        try:
+            db.add_all(
+                [
+                    ErrorAnalysisDetail.from_dict(
+                        {
+                            "snapshotDate": "2026-04-14",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": None,
+                            "entityType": "sections",
+                            "errorCode": "missing_course",
+                            "signatureKey": "sig-a",
+                            "signatureLabel": "sections | missing_course | course missing dependency",
+                            "normalizedMessage": "course missing dependency",
+                            "fullErrorText": "Missing SIS and term",
+                            "entityDisplayName": "BIO-101-01",
+                            "mergeReport": {"school": "bar01", "mergeReportId": "report-a1", "scheduleType": "nightly", "snapshotDate": "2026-04-14"},
+                            "termCodes": [],
+                            "rawError": {"message": "Missing SIS and term"},
+                        }
+                    ),
+                    ErrorAnalysisDetail.from_dict(
+                        {
+                            "snapshotDate": "2026-04-14",
+                            "school": "bar02",
+                            "displayName": "Baruch Annex",
+                            "sisPlatform": "Banner",
+                            "entityType": "sections",
+                            "errorCode": "missing_course",
+                            "signatureKey": "sig-a",
+                            "signatureLabel": "sections | missing_course | course missing dependency",
+                            "normalizedMessage": "course missing dependency",
+                            "fullErrorText": "Known SIS and term",
+                            "entityDisplayName": "BIO-101-02",
+                            "mergeReport": {"school": "bar02", "mergeReportId": "report-a2", "scheduleType": "nightly", "snapshotDate": "2026-04-14"},
+                            "termCodes": ["202506"],
+                            "rawError": {"message": "Known SIS and term"},
+                        }
+                    ),
+                ]
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
+            "app.main.start_scheduled_sync_service",
+            new=self._async_noop,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=self._async_noop,
+        ):
+            with TestClient(app) as client:
+                response = client.get(
+                    "/api/error-analysis/signature-explorer",
+                    params={
+                        "signature": "sig-a",
+                        "groupBy": "sis",
+                        "bucket": "__unknown__",
+                    },
+                    headers=AUTH_HEADERS,
+                )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["metadata"]["bucketTotal"], 1)
+        self.assertEqual(payload["metadata"]["appliedFilters"]["bucket"], "__unknown__")
+        self.assertEqual(payload["breakdowns"]["sis"][1]["label"], "Unknown")
+        self.assertEqual(payload["breakdowns"]["term"][1]["label"], "Unknown")
+        self.assertEqual(len(payload["rows"]), 1)
+        self.assertEqual(payload["rows"][0]["instanceCount"], 1)
+        self.assertEqual(payload["rows"][0]["schools"], [{"school": "bar01", "label": "Baruch College", "count": 1}])
+
+    def test_signature_explorer_respects_global_filters_and_pagination(self):
+        init_db()
+        db = get_db()
+        try:
+            db.add_all(
+                [
+                    ErrorAnalysisDetail.from_dict(
+                        {
+                            "snapshotDate": "2026-04-14",
+                            "school": "foo01",
+                            "displayName": "Foo State",
+                            "sisPlatform": "PeopleSoftDirect",
+                            "entityType": "courses",
+                            "errorCode": "duplicate_course",
+                            "signatureKey": "sig-b",
+                            "signatureLabel": "courses | duplicate_course | duplicate course",
+                            "normalizedMessage": "duplicate course",
+                            "fullErrorText": "Foo duplicate",
+                            "entityDisplayName": "Course 10001",
+                            "mergeReport": {"school": "foo01", "mergeReportId": "report-b1", "scheduleType": "realtime", "snapshotDate": "2026-04-14"},
+                            "termCodes": ["202505"],
+                            "rawError": {"message": "Foo duplicate"},
+                        }
+                    ),
+                    ErrorAnalysisDetail.from_dict(
+                        {
+                            "snapshotDate": "2026-04-14",
+                            "school": "foo01",
+                            "displayName": "Foo State",
+                            "sisPlatform": "PeopleSoftDirect",
+                            "entityType": "courses",
+                            "errorCode": "duplicate_course",
+                            "signatureKey": "sig-b",
+                            "signatureLabel": "courses | duplicate_course | duplicate course",
+                            "normalizedMessage": "duplicate course",
+                            "fullErrorText": "Foo duplicate",
+                            "entityDisplayName": "Course 10002",
+                            "mergeReport": {"school": "foo01", "mergeReportId": "report-b2", "scheduleType": "realtime", "snapshotDate": "2026-04-14"},
+                            "termCodes": ["202505"],
+                            "rawError": {"message": "Foo duplicate"},
+                        }
+                    ),
+                    ErrorAnalysisDetail.from_dict(
+                        {
+                            "snapshotDate": "2026-04-14",
+                            "school": "foo01",
+                            "displayName": "Foo State",
+                            "sisPlatform": "PeopleSoftDirect",
+                            "entityType": "courses",
+                            "errorCode": "duplicate_course",
+                            "signatureKey": "sig-b",
+                            "signatureLabel": "courses | duplicate_course | duplicate course",
+                            "normalizedMessage": "duplicate course",
+                            "fullErrorText": "Foo validation problem",
+                            "entityDisplayName": "Course 10004",
+                            "mergeReport": {"school": "foo01", "mergeReportId": "report-b4", "scheduleType": "realtime", "snapshotDate": "2026-04-14"},
+                            "termCodes": ["202505"],
+                            "rawError": {"message": "Foo validation problem"},
+                        }
+                    ),
+                    ErrorAnalysisDetail.from_dict(
+                        {
+                            "snapshotDate": "2026-04-14",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": "Banner",
+                            "entityType": "courses",
+                            "errorCode": "duplicate_course",
+                            "signatureKey": "sig-b",
+                            "signatureLabel": "courses | duplicate_course | duplicate course",
+                            "normalizedMessage": "duplicate course",
+                            "fullErrorText": "Bar duplicate",
+                            "entityDisplayName": "Course 10003",
+                            "mergeReport": {"school": "bar01", "mergeReportId": "report-b3", "scheduleType": "nightly", "snapshotDate": "2026-04-14"},
+                            "termCodes": ["202506"],
+                            "rawError": {"message": "Bar duplicate"},
+                        }
+                    ),
+                ]
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
+            "app.main.start_scheduled_sync_service",
+            new=self._async_noop,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=self._async_noop,
+        ):
+            with TestClient(app) as client:
+                response = client.get(
+                    "/api/error-analysis/signature-explorer",
+                    params={
+                        "signature": "sig-b",
+                        "school": "foo01",
+                        "sisPlatform": "PeopleSoftDirect",
+                        "groupBy": "school",
+                        "bucket": "foo01",
+                        "page": 1,
+                        "pageSize": 1,
+                    },
+                    headers=AUTH_HEADERS,
+                )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["metadata"]["signatureTotal"], 3)
+        self.assertEqual(payload["metadata"]["bucketTotal"], 3)
+        self.assertEqual(payload["total"], 2)
+        self.assertEqual(payload["pageSize"], 1)
+        self.assertEqual(len(payload["rows"]), 1)
+        self.assertEqual(payload["rows"][0]["school"], "foo01")
+        self.assertEqual(payload["breakdowns"]["school"][0]["key"], "foo01")
+
     def test_error_analysis_export_downloads_detailed_rows(self):
         init_db()
         db = get_db()

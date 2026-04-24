@@ -16,7 +16,7 @@ from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from uuid import uuid4
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Query, HTTPException, Response
 from pydantic import BaseModel
@@ -51,6 +51,7 @@ FAILED_UNITS_SAMPLE_LIMIT = 10
 MERGE_ERRORS_PAGE_SIZE = 250
 MERGE_ERRORS_MAX_PAGES = 200
 ERROR_ANALYSIS_SAMPLE_LIMIT = 3
+SIGNATURE_EXPLORER_UNKNOWN_BUCKET = "__unknown__"
 HALTED_CHANGE_THRESHOLD_STATUS = "Halted: Change Threshold Exceeded"
 HALTED_STAGE_NAME = "Sync Coursedog Updates with SIS"
 CHANGE_THRESHOLD_LIMIT = 10
@@ -454,6 +455,144 @@ def resolve_latest_snapshot_date(query, snapshot_column) -> Optional[str]:
     """Return the newest snapshot date available for the current filtered query."""
     latest_row = query.order_by(snapshot_column.desc()).with_entities(snapshot_column).first()
     return latest_row[0] if latest_row else None
+
+
+def get_primary_term_code(row: ErrorAnalysisDetail) -> Optional[str]:
+    """Return one stable term code per detail row for signature drilldowns."""
+    try:
+        term_codes = json.loads(row.term_codes_json) if row.term_codes_json else []
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(term_codes, list):
+        return None
+
+    for value in term_codes:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def get_signature_explorer_bucket_value(
+    row: ErrorAnalysisDetail,
+    group_by: Literal["sis", "school", "term"],
+) -> Optional[str]:
+    """Return the bucket key for one detail row and grouping mode."""
+    if group_by == "sis":
+        return row.sis_platform.strip() if isinstance(row.sis_platform, str) and row.sis_platform.strip() else None
+    if group_by == "school":
+        return row.school.strip() if isinstance(row.school, str) and row.school.strip() else None
+    return get_primary_term_code(row)
+
+
+def get_signature_explorer_bucket_label(
+    row: ErrorAnalysisDetail,
+    group_by: Literal["sis", "school", "term"],
+) -> str:
+    """Return the display label for one drilldown bucket."""
+    if group_by == "sis":
+        return row.sis_platform.strip() if isinstance(row.sis_platform, str) and row.sis_platform.strip() else "Unknown"
+    if group_by == "school":
+        return row.display_name or row.school or "Unknown"
+    return get_primary_term_code(row) or "Unknown"
+
+
+def build_signature_explorer_breakdowns(rows: list[ErrorAnalysisDetail]) -> dict[str, list[dict]]:
+    """Build SIS, school, and term drilldowns for a set of signature rows."""
+    breakdowns: dict[str, dict[str, dict[str, Any]]] = {
+        "sis": {},
+        "school": {},
+        "term": {},
+    }
+
+    for group_by in ("sis", "school", "term"):
+        for row in rows:
+            key = get_signature_explorer_bucket_value(row, group_by) or SIGNATURE_EXPLORER_UNKNOWN_BUCKET
+            label = get_signature_explorer_bucket_label(row, group_by)
+            existing = breakdowns[group_by].setdefault(
+                key,
+                {
+                    "key": key,
+                    "label": label,
+                    "count": 0,
+                },
+            )
+            existing["count"] += 1
+
+    total = len(rows) or 1
+    return {
+        group_by: sorted(
+            [
+                {
+                    **value,
+                    "share": value["count"] / total,
+                }
+                for value in bucket_map.values()
+            ],
+            key=lambda item: (-item["count"], item["label"]),
+        )
+        for group_by, bucket_map in breakdowns.items()
+    }
+
+
+def build_signature_explorer_school_counts(rows: list[ErrorAnalysisDetail]) -> list[dict[str, Any]]:
+    """Build distinct school counts for one grouped error message."""
+    schools: dict[str, dict[str, Any]] = {}
+
+    for row in rows:
+        school_key = row.school.strip() if isinstance(row.school, str) and row.school.strip() else SIGNATURE_EXPLORER_UNKNOWN_BUCKET
+        label = row.display_name or row.school or "Unknown"
+        existing = schools.setdefault(
+            school_key,
+            {
+                "school": school_key,
+                "label": label,
+                "count": 0,
+            },
+        )
+        existing["count"] += 1
+
+    return sorted(
+        schools.values(),
+        key=lambda item: (item["label"].lower(), item["school"]),
+    )
+
+
+def build_signature_explorer_grouped_rows(rows: list[ErrorAnalysisDetail]) -> list[dict[str, Any]]:
+    """Collapse identical full error texts into grouped rows using the newest row as the representative sample."""
+    grouped_rows: dict[str, dict[str, Any]] = {}
+
+    sorted_rows = sorted(
+        rows,
+        key=lambda row: (
+            row.snapshot_date or "",
+            row.id or 0,
+        ),
+        reverse=True,
+    )
+
+    for row in sorted_rows:
+        group_key = row.full_error_text
+        existing = grouped_rows.get(group_key)
+        if existing:
+            existing["sourceRows"].append(row)
+            continue
+
+        grouped_rows[group_key] = {
+            "key": group_key,
+            "representative": row,
+            "sourceRows": [row],
+        }
+
+    return [
+        {
+            **group["representative"].to_dict(),
+            "key": group["key"],
+            "instanceCount": len(group["sourceRows"]),
+            "schools": build_signature_explorer_school_counts(group["sourceRows"]),
+        }
+        for group in grouped_rows.values()
+    ]
 
 
 def is_demo_school(school: str, display_name: str) -> bool:
@@ -1186,6 +1325,78 @@ async def get_error_analysis_errors(
                 },
                 "resolvedSnapshotDate": resolved_snapshot_date,
             },
+        }
+    finally:
+        db.close()
+
+
+@router.get("/error-analysis/signature-explorer")
+async def get_error_analysis_signature_explorer(
+    signature: str = Query(..., min_length=1),
+    group_by: Literal["sis", "school", "term"] = Query(default="sis", alias="groupBy"),
+    bucket: Optional[str] = Query(default=None),
+    days: Optional[int] = Query(default=None, ge=1),
+    school: Optional[str] = Query(default=None),
+    sis_platform: Optional[str] = Query(default=None, alias="sisPlatform"),
+    latest_only: bool = Query(default=True, alias="latestOnly"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=200, alias="pageSize"),
+):
+    """Return within-signature drilldowns and matching latest detail rows."""
+    db = get_db()
+    try:
+        query = apply_error_analysis_detail_filters(
+            db.query(ErrorAnalysisDetail),
+            days=days,
+            school=school,
+            sis_platform=sis_platform,
+            entity_type=None,
+            signature=signature,
+            search=None,
+        )
+        resolved_snapshot_date = resolve_latest_snapshot_date(query, ErrorAnalysisDetail.snapshot_date) if latest_only else None
+        if resolved_snapshot_date:
+            query = query.filter(ErrorAnalysisDetail.snapshot_date == resolved_snapshot_date)
+
+        signature_rows = query.order_by(
+            ErrorAnalysisDetail.snapshot_date.desc(),
+            ErrorAnalysisDetail.school.asc(),
+            ErrorAnalysisDetail.id.desc(),
+        ).all()
+        breakdowns = build_signature_explorer_breakdowns(signature_rows)
+        filtered_rows = (
+            [
+                row
+                for row in signature_rows
+                if (get_signature_explorer_bucket_value(row, group_by) or SIGNATURE_EXPLORER_UNKNOWN_BUCKET) == bucket
+            ]
+            if bucket
+            else signature_rows
+        )
+        grouped_rows = build_signature_explorer_grouped_rows(filtered_rows)
+        start = (page - 1) * page_size
+        rows = grouped_rows[start : start + page_size]
+
+        return {
+            "rows": rows,
+            "total": len(grouped_rows),
+            "page": page,
+            "pageSize": page_size,
+            "metadata": {
+                "appliedFilters": {
+                    "days": days,
+                    "school": school,
+                    "sisPlatform": sis_platform,
+                    "latestOnly": latest_only,
+                    "signature": signature,
+                    "groupBy": group_by,
+                    "bucket": bucket,
+                },
+                "resolvedSnapshotDate": resolved_snapshot_date,
+                "signatureTotal": len(signature_rows),
+                "bucketTotal": len(filtered_rows),
+            },
+            "breakdowns": breakdowns,
         }
     finally:
         db.close()
