@@ -21,7 +21,18 @@ export interface ErrorTrendPoint {
   affectedSchools: number;
 }
 
-export interface ErrorSignatureCluster {
+export interface SignatureMetadata {
+  signatureVersion?: string | null;
+  signatureStrategy?: string | null;
+  signatureConfidence?: number | null;
+  canonicalErrorCode?: string | null;
+  canonicalCodeSource?: string | null;
+  operationName?: string | null;
+  legacySignatureKey?: string | null;
+  messageTemplate?: string | null;
+}
+
+export interface ErrorSignatureCluster extends SignatureMetadata {
   signatureKey: string;
   entityType?: string | null;
   errorCode?: string | null;
@@ -66,10 +77,13 @@ export interface ErrorBreakdownRow {
   latestMergeReport?: MergeReportReference | null;
   associatedSignatures?: Array<{
     signatureKey: string;
+    signatureVersion?: string | null;
     signatureLabel: string;
     count: number;
     entityType?: string | null;
     errorCode?: string | null;
+    canonicalErrorCode?: string | null;
+    operationName?: string | null;
     resolutionTitle?: string | null;
     sampleMessage?: string | null;
   }>;
@@ -81,7 +95,7 @@ export interface ErrorAnalysisFilterOption {
   sisPlatform?: string | null;
 }
 
-export interface ErrorDetailRow {
+export interface ErrorDetailRow extends SignatureMetadata {
   id: number;
   snapshotDate: string;
   school: string;

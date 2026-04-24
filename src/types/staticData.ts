@@ -21,7 +21,15 @@ export interface StaticErrorGroupRow {
   sisPlatform?: string | null;
   entityType?: string | null;
   errorCode?: string | null;
+  canonicalErrorCode?: string | null;
+  canonicalCodeSource?: string | null;
+  operationName?: string | null;
   signatureKey: string;
+  legacySignatureKey?: string | null;
+  signatureVersion?: string | null;
+  signatureStrategy?: string | null;
+  signatureConfidence?: number | null;
+  messageTemplate?: string | null;
   normalizedMessage: string;
   sampleMessage: string;
   count: number;

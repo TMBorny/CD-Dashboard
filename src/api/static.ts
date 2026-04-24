@@ -29,6 +29,7 @@ import { resolveSitePath } from '@/config/runtime';
 const STATIC_MODE_ERROR = 'This action is unavailable in the static hosted dashboard.';
 const fileCache = new Map<string, Promise<unknown>>();
 const UNKNOWN_SIGNATURE_BUCKET_KEY = '__unknown__';
+const ERROR_SIGNATURE_VERSION_V1 = 'v1';
 
 type StaticSyncMetadataResponse = {
   lastAttemptedSync: Record<string, unknown> | null;
@@ -118,6 +119,10 @@ const buildErrorSignatureLabel = (
   parts.push(normalizedMessage);
   return parts.join(' | ');
 };
+
+const getSignatureVersion = (value?: string | null) => value || ERROR_SIGNATURE_VERSION_V1;
+const buildSignatureIdentity = (signatureKey: string, signatureVersion?: string | null) =>
+  `${getSignatureVersion(signatureVersion)}:${signatureKey}`;
 
 const buildResolutionHint = (
   normalizedMessage: string,
@@ -464,9 +469,17 @@ const buildErrorAnalysisResponse = async (
   const trends = new Map<string, { totalErrors: number; distinctSignatures: Set<string>; affectedSchools: Set<string> }>();
   const signatures = new Map<string, {
     signatureKey: string;
+    legacySignatureKey?: string | null;
+    signatureVersion?: string | null;
+    signatureStrategy?: string | null;
+    signatureConfidence?: number | null;
     entityType?: string | null;
     errorCode?: string | null;
+    canonicalErrorCode?: string | null;
+    canonicalCodeSource?: string | null;
+    operationName?: string | null;
     signatureLabel: string;
+    messageTemplate?: string | null;
     normalizedMessage: string;
     sampleMessage: string;
     totalCount: number;
@@ -512,7 +525,8 @@ const buildErrorAnalysisResponse = async (
   const captureDays = new Set<string>();
 
   for (const group of groups) {
-    const resolutionHint = buildResolutionHint(group.normalizedMessage, group.entityType, group.errorCode);
+    const signatureIdentity = buildSignatureIdentity(group.signatureKey, group.signatureVersion);
+    const resolutionHint = buildResolutionHint(group.normalizedMessage, group.entityType, group.canonicalErrorCode || group.errorCode);
     const sisLabel = group.sisPlatform || 'Unknown';
     const mergeReportReference = group.latestMergeReport ?? extractMergeReportReference(group.sampleErrors);
 
@@ -526,15 +540,23 @@ const buildErrorAnalysisResponse = async (
       affectedSchools: new Set<string>(),
     };
     trend.totalErrors += group.count;
-    trend.distinctSignatures.add(group.signatureKey);
+    trend.distinctSignatures.add(signatureIdentity);
     trend.affectedSchools.add(group.school);
     trends.set(group.snapshotDate, trend);
 
-    const signature = signatures.get(group.signatureKey) ?? {
+    const signature = signatures.get(signatureIdentity) ?? {
       signatureKey: group.signatureKey,
+      legacySignatureKey: group.legacySignatureKey,
+      signatureVersion: getSignatureVersion(group.signatureVersion),
+      signatureStrategy: group.signatureStrategy,
+      signatureConfidence: group.signatureConfidence ?? null,
       entityType: group.entityType,
       errorCode: group.errorCode,
-      signatureLabel: buildErrorSignatureLabel(group.entityType, group.errorCode, group.normalizedMessage),
+      canonicalErrorCode: group.canonicalErrorCode,
+      canonicalCodeSource: group.canonicalCodeSource,
+      operationName: group.operationName,
+      signatureLabel: buildErrorSignatureLabel(group.entityType, group.canonicalErrorCode || group.errorCode, group.normalizedMessage),
+      messageTemplate: group.messageTemplate || group.normalizedMessage,
       normalizedMessage: group.normalizedMessage,
       sampleMessage: group.sampleMessage,
       totalCount: 0,
@@ -564,6 +586,12 @@ const buildErrorAnalysisResponse = async (
     signature.countsBySis.set(sisLabel, (signature.countsBySis.get(sisLabel) ?? 0) + group.count);
     signature.schoolLabels.set(group.school, group.displayName || group.school);
     group.termCodes.forEach((termCode) => signature.termCodes.add(termCode));
+    signature.legacySignatureKey = signature.legacySignatureKey || group.legacySignatureKey || null;
+    signature.signatureStrategy = signature.signatureStrategy || group.signatureStrategy || null;
+    signature.signatureConfidence = signature.signatureConfidence ?? group.signatureConfidence ?? null;
+    signature.canonicalErrorCode = signature.canonicalErrorCode || group.canonicalErrorCode || null;
+    signature.canonicalCodeSource = signature.canonicalCodeSource || group.canonicalCodeSource || null;
+    signature.operationName = signature.operationName || group.operationName || null;
 
     if (mergeReportReference) {
       const normalizedReference = {
@@ -589,7 +617,7 @@ const buildErrorAnalysisResponse = async (
       }
     }
 
-    signatures.set(group.signatureKey, signature);
+    signatures.set(signatureIdentity, signature);
 
     const schoolBreakdown = schoolBreakdowns.get(group.school) ?? {
       key: group.school,
@@ -604,8 +632,8 @@ const buildErrorAnalysisResponse = async (
       latestMergeReport: null,
     };
     schoolBreakdown.totalErrors += group.count;
-    schoolBreakdown.distinctSignatures.add(group.signatureKey);
-    schoolBreakdown.countsBySignature.set(group.signatureKey, (schoolBreakdown.countsBySignature.get(group.signatureKey) ?? 0) + group.count);
+    schoolBreakdown.distinctSignatures.add(signatureIdentity);
+    schoolBreakdown.countsBySignature.set(signatureIdentity, (schoolBreakdown.countsBySignature.get(signatureIdentity) ?? 0) + group.count);
     schoolBreakdown.resolutionBuckets.set(
       resolutionHint.bucket,
       (schoolBreakdown.resolutionBuckets.get(resolutionHint.bucket) ?? 0) + group.count,
@@ -636,8 +664,8 @@ const buildErrorAnalysisResponse = async (
     };
     sisBreakdown.schoolCountSet.add(group.school);
     sisBreakdown.totalErrors += group.count;
-    sisBreakdown.distinctSignatures.add(group.signatureKey);
-    sisBreakdown.countsBySignature.set(group.signatureKey, (sisBreakdown.countsBySignature.get(group.signatureKey) ?? 0) + group.count);
+    sisBreakdown.distinctSignatures.add(signatureIdentity);
+    sisBreakdown.countsBySignature.set(signatureIdentity, (sisBreakdown.countsBySignature.get(signatureIdentity) ?? 0) + group.count);
     sisBreakdown.resolutionBuckets.set(
       resolutionHint.bucket,
       (sisBreakdown.resolutionBuckets.get(resolutionHint.bucket) ?? 0) + group.count,
@@ -661,9 +689,17 @@ const buildErrorAnalysisResponse = async (
       const dominantSisPlatform = getDominantEntry(signature.countsBySis);
       return {
         signatureKey: signature.signatureKey,
+        legacySignatureKey: signature.legacySignatureKey,
+        signatureVersion: signature.signatureVersion,
+        signatureStrategy: signature.signatureStrategy,
+        signatureConfidence: signature.signatureConfidence,
         entityType: signature.entityType,
         errorCode: signature.errorCode,
+        canonicalErrorCode: signature.canonicalErrorCode,
+        canonicalCodeSource: signature.canonicalCodeSource,
+        operationName: signature.operationName,
         signatureLabel: signature.signatureLabel,
+        messageTemplate: signature.messageTemplate,
         normalizedMessage: signature.normalizedMessage,
         sampleMessage: signature.sampleMessage,
         totalCount: signature.totalCount,
@@ -738,10 +774,13 @@ const buildErrorAnalysisResponse = async (
             if (!signature) return [];
             return [{
               signatureKey: signature.signatureKey,
+              signatureVersion: signature.signatureVersion,
               signatureLabel: signature.signatureLabel,
               count,
               entityType: signature.entityType,
               errorCode: signature.errorCode,
+              canonicalErrorCode: signature.canonicalErrorCode,
+              operationName: signature.operationName,
               resolutionTitle: signature.resolutionHint.title,
               sampleMessage: signature.sampleMessage,
             }];

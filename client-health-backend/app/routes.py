@@ -55,6 +55,34 @@ SIGNATURE_EXPLORER_UNKNOWN_BUCKET = "__unknown__"
 HALTED_CHANGE_THRESHOLD_STATUS = "Halted: Change Threshold Exceeded"
 HALTED_STAGE_NAME = "Sync Coursedog Updates with SIS"
 CHANGE_THRESHOLD_LIMIT = 10
+ERROR_SIGNATURE_VERSION_V1 = "v1"
+ERROR_SIGNATURE_VERSION_V2 = "v2"
+ERROR_SIGNATURE_STRATEGY_CODE_TEMPLATE = "code_template"
+ERROR_SIGNATURE_STRATEGY_TEMPLATE_FALLBACK = "template_fallback"
+ERROR_SIGNATURE_CODE_TEMPLATE_CONFIDENCE = 0.92
+ERROR_SIGNATURE_TEMPLATE_FALLBACK_CONFIDENCE = 0.58
+GENERIC_ERROR_CODE_VALUES = {
+    "400",
+    "401",
+    "403",
+    "404",
+    "409",
+    "422",
+    "429",
+    "500",
+    "502",
+    "503",
+    "504",
+    "error",
+    "errors",
+    "failed",
+    "failure",
+    "unknown",
+    "unknown_error",
+    "internal_error",
+    "validation",
+    "warning",
+}
 
 
 class SchoolExclusionPayload(BaseModel):
@@ -392,6 +420,7 @@ def write_error_analysis_export(db) -> Path:
         .order_by(
             ErrorAnalysisGroup.snapshot_date.desc(),
             ErrorAnalysisGroup.school.asc(),
+            ErrorAnalysisGroup.signature_version.asc(),
             ErrorAnalysisGroup.signature_key.asc(),
         )
         .all()
@@ -439,8 +468,11 @@ def apply_error_analysis_detail_filters(
                 ErrorAnalysisDetail.full_error_text.ilike(pattern),
                 ErrorAnalysisDetail.signature_label.ilike(pattern),
                 ErrorAnalysisDetail.normalized_message.ilike(pattern),
+                ErrorAnalysisDetail.message_template.ilike(pattern),
                 ErrorAnalysisDetail.entity_type.ilike(pattern),
                 ErrorAnalysisDetail.error_code.ilike(pattern),
+                ErrorAnalysisDetail.canonical_error_code.ilike(pattern),
+                ErrorAnalysisDetail.operation_name.ilike(pattern),
                 ErrorAnalysisDetail.school.ilike(pattern),
                 ErrorAnalysisDetail.display_name.ilike(pattern),
                 ErrorAnalysisDetail.sis_platform.ilike(pattern),
@@ -792,6 +824,7 @@ async def get_error_analysis(
         groups = query.order_by(
             ErrorAnalysisGroup.snapshot_date.asc(),
             ErrorAnalysisGroup.school.asc(),
+            ErrorAnalysisGroup.signature_version.asc(),
             ErrorAnalysisGroup.signature_key.asc(),
         ).all()
 
@@ -849,10 +882,12 @@ async def get_error_analysis(
             sample_errors = json.loads(group.sample_errors_json) if group.sample_errors_json else []
             term_codes = json.loads(group.term_codes_json) if group.term_codes_json else []
             merge_report_reference = extract_merge_report_reference(sample_errors)
+            signature_identity = get_row_signature_identity(group)
+            signature_version = get_signature_version(group.signature_version)
             resolution_hint = build_resolution_hint(
                 group.normalized_message,
                 group.entity_type,
-                group.error_code,
+                group.canonical_error_code or group.error_code,
             )
             sis_label = group.sis_platform or "Unknown"
             affected_schools.add(group.school)
@@ -869,20 +904,29 @@ async def get_error_analysis(
                 },
             )
             trend_row["totalErrors"] += group.count
-            trend_row["distinctSignatures"].add(group.signature_key)
+            trend_row["distinctSignatures"].add(signature_identity)
             trend_row["affectedSchools"].add(group.school)
 
             signature_row = signatures.setdefault(
-                group.signature_key,
+                signature_identity,
                 {
                     "signatureKey": group.signature_key,
+                    "legacySignatureKey": group.legacy_signature_key,
+                    "signatureVersion": signature_version,
+                    "signatureStrategy": group.signature_strategy,
+                    "signatureConfidence": (
+                        None if group.signature_confidence is None else group.signature_confidence / 100
+                    ),
                     "entityType": group.entity_type,
                     "errorCode": group.error_code,
+                    "canonicalErrorCode": group.canonical_error_code,
+                    "operationName": group.operation_name,
                     "signatureLabel": build_error_signature_label(
                         group.entity_type,
-                        group.error_code,
+                        group.canonical_error_code or group.error_code,
                         group.normalized_message,
                     ),
+                    "messageTemplate": group.message_template or group.normalized_message,
                     "normalizedMessage": group.normalized_message,
                     "sampleMessage": group.sample_message,
                     "totalCount": 0,
@@ -912,6 +956,16 @@ async def get_error_analysis(
             signature_row["countsBySis"][sis_label] = signature_row["countsBySis"].get(sis_label, 0) + group.count
             signature_row["schoolLabels"][group.school] = group.display_name or group.school
             signature_row["termCodes"].update(term_codes)
+            if signature_row["legacySignatureKey"] is None and group.legacy_signature_key:
+                signature_row["legacySignatureKey"] = group.legacy_signature_key
+            if signature_row["signatureStrategy"] is None and group.signature_strategy:
+                signature_row["signatureStrategy"] = group.signature_strategy
+            if signature_row["signatureConfidence"] is None and group.signature_confidence is not None:
+                signature_row["signatureConfidence"] = group.signature_confidence / 100
+            if signature_row["canonicalErrorCode"] is None and group.canonical_error_code:
+                signature_row["canonicalErrorCode"] = group.canonical_error_code
+            if signature_row["operationName"] is None and group.operation_name:
+                signature_row["operationName"] = group.operation_name
             if merge_report_reference and (
                 signature_row["latestMergeReport"] is None
                 or group.snapshot_date >= signature_row["latestMergeReport"]["snapshotDate"]
@@ -951,8 +1005,8 @@ async def get_error_analysis(
                 },
             )
             school_row["totalErrors"] += group.count
-            school_row["distinctSignatures"].add(group.signature_key)
-            school_row["countsBySignature"][group.signature_key] = school_row["countsBySignature"].get(group.signature_key, 0) + group.count
+            school_row["distinctSignatures"].add(signature_identity)
+            school_row["countsBySignature"][signature_identity] = school_row["countsBySignature"].get(signature_identity, 0) + group.count
             school_row["resolutionBuckets"][resolution_hint["bucket"]] = school_row["resolutionBuckets"].get(resolution_hint["bucket"], 0) + group.count
             school_row["lastSeen"] = max(school_row["lastSeen"], group.snapshot_date)
             school_row["recurrenceDays"].add(group.snapshot_date)
@@ -981,8 +1035,8 @@ async def get_error_analysis(
             )
             sis_row["schoolCountSet"].add(group.school)
             sis_row["totalErrors"] += group.count
-            sis_row["distinctSignatures"].add(group.signature_key)
-            sis_row["countsBySignature"][group.signature_key] = sis_row["countsBySignature"].get(group.signature_key, 0) + group.count
+            sis_row["distinctSignatures"].add(signature_identity)
+            sis_row["countsBySignature"][signature_identity] = sis_row["countsBySignature"].get(signature_identity, 0) + group.count
             sis_row["resolutionBuckets"][resolution_hint["bucket"]] = sis_row["resolutionBuckets"].get(resolution_hint["bucket"], 0) + group.count
             sis_row["lastSeen"] = max(sis_row["lastSeen"], group.snapshot_date)
 
@@ -1009,9 +1063,16 @@ async def get_error_analysis(
             serialized_signatures.append(
                 {
                     "signatureKey": signature["signatureKey"],
+                    "legacySignatureKey": signature["legacySignatureKey"],
+                    "signatureVersion": signature["signatureVersion"],
+                    "signatureStrategy": signature["signatureStrategy"],
+                    "signatureConfidence": signature["signatureConfidence"],
                     "entityType": signature["entityType"],
                     "errorCode": signature["errorCode"],
+                    "canonicalErrorCode": signature["canonicalErrorCode"],
+                    "operationName": signature["operationName"],
                     "signatureLabel": signature["signatureLabel"],
+                    "messageTemplate": signature["messageTemplate"],
                     "normalizedMessage": signature["normalizedMessage"],
                     "sampleMessage": signature["sampleMessage"],
                     "totalCount": signature["totalCount"],
@@ -1084,10 +1145,13 @@ async def get_error_analysis(
                 associated_signatures.append(
                     {
                         "signatureKey": signature["signatureKey"],
+                        "signatureVersion": signature["signatureVersion"],
                         "signatureLabel": signature["signatureLabel"],
                         "count": count,
                         "entityType": signature["entityType"],
                         "errorCode": signature["errorCode"],
+                        "canonicalErrorCode": signature["canonicalErrorCode"],
+                        "operationName": signature["operationName"],
                         "resolutionTitle": signature["resolutionHint"]["title"],
                         "sampleMessage": signature["sampleMessage"],
                     }
@@ -1201,6 +1265,7 @@ async def export_error_analysis(
             rows = query.order_by(
                 ErrorAnalysisGroup.snapshot_date.desc(),
                 ErrorAnalysisGroup.school.asc(),
+                ErrorAnalysisGroup.signature_version.asc(),
                 ErrorAnalysisGroup.signature_key.asc(),
             ).all()
 
@@ -2757,6 +2822,173 @@ def iterate_original_error_payloads(payload: dict):
 
 def extract_merge_error_message(payload: dict) -> str:
     """Extract the most human-readable message from a merge-error row."""
+    message, _source = extract_merge_error_message_with_source(payload)
+    return message
+
+
+def normalize_error_message(message: str) -> str:
+    """Reduce volatile values so recurring error signatures group together."""
+    normalized = message.strip().lower()
+    normalized = re.sub(r"https?://\S+", "<url>", normalized)
+    normalized = re.sub(r"\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b", "<email>", normalized)
+    normalized = re.sub(r"\b\d{4}-\d{2}-\d{2}[t\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:z|[+-]\d{2}:?\d{2})?\b", "<timestamp>", normalized)
+    normalized = re.sub(r"\b\d{4}-\d{2}-\d{2}\b", "<date>", normalized)
+    normalized = re.sub(r"\b\d{1,2}:\d{2}:\d{2}(?:\.\d+)?\b", "<time>", normalized)
+    normalized = re.sub(r"\b[0-9a-f]{8}-[0-9a-f-]{27,}\b", "<uuid>", normalized)
+    normalized = re.sub(r"\b[0-9a-f]{24,}\b", "<hex>", normalized)
+    normalized = re.sub(r"\b[a-z0-9]{16,}\b", "<token>", normalized)
+    normalized = re.sub(r"\b\d{2,}\b", "<num>", normalized)
+    normalized = re.sub(r"['\"`][^'\"`]{2,}['\"`]", "<value>", normalized)
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized.strip() or "unspecified upstream merge error"
+
+
+def get_signature_version(value: Optional[str]) -> str:
+    """Return the explicit signature version, defaulting older rows to v1."""
+    return value or ERROR_SIGNATURE_VERSION_V1
+
+
+def build_signature_identity(signature_key: str, signature_version: Optional[str]) -> str:
+    """Create an in-memory unique identity for mixed-version signature rows."""
+    return f"{get_signature_version(signature_version)}:{signature_key}"
+
+
+def get_row_signature_identity(row: Any) -> str:
+    """Return a stable in-memory identity for an ORM row or dict-like signature payload."""
+    signature_key = getattr(row, "signature_key", None) or getattr(row, "signatureKey", None)
+    signature_version = getattr(row, "signature_version", None) or getattr(row, "signatureVersion", None)
+    return build_signature_identity(signature_key, signature_version)
+
+
+def is_operation_like_code(value: Optional[str]) -> bool:
+    """Return True when a code looks like an operation/action name rather than an error class."""
+    if not value:
+        return False
+    candidate = value.strip()
+    if not candidate:
+        return False
+    if re.match(r"^(Create|Update|Delete|Set|Sync|Publish|Import|Export|Post|Patch|Put|Get|Merge)[A-Z0-9_].*$", candidate):
+        return True
+    lowered = candidate.lower()
+    return lowered.endswith(("request", "operation", "action"))
+
+
+def extract_operation_name(payload: dict) -> Optional[str]:
+    """Extract an operation/action name without treating it as the semantic error code."""
+    direct_operation = first_non_empty_string(
+        payload.get("operationName"),
+        payload.get("postType"),
+        payload.get("action"),
+    )
+    if direct_operation:
+        return direct_operation
+
+    for original_error in iterate_original_error_payloads(payload):
+        operation_name = first_non_empty_string(
+            original_error.get("postType"),
+            original_error.get("operationName"),
+            original_error.get("action"),
+        )
+        if operation_name:
+            return operation_name
+
+    return None
+
+
+def iter_merge_error_code_candidates(payload: dict):
+    """Yield candidate error codes from strongest to weakest upstream locations."""
+    direct_candidates = (
+        ("topLevel.errorCode", payload.get("errorCode")),
+        ("topLevel.code", payload.get("code")),
+        ("topLevel.reasonCode", payload.get("reasonCode")),
+        ("topLevel.statusCode", payload.get("statusCode")),
+    )
+    for source, value in direct_candidates:
+        code = first_non_empty_string(value)
+        if code:
+            yield code, source
+
+    for original_error in iterate_original_error_payloads(payload):
+        body = original_error.get("body")
+        if isinstance(body, dict):
+            body_candidates = (
+                ("originalError.body.code", body.get("code")),
+                ("originalError.body.errorCode", body.get("errorCode")),
+                ("originalError.body.reasonCode", body.get("reasonCode")),
+                ("originalError.body.statusCode", body.get("statusCode")),
+            )
+            for source, value in body_candidates:
+                code = first_non_empty_string(value)
+                if code:
+                    yield code, source
+
+            body_errors = body.get("errors")
+            if isinstance(body_errors, list):
+                for entry in body_errors:
+                    if not isinstance(entry, dict):
+                        continue
+                    nested_candidates = (
+                        ("originalError.body.errors.code", entry.get("code")),
+                        ("originalError.body.errors.errorCode", entry.get("errorCode")),
+                        ("originalError.body.errors.reasonCode", entry.get("reasonCode")),
+                        ("originalError.body.errors.statusCode", entry.get("statusCode")),
+                    )
+                    for source, value in nested_candidates:
+                        code = first_non_empty_string(value)
+                        if code:
+                            yield code, source
+
+        original_candidates = (
+            ("originalError.code", original_error.get("code")),
+            ("originalError.errorCode", original_error.get("errorCode")),
+            ("originalError.reasonCode", original_error.get("reasonCode")),
+            ("originalError.statusCode", original_error.get("statusCode")),
+        )
+        for source, value in original_candidates:
+            code = first_non_empty_string(value)
+            if code:
+                yield code, source
+
+
+def classify_canonical_error_code(payload: dict) -> dict[str, Optional[str]]:
+    """Return the semantic error-code classification for one merge-error row."""
+    operation_name = extract_operation_name(payload)
+    for code, source in iter_merge_error_code_candidates(payload):
+        lowered = code.strip().lower()
+        if lowered in GENERIC_ERROR_CODE_VALUES:
+            continue
+        if operation_name and lowered == operation_name.strip().lower():
+            continue
+        if is_operation_like_code(code):
+            continue
+        return {
+            "canonicalErrorCode": code,
+            "canonicalCodeSource": source,
+            "operationName": operation_name,
+        }
+
+    return {
+        "canonicalErrorCode": None,
+        "canonicalCodeSource": None,
+        "operationName": operation_name,
+    }
+
+
+def extract_legacy_merge_error_code(payload: dict) -> Optional[str]:
+    """Preserve the original broad code extraction for legacy key compatibility."""
+    for code, _source in iter_merge_error_code_candidates(payload):
+        return code
+
+    for original_error in iterate_original_error_payloads(payload):
+        code = first_non_empty_string(original_error.get("postType"))
+        if code:
+            return code
+
+    return None
+
+
+def extract_merge_error_message_with_source(payload: dict) -> tuple[str, str]:
+    """Extract the best human-readable message and note where it came from."""
     message = first_non_empty_string(
         payload.get("message"),
         payload.get("errorMessage"),
@@ -2767,7 +2999,7 @@ def extract_merge_error_message(payload: dict) -> str:
         payload.get("title"),
     )
     if message:
-        return message
+        return message, "topLevel"
 
     for original_error in iterate_original_error_payloads(payload):
         body = original_error.get("body")
@@ -2782,7 +3014,7 @@ def extract_merge_error_message(payload: dict) -> str:
                 body.get("title"),
             )
             if body_message:
-                return body_message
+                return body_message, "originalError.body"
 
             body_errors = body.get("errors")
             if isinstance(body_errors, list):
@@ -2798,14 +3030,13 @@ def extract_merge_error_message(payload: dict) -> str:
                         entry.get("error"),
                     )
                     if nested_body_message:
-                        return nested_body_message
+                        return nested_body_message, "originalError.body.errors"
         elif isinstance(body, str) and body.strip():
             xml_message = extract_message_from_xml_body(body)
             if xml_message:
-                return xml_message
-            # Body is a non-XML string — return it directly.
+                return xml_message, "originalError.body.xml"
             if not body.strip().startswith("<"):
-                return body.strip()
+                return body.strip(), "originalError.body"
 
         original_error_message = first_non_empty_string(
             original_error.get("message"),
@@ -2816,7 +3047,7 @@ def extract_merge_error_message(payload: dict) -> str:
             original_error.get("error"),
         )
         if original_error_message:
-            return original_error_message
+            return original_error_message, "originalError"
 
     nested_errors = payload.get("errors")
     if isinstance(nested_errors, list):
@@ -2833,21 +3064,9 @@ def extract_merge_error_message(payload: dict) -> str:
         ]
         for nested_message in nested_messages:
             if nested_message:
-                return nested_message
+                return nested_message, "payload.errors"
 
-    return "Unspecified upstream merge error"
-
-
-def normalize_error_message(message: str) -> str:
-    """Reduce volatile values so recurring error signatures group together."""
-    normalized = message.strip().lower()
-    normalized = re.sub(r"https?://\S+", "<url>", normalized)
-    normalized = re.sub(r"\b[0-9a-f]{8}-[0-9a-f-]{27,}\b", "<uuid>", normalized)
-    normalized = re.sub(r"\b[a-z0-9]{16,}\b", "<token>", normalized)
-    normalized = re.sub(r"\b\d{2,}\b", "<num>", normalized)
-    normalized = re.sub(r"['\"`][^'\"`]{2,}['\"`]", "<value>", normalized)
-    normalized = re.sub(r"\s+", " ", normalized)
-    return normalized.strip() or "unspecified upstream merge error"
+    return "Unspecified upstream merge error", "fallback"
 
 
 def extract_merge_error_entity_type(payload: dict) -> Optional[str]:
@@ -2872,52 +3091,7 @@ def extract_merge_error_entity_type(payload: dict) -> Optional[str]:
 
 def extract_merge_error_code(payload: dict) -> Optional[str]:
     """Extract a stable machine-readable code when available."""
-    code = first_non_empty_string(
-        payload.get("errorCode"),
-        payload.get("code"),
-        payload.get("reasonCode"),
-        payload.get("statusCode"),
-    )
-    if code:
-        return code
-
-    for original_error in iterate_original_error_payloads(payload):
-        body = original_error.get("body")
-        if isinstance(body, dict):
-            code = first_non_empty_string(
-                body.get("code"),
-                body.get("errorCode"),
-                body.get("reasonCode"),
-                body.get("statusCode"),
-            )
-            if code:
-                return code
-
-            body_errors = body.get("errors")
-            if isinstance(body_errors, list):
-                for entry in body_errors:
-                    if not isinstance(entry, dict):
-                        continue
-                    nested_code = first_non_empty_string(
-                        entry.get("code"),
-                        entry.get("errorCode"),
-                        entry.get("reasonCode"),
-                        entry.get("statusCode"),
-                    )
-                    if nested_code:
-                        return nested_code
-
-        code = first_non_empty_string(
-            original_error.get("code"),
-            original_error.get("errorCode"),
-            original_error.get("reasonCode"),
-            original_error.get("statusCode"),
-            original_error.get("postType"),
-        )
-        if code:
-            return code
-
-    return None
+    return classify_canonical_error_code(payload)["canonicalErrorCode"]
 
 
 def build_error_signature_label(
@@ -2933,26 +3107,73 @@ def build_error_signature_label(
     return " | ".join(parts)
 
 
-def normalize_merge_error_row(payload: dict) -> dict:
-    """Normalize a raw merge-error row into a grouping-friendly shape."""
-    sample_message = extract_merge_error_message(payload)
-    normalized_message = normalize_error_message(sample_message)
-    entity_type = extract_merge_error_entity_type(payload)
-    error_code = extract_merge_error_code(payload)
-    signature_label = build_error_signature_label(entity_type, error_code, normalized_message)
+def build_legacy_signature_key(
+    entity_type: Optional[str],
+    legacy_error_code: Optional[str],
+    normalized_message: str,
+) -> str:
+    """Preserve the legacy v1 signature basis for safe side-by-side history."""
     signature_basis = "|".join(
         [
             entity_type or "unknown-entity",
-            error_code or "unknown-code",
+            legacy_error_code or "unknown-code",
             normalized_message,
         ]
     )
+    return hashlib.sha1(signature_basis.encode("utf-8")).hexdigest()[:16]
+
+
+def normalize_merge_error_row(payload: dict) -> dict:
+    """Normalize a raw merge-error row into a grouping-friendly shape."""
+    sample_message, message_source = extract_merge_error_message_with_source(payload)
+    normalized_message = normalize_error_message(sample_message)
+    entity_type = extract_merge_error_entity_type(payload)
+    code_classification = classify_canonical_error_code(payload)
+    canonical_error_code = code_classification["canonicalErrorCode"]
+    operation_name = code_classification["operationName"]
+    signature_strategy = (
+        ERROR_SIGNATURE_STRATEGY_CODE_TEMPLATE
+        if canonical_error_code
+        else ERROR_SIGNATURE_STRATEGY_TEMPLATE_FALLBACK
+    )
+    signature_version = ERROR_SIGNATURE_VERSION_V2
+    signature_confidence = (
+        ERROR_SIGNATURE_CODE_TEMPLATE_CONFIDENCE
+        if canonical_error_code
+        else ERROR_SIGNATURE_TEMPLATE_FALLBACK_CONFIDENCE
+    )
+    signature_label = build_error_signature_label(entity_type, canonical_error_code, normalized_message)
+    if canonical_error_code:
+        signature_basis = "|".join(
+            [
+                entity_type or "unknown-entity",
+                canonical_error_code,
+                normalized_message,
+            ]
+        )
+    else:
+        signature_basis = "|".join(
+            [
+                entity_type or "unknown-entity",
+                normalized_message,
+            ]
+        )
     signature_key = hashlib.sha1(signature_basis.encode("utf-8")).hexdigest()[:16]
+    legacy_error_code = extract_legacy_merge_error_code(payload)
     return {
         "entityType": entity_type,
-        "errorCode": error_code,
+        "errorCode": canonical_error_code,
+        "canonicalErrorCode": canonical_error_code,
+        "canonicalCodeSource": code_classification["canonicalCodeSource"],
+        "operationName": operation_name,
         "signatureKey": signature_key,
+        "legacySignatureKey": build_legacy_signature_key(entity_type, legacy_error_code, normalized_message),
+        "signatureVersion": signature_version,
+        "signatureStrategy": signature_strategy,
+        "signatureConfidence": signature_confidence,
         "signatureLabel": signature_label,
+        "messageTemplate": normalized_message,
+        "messageSource": message_source,
         "normalizedMessage": normalized_message,
         "sampleMessage": sample_message,
         "termCodes": collect_term_codes(payload),
@@ -2981,8 +3202,16 @@ def build_error_analysis_details(
                 "sisPlatform": sis_platform,
                 "entityType": normalized_row["entityType"],
                 "errorCode": normalized_row["errorCode"],
+                "canonicalErrorCode": normalized_row["canonicalErrorCode"],
+                "canonicalCodeSource": normalized_row["canonicalCodeSource"],
+                "operationName": normalized_row["operationName"],
                 "signatureKey": normalized_row["signatureKey"],
+                "legacySignatureKey": normalized_row["legacySignatureKey"],
+                "signatureVersion": normalized_row["signatureVersion"],
+                "signatureStrategy": normalized_row["signatureStrategy"],
+                "signatureConfidence": normalized_row["signatureConfidence"],
                 "signatureLabel": normalized_row["signatureLabel"],
+                "messageTemplate": normalized_row["messageTemplate"],
                 "normalizedMessage": normalized_row["normalizedMessage"],
                 "fullErrorText": normalized_row["sampleMessage"],
                 "entityDisplayName": first_non_empty_string(row.get("entityDisplayName"), row.get("entityName")),
@@ -3026,8 +3255,16 @@ def build_error_analysis_groups(
                 "sisPlatform": sis_platform,
                 "entityType": normalized_row["entityType"],
                 "errorCode": normalized_row["errorCode"],
+                "canonicalErrorCode": normalized_row["canonicalErrorCode"],
+                "canonicalCodeSource": normalized_row["canonicalCodeSource"],
+                "operationName": normalized_row["operationName"],
                 "signatureKey": signature_key,
+                "legacySignatureKey": normalized_row["legacySignatureKey"],
+                "signatureVersion": normalized_row["signatureVersion"],
+                "signatureStrategy": normalized_row["signatureStrategy"],
+                "signatureConfidence": normalized_row["signatureConfidence"],
                 "signatureLabel": normalized_row["signatureLabel"],
+                "messageTemplate": normalized_row["messageTemplate"],
                 "normalizedMessage": normalized_row["normalizedMessage"],
                 "sampleMessage": normalized_row["sampleMessage"],
                 "count": 0,

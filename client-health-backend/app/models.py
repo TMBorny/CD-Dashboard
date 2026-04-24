@@ -238,7 +238,15 @@ class ErrorAnalysisGroup(Base):
     sis_platform = Column(String(255), nullable=True, index=True)
     entity_type = Column(String(255), nullable=True)
     error_code = Column(String(255), nullable=True)
+    canonical_error_code = Column(String(255), nullable=True)
+    canonical_code_source = Column(String(64), nullable=True)
+    operation_name = Column(String(255), nullable=True)
     signature_key = Column(String(64), nullable=False, index=True)
+    legacy_signature_key = Column(String(64), nullable=True)
+    signature_version = Column(String(32), nullable=True)
+    signature_strategy = Column(String(64), nullable=True)
+    signature_confidence = Column(Integer, nullable=True)
+    message_template = Column(Text, nullable=True)
     normalized_message = Column(Text, nullable=False)
     sample_message = Column(Text, nullable=False)
     count = Column(Integer, nullable=False, default=0)
@@ -254,7 +262,17 @@ class ErrorAnalysisGroup(Base):
             "sisPlatform": self.sis_platform,
             "entityType": self.entity_type,
             "errorCode": self.error_code,
+            "canonicalErrorCode": self.canonical_error_code,
+            "canonicalCodeSource": self.canonical_code_source,
+            "operationName": self.operation_name,
             "signatureKey": self.signature_key,
+            "legacySignatureKey": self.legacy_signature_key,
+            "signatureVersion": self.signature_version or "v1",
+            "signatureStrategy": self.signature_strategy,
+            "signatureConfidence": (
+                None if self.signature_confidence is None else self.signature_confidence / 100
+            ),
+            "messageTemplate": self.message_template or self.normalized_message,
             "normalizedMessage": self.normalized_message,
             "sampleMessage": self.sample_message,
             "count": self.count,
@@ -272,7 +290,19 @@ class ErrorAnalysisGroup(Base):
             sis_platform=data.get("sisPlatform"),
             entity_type=data.get("entityType"),
             error_code=data.get("errorCode"),
+            canonical_error_code=data.get("canonicalErrorCode"),
+            canonical_code_source=data.get("canonicalCodeSource"),
+            operation_name=data.get("operationName"),
             signature_key=data["signatureKey"],
+            legacy_signature_key=data.get("legacySignatureKey"),
+            signature_version=data.get("signatureVersion"),
+            signature_strategy=data.get("signatureStrategy"),
+            signature_confidence=(
+                None
+                if data.get("signatureConfidence") is None
+                else int(round(float(data["signatureConfidence"]) * 100))
+            ),
+            message_template=data.get("messageTemplate", data.get("normalizedMessage", "")),
             normalized_message=data.get("normalizedMessage", ""),
             sample_message=data.get("sampleMessage", data.get("normalizedMessage", "")),
             count=data.get("count", 0),
@@ -293,8 +323,16 @@ class ErrorAnalysisDetail(Base):
     sis_platform = Column(String(255), nullable=True, index=True)
     entity_type = Column(String(255), nullable=True, index=True)
     error_code = Column(String(255), nullable=True, index=True)
+    canonical_error_code = Column(String(255), nullable=True, index=True)
+    canonical_code_source = Column(String(64), nullable=True)
+    operation_name = Column(String(255), nullable=True)
     signature_key = Column(String(64), nullable=False, index=True)
+    legacy_signature_key = Column(String(64), nullable=True)
+    signature_version = Column(String(32), nullable=True)
+    signature_strategy = Column(String(64), nullable=True)
+    signature_confidence = Column(Integer, nullable=True)
     signature_label = Column(Text, nullable=False)
+    message_template = Column(Text, nullable=True)
     normalized_message = Column(Text, nullable=False)
     full_error_text = Column(Text, nullable=False)
     entity_display_name = Column(String(255), nullable=True)
@@ -313,8 +351,18 @@ class ErrorAnalysisDetail(Base):
             "sisPlatform": self.sis_platform,
             "entityType": self.entity_type,
             "errorCode": self.error_code,
+            "canonicalErrorCode": self.canonical_error_code,
+            "canonicalCodeSource": self.canonical_code_source,
+            "operationName": self.operation_name,
             "signatureKey": self.signature_key,
+            "legacySignatureKey": self.legacy_signature_key,
+            "signatureVersion": self.signature_version or "v1",
+            "signatureStrategy": self.signature_strategy,
+            "signatureConfidence": (
+                None if self.signature_confidence is None else self.signature_confidence / 100
+            ),
             "signatureLabel": self.signature_label,
+            "messageTemplate": self.message_template or self.normalized_message,
             "normalizedMessage": self.normalized_message,
             "fullErrorText": self.full_error_text,
             "entityDisplayName": self.entity_display_name,
@@ -344,8 +392,20 @@ class ErrorAnalysisDetail(Base):
             sis_platform=data.get("sisPlatform"),
             entity_type=data.get("entityType"),
             error_code=data.get("errorCode"),
+            canonical_error_code=data.get("canonicalErrorCode"),
+            canonical_code_source=data.get("canonicalCodeSource"),
+            operation_name=data.get("operationName"),
             signature_key=data["signatureKey"],
+            legacy_signature_key=data.get("legacySignatureKey"),
+            signature_version=data.get("signatureVersion"),
+            signature_strategy=data.get("signatureStrategy"),
+            signature_confidence=(
+                None
+                if data.get("signatureConfidence") is None
+                else int(round(float(data["signatureConfidence"]) * 100))
+            ),
             signature_label=data.get("signatureLabel", ""),
+            message_template=data.get("messageTemplate", data.get("normalizedMessage", "")),
             normalized_message=data.get("normalizedMessage", ""),
             full_error_text=data.get("fullErrorText", ""),
             entity_display_name=data.get("entityDisplayName"),

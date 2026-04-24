@@ -642,6 +642,11 @@ class MergeErrorCountTests(unittest.TestCase):
         self.assertEqual(details[0]["school"], "bar01")
         self.assertEqual(details[0]["mergeReport"]["mergeReportId"], "report-a1")
         self.assertEqual(details[1]["termCodes"], ["202602"])
+        self.assertEqual(details[0]["signatureVersion"], "v2")
+        self.assertEqual(details[0]["signatureStrategy"], "code_template")
+        self.assertEqual(details[0]["canonicalErrorCode"], "missing_course")
+        self.assertEqual(details[0]["messageTemplate"], "course <num> missing dependency <num>")
+        self.assertIsNotNone(details[0]["legacySignatureKey"])
 
     def test_build_resolution_hint_detects_missing_reference(self):
         hint = build_resolution_hint("section missing prerequisite reference", "sections", None)
@@ -679,8 +684,10 @@ class MergeErrorCountTests(unittest.TestCase):
 
         self.assertEqual(groups[0]["sampleMessage"], "Invalid GUID 'DLS SEM Dist Lrn Sem' supplied for site.")
         self.assertEqual(groups[0]["errorCode"], "Record.Not.Found")
+        self.assertEqual(groups[0]["signatureStrategy"], "code_template")
+        self.assertEqual(groups[0]["operationName"], "UpdateSection")
 
-    def test_extract_merge_error_message_from_string_body(self):
+    def test_extract_merge_error_message_from_string_body_uses_template_fallback_for_operation_names(self):
         payload = {
             "entityType": "sections",
             "errors": [
@@ -703,7 +710,36 @@ class MergeErrorCountTests(unittest.TestCase):
         )
 
         self.assertIn("room is not defined as a classroom", groups[0]["normalizedMessage"])
-        self.assertEqual(groups[0]["errorCode"], "SetMeetingTimes")
+        self.assertIsNone(groups[0]["errorCode"])
+        self.assertEqual(groups[0]["operationName"], "SetMeetingTimes")
+        self.assertEqual(groups[0]["signatureVersion"], "v2")
+        self.assertEqual(groups[0]["signatureStrategy"], "template_fallback")
+
+    def test_build_error_analysis_groups_distinguishes_same_template_by_semantic_code(self):
+        rows = [
+            {
+                "entityType": "courses",
+                "errorCode": "duplicate_course",
+                "message": "Course 202505 already exists",
+            },
+            {
+                "entityType": "courses",
+                "errorCode": "conflicting_course",
+                "message": "Course 202602 already exists",
+            },
+        ]
+
+        groups = build_error_analysis_groups(
+            snapshot_date="2026-04-13",
+            school="bar01",
+            display_name="Baruch College",
+            sis_platform="Banner",
+            merge_error_rows=rows,
+        )
+
+        self.assertEqual(len(groups), 2)
+        self.assertEqual({group["errorCode"] for group in groups}, {"duplicate_course", "conflicting_course"})
+        self.assertEqual({group["signatureStrategy"] for group in groups}, {"code_template"})
 
     def test_write_error_analysis_export_persists_all_group_metadata(self):
         if os.path.exists(TEST_ERROR_EXPORT_PATH):
@@ -1269,7 +1305,13 @@ class SyncJobErrorAnalysisPersistenceTests(unittest.IsolatedAsyncioTestCase):
             "finishedAt": None,
         }
 
-        with patch("app.routes.list_schools", side_effect=fake_list_schools), patch(
+        async def fake_authenticate_api():
+            return False
+
+        with patch("app.routes.authenticate_api", side_effect=fake_authenticate_api), patch(
+            "app.routes.list_schools",
+            side_effect=fake_list_schools,
+        ), patch(
             "app.routes.fetch_school_health",
             side_effect=fake_fetch_school_health,
         ):
@@ -1481,6 +1523,82 @@ class BackfillTrackingTests(unittest.TestCase):
 
             columns = {column["name"] for column in inspect(engine).get_columns("school_snapshots")}
             self.assertIn("nightly_halted", columns)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_ensure_schema_updates_adds_error_analysis_signature_metadata_columns(self):
+        temp_dir = tempfile.mkdtemp(prefix="client-health-error-schema-test-")
+        try:
+            db_path = os.path.join(temp_dir, "schema_test.db")
+            engine = create_engine(f"sqlite:///{db_path}")
+            with engine.begin() as connection:
+                connection.exec_driver_sql(
+                    """
+                    CREATE TABLE school_snapshots (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        snapshot_date VARCHAR(10) NOT NULL,
+                        school VARCHAR(255) NOT NULL,
+                        display_name VARCHAR(255) NOT NULL,
+                        products_json TEXT DEFAULT '[]',
+                        created_at DATETIME
+                    )
+                    """
+                )
+                connection.exec_driver_sql(
+                    """
+                    CREATE TABLE error_analysis_groups (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        snapshot_date VARCHAR(10) NOT NULL,
+                        school VARCHAR(255) NOT NULL,
+                        display_name VARCHAR(255) NOT NULL,
+                        sis_platform VARCHAR(255),
+                        entity_type VARCHAR(255),
+                        error_code VARCHAR(255),
+                        signature_key VARCHAR(64) NOT NULL,
+                        normalized_message TEXT NOT NULL,
+                        sample_message TEXT NOT NULL,
+                        count INTEGER NOT NULL DEFAULT 0,
+                        sample_errors_json TEXT NOT NULL DEFAULT '[]',
+                        term_codes_json TEXT NOT NULL DEFAULT '[]',
+                        created_at DATETIME NOT NULL
+                    )
+                    """
+                )
+                connection.exec_driver_sql(
+                    """
+                    CREATE TABLE error_analysis_details (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        snapshot_date VARCHAR(10) NOT NULL,
+                        school VARCHAR(255) NOT NULL,
+                        display_name VARCHAR(255) NOT NULL,
+                        sis_platform VARCHAR(255),
+                        entity_type VARCHAR(255),
+                        error_code VARCHAR(255),
+                        signature_key VARCHAR(64) NOT NULL,
+                        signature_label TEXT NOT NULL,
+                        normalized_message TEXT NOT NULL,
+                        full_error_text TEXT NOT NULL,
+                        entity_display_name VARCHAR(255),
+                        merge_report_id VARCHAR(255),
+                        schedule_type VARCHAR(255),
+                        term_codes_json TEXT NOT NULL DEFAULT '[]',
+                        raw_error_json TEXT NOT NULL,
+                        created_at DATETIME NOT NULL
+                    )
+                    """
+                )
+
+            ensure_schema_updates(engine)
+
+            group_columns = {column["name"] for column in inspect(engine).get_columns("error_analysis_groups")}
+            detail_columns = {column["name"] for column in inspect(engine).get_columns("error_analysis_details")}
+            self.assertIn("signature_version", group_columns)
+            self.assertIn("signature_strategy", group_columns)
+            self.assertIn("canonical_error_code", group_columns)
+            self.assertIn("legacy_signature_key", group_columns)
+            self.assertIn("message_template", detail_columns)
+            self.assertIn("operation_name", detail_columns)
+            self.assertIn("canonical_error_code", detail_columns)
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -3079,6 +3197,7 @@ class ErrorAnalysisEndpointTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["distinctSignatures"], 2)
         self.assertEqual(payload["trends"][0]["snapshotDate"], "2026-04-12")
         self.assertEqual(payload["signatures"][0]["signatureKey"], "sig-b")
+        self.assertEqual(payload["signatures"][0]["signatureVersion"], "v1")
         self.assertEqual(payload["signatures"][0]["latestMergeReport"]["mergeReportId"], "report-b2")
         self.assertEqual(payload["signatures"][0]["dominantSchoolMergeReport"]["mergeReportId"], "report-b1")
         self.assertEqual(payload["signatures"][0]["impactedSchools"][0]["school"], "foo01")
@@ -3088,6 +3207,7 @@ class ErrorAnalysisEndpointTests(unittest.TestCase):
         sis_breakdowns = {row["key"]: row for row in payload["sisBreakdowns"]}
         self.assertEqual(sis_breakdowns["PeopleSoftDirect"]["key"], "PeopleSoftDirect")
         self.assertEqual(sis_breakdowns["PeopleSoftDirect"]["associatedSignatures"][0]["signatureKey"], "sig-b")
+        self.assertEqual(sis_breakdowns["PeopleSoftDirect"]["associatedSignatures"][0]["signatureVersion"], "v1")
         self.assertEqual(len(payload["filterOptions"]["schools"]), 2)
 
     def test_error_analysis_filters_by_school_and_sis(self):

@@ -201,49 +201,47 @@ def ensure_schema_updates(engine) -> None:
         if "active_users_json" not in columns:
             connection.execute(text("ALTER TABLE school_snapshots ADD COLUMN active_users_json TEXT DEFAULT '[]'"))
 
-    if "sync_runs" not in table_names:
-        return
-
-    sync_run_columns = {column["name"] for column in inspector.get_columns("sync_runs")}
-    with engine.begin() as connection:
-        if "schools_processed" not in sync_run_columns:
-            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN schools_processed INTEGER DEFAULT 0"))
-        if "total_schools" not in sync_run_columns:
-            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN total_schools INTEGER DEFAULT 0"))
-        if "started_at" not in sync_run_columns:
-            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN started_at DATETIME"))
-        if "start_date" not in sync_run_columns:
-            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN start_date VARCHAR(10)"))
-        if "end_date" not in sync_run_columns:
-            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN end_date VARCHAR(10)"))
-        if "date_count" not in sync_run_columns:
-            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN date_count INTEGER"))
-        if "last_heartbeat_at" not in sync_run_columns:
-            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN last_heartbeat_at DATETIME"))
-        if "last_progress_at" not in sync_run_columns:
-            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN last_progress_at DATETIME"))
-        if "current_school" not in sync_run_columns:
-            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN current_school VARCHAR(255)"))
-        if "current_snapshot_date" not in sync_run_columns:
-            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN current_snapshot_date VARCHAR(10)"))
-        if "completed_units" not in sync_run_columns:
-            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN completed_units INTEGER DEFAULT 0"))
-        if "failed_units" not in sync_run_columns:
-            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN failed_units INTEGER DEFAULT 0"))
-        if "skipped_units" not in sync_run_columns:
-            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN skipped_units INTEGER DEFAULT 0"))
-        if "status_detail" not in sync_run_columns:
-            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN status_detail VARCHAR(64)"))
-        if "failure_reason" not in sync_run_columns:
-            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN failure_reason TEXT"))
-        if "failed_units_sample_json" not in sync_run_columns:
-            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN failed_units_sample_json TEXT"))
-        if "checkpoint_state_json" not in sync_run_columns:
-            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN checkpoint_state_json TEXT"))
-        if "errors_json" not in sync_run_columns:
-            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN errors_json TEXT"))
-        if "timing_json" not in sync_run_columns:
-            connection.execute(text("ALTER TABLE sync_runs ADD COLUMN timing_json TEXT"))
+    if "sync_runs" in table_names:
+        sync_run_columns = {column["name"] for column in inspector.get_columns("sync_runs")}
+        with engine.begin() as connection:
+            if "schools_processed" not in sync_run_columns:
+                connection.execute(text("ALTER TABLE sync_runs ADD COLUMN schools_processed INTEGER DEFAULT 0"))
+            if "total_schools" not in sync_run_columns:
+                connection.execute(text("ALTER TABLE sync_runs ADD COLUMN total_schools INTEGER DEFAULT 0"))
+            if "started_at" not in sync_run_columns:
+                connection.execute(text("ALTER TABLE sync_runs ADD COLUMN started_at DATETIME"))
+            if "start_date" not in sync_run_columns:
+                connection.execute(text("ALTER TABLE sync_runs ADD COLUMN start_date VARCHAR(10)"))
+            if "end_date" not in sync_run_columns:
+                connection.execute(text("ALTER TABLE sync_runs ADD COLUMN end_date VARCHAR(10)"))
+            if "date_count" not in sync_run_columns:
+                connection.execute(text("ALTER TABLE sync_runs ADD COLUMN date_count INTEGER"))
+            if "last_heartbeat_at" not in sync_run_columns:
+                connection.execute(text("ALTER TABLE sync_runs ADD COLUMN last_heartbeat_at DATETIME"))
+            if "last_progress_at" not in sync_run_columns:
+                connection.execute(text("ALTER TABLE sync_runs ADD COLUMN last_progress_at DATETIME"))
+            if "current_school" not in sync_run_columns:
+                connection.execute(text("ALTER TABLE sync_runs ADD COLUMN current_school VARCHAR(255)"))
+            if "current_snapshot_date" not in sync_run_columns:
+                connection.execute(text("ALTER TABLE sync_runs ADD COLUMN current_snapshot_date VARCHAR(10)"))
+            if "completed_units" not in sync_run_columns:
+                connection.execute(text("ALTER TABLE sync_runs ADD COLUMN completed_units INTEGER DEFAULT 0"))
+            if "failed_units" not in sync_run_columns:
+                connection.execute(text("ALTER TABLE sync_runs ADD COLUMN failed_units INTEGER DEFAULT 0"))
+            if "skipped_units" not in sync_run_columns:
+                connection.execute(text("ALTER TABLE sync_runs ADD COLUMN skipped_units INTEGER DEFAULT 0"))
+            if "status_detail" not in sync_run_columns:
+                connection.execute(text("ALTER TABLE sync_runs ADD COLUMN status_detail VARCHAR(64)"))
+            if "failure_reason" not in sync_run_columns:
+                connection.execute(text("ALTER TABLE sync_runs ADD COLUMN failure_reason TEXT"))
+            if "failed_units_sample_json" not in sync_run_columns:
+                connection.execute(text("ALTER TABLE sync_runs ADD COLUMN failed_units_sample_json TEXT"))
+            if "checkpoint_state_json" not in sync_run_columns:
+                connection.execute(text("ALTER TABLE sync_runs ADD COLUMN checkpoint_state_json TEXT"))
+            if "errors_json" not in sync_run_columns:
+                connection.execute(text("ALTER TABLE sync_runs ADD COLUMN errors_json TEXT"))
+            if "timing_json" not in sync_run_columns:
+                connection.execute(text("ALTER TABLE sync_runs ADD COLUMN timing_json TEXT"))
 
     if "backfill_work_units" not in table_names:
         with engine.begin() as connection:
@@ -300,7 +298,15 @@ def ensure_schema_updates(engine) -> None:
                         sis_platform VARCHAR(255),
                         entity_type VARCHAR(255),
                         error_code VARCHAR(255),
+                        canonical_error_code VARCHAR(255),
+                        canonical_code_source VARCHAR(64),
+                        operation_name VARCHAR(255),
                         signature_key VARCHAR(64) NOT NULL,
+                        legacy_signature_key VARCHAR(64),
+                        signature_version VARCHAR(32),
+                        signature_strategy VARCHAR(64),
+                        signature_confidence INTEGER,
+                        message_template TEXT,
                         normalized_message TEXT NOT NULL,
                         sample_message TEXT NOT NULL,
                         count INTEGER NOT NULL DEFAULT 0,
@@ -330,8 +336,16 @@ def ensure_schema_updates(engine) -> None:
                         sis_platform VARCHAR(255),
                         entity_type VARCHAR(255),
                         error_code VARCHAR(255),
+                        canonical_error_code VARCHAR(255),
+                        canonical_code_source VARCHAR(64),
+                        operation_name VARCHAR(255),
                         signature_key VARCHAR(64) NOT NULL,
+                        legacy_signature_key VARCHAR(64),
+                        signature_version VARCHAR(32),
+                        signature_strategy VARCHAR(64),
+                        signature_confidence INTEGER,
                         signature_label TEXT NOT NULL,
+                        message_template TEXT,
                         normalized_message TEXT NOT NULL,
                         full_error_text TEXT NOT NULL,
                         entity_display_name VARCHAR(255),
@@ -349,8 +363,54 @@ def ensure_schema_updates(engine) -> None:
             connection.execute(text("CREATE INDEX ix_error_analysis_details_sis_platform ON error_analysis_details (sis_platform)"))
             connection.execute(text("CREATE INDEX ix_error_analysis_details_entity_type ON error_analysis_details (entity_type)"))
             connection.execute(text("CREATE INDEX ix_error_analysis_details_error_code ON error_analysis_details (error_code)"))
+            connection.execute(text("CREATE INDEX ix_error_analysis_details_canonical_error_code ON error_analysis_details (canonical_error_code)"))
             connection.execute(text("CREATE INDEX ix_error_analysis_details_signature_key ON error_analysis_details (signature_key)"))
             connection.execute(text("CREATE INDEX ix_error_analysis_details_merge_report_id ON error_analysis_details (merge_report_id)"))
+
+    if "error_analysis_groups" in table_names:
+        group_columns = {column["name"] for column in inspector.get_columns("error_analysis_groups")}
+        with engine.begin() as connection:
+            if "canonical_error_code" not in group_columns:
+                connection.execute(text("ALTER TABLE error_analysis_groups ADD COLUMN canonical_error_code VARCHAR(255)"))
+            if "canonical_code_source" not in group_columns:
+                connection.execute(text("ALTER TABLE error_analysis_groups ADD COLUMN canonical_code_source VARCHAR(64)"))
+            if "operation_name" not in group_columns:
+                connection.execute(text("ALTER TABLE error_analysis_groups ADD COLUMN operation_name VARCHAR(255)"))
+            if "legacy_signature_key" not in group_columns:
+                connection.execute(text("ALTER TABLE error_analysis_groups ADD COLUMN legacy_signature_key VARCHAR(64)"))
+            if "signature_version" not in group_columns:
+                connection.execute(text("ALTER TABLE error_analysis_groups ADD COLUMN signature_version VARCHAR(32)"))
+            if "signature_strategy" not in group_columns:
+                connection.execute(text("ALTER TABLE error_analysis_groups ADD COLUMN signature_strategy VARCHAR(64)"))
+            if "signature_confidence" not in group_columns:
+                connection.execute(text("ALTER TABLE error_analysis_groups ADD COLUMN signature_confidence INTEGER"))
+            if "message_template" not in group_columns:
+                connection.execute(text("ALTER TABLE error_analysis_groups ADD COLUMN message_template TEXT"))
+
+    if "error_analysis_details" in table_names:
+        detail_columns = {column["name"] for column in inspector.get_columns("error_analysis_details")}
+        with engine.begin() as connection:
+            if "canonical_error_code" not in detail_columns:
+                connection.execute(text("ALTER TABLE error_analysis_details ADD COLUMN canonical_error_code VARCHAR(255)"))
+            if "canonical_code_source" not in detail_columns:
+                connection.execute(text("ALTER TABLE error_analysis_details ADD COLUMN canonical_code_source VARCHAR(64)"))
+            if "operation_name" not in detail_columns:
+                connection.execute(text("ALTER TABLE error_analysis_details ADD COLUMN operation_name VARCHAR(255)"))
+            if "legacy_signature_key" not in detail_columns:
+                connection.execute(text("ALTER TABLE error_analysis_details ADD COLUMN legacy_signature_key VARCHAR(64)"))
+            if "signature_version" not in detail_columns:
+                connection.execute(text("ALTER TABLE error_analysis_details ADD COLUMN signature_version VARCHAR(32)"))
+            if "signature_strategy" not in detail_columns:
+                connection.execute(text("ALTER TABLE error_analysis_details ADD COLUMN signature_strategy VARCHAR(64)"))
+            if "signature_confidence" not in detail_columns:
+                connection.execute(text("ALTER TABLE error_analysis_details ADD COLUMN signature_confidence INTEGER"))
+            if "message_template" not in detail_columns:
+                connection.execute(text("ALTER TABLE error_analysis_details ADD COLUMN message_template TEXT"))
+
+        detail_indexes = {index["name"] for index in inspector.get_indexes("error_analysis_details")}
+        if "ix_error_analysis_details_canonical_error_code" not in detail_indexes:
+            with engine.begin() as connection:
+                connection.execute(text("CREATE INDEX ix_error_analysis_details_canonical_error_code ON error_analysis_details (canonical_error_code)"))
 
 
 def get_db() -> Session:
