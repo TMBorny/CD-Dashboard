@@ -513,15 +513,35 @@ const buildPaginatedSignatures = (count: number) =>
     };
   });
 
+const unwrapMaybeRef = (value: unknown): unknown => {
+  if (!value || typeof value !== 'object') return value;
+  if ('value' in value) {
+    return unwrapMaybeRef((value as { value: unknown }).value);
+  }
+  return value;
+};
+
+const unwrapQueryOptions = (options: unknown): Record<string, unknown> | null => {
+  const unwrapped = unwrapMaybeRef(options);
+  if (!unwrapped || typeof unwrapped !== 'object') return null;
+  return unwrapped as Record<string, unknown>;
+};
+
+const getQueryKeyValue = (queryKey: unknown): unknown =>
+  Array.isArray(queryKey) ? queryKey : unwrapMaybeRef(queryKey);
+
 const getUseQueryOptionsByKey = async (queryName: string) => {
   const vueQuery = await import('@tanstack/vue-query');
   const useQueryMock = vi.mocked(vueQuery.useQuery);
-  return useQueryMock.mock.calls
-    .map(([options]) => options)
-    .findLast((options) => {
-      const queryKey = options?.queryKey?.value ?? options?.queryKey;
-      return Array.isArray(queryKey) && queryKey[0] === queryName;
-    });
+  const optionCalls = useQueryMock.mock.calls.map(([options]) => options);
+  for (let index = optionCalls.length - 1; index >= 0; index -= 1) {
+    const options = unwrapQueryOptions(optionCalls[index]);
+    const queryKey = getQueryKeyValue(options?.queryKey);
+    if (Array.isArray(queryKey) && queryKey[0] === queryName) {
+      return options;
+    }
+  }
+  return undefined;
 };
 
 describe('ErrorAnalysisDashboard', () => {
@@ -628,9 +648,9 @@ describe('ErrorAnalysisDashboard', () => {
       },
     });
 
-    const aggregateQuery = await getUseQueryOptionsByKey('errorAnalysis');
-    const sisCountsQuery = await getUseQueryOptionsByKey('errorAnalysisSisCounts');
-    const detailQuery = await getUseQueryOptionsByKey('errorAnalysisDetails');
+    const aggregateQuery = await getUseQueryOptionsByKey('errorAnalysis') as { queryFn?: () => Promise<unknown> } | undefined;
+    const sisCountsQuery = await getUseQueryOptionsByKey('errorAnalysisSisCounts') as { queryFn?: () => Promise<unknown> } | undefined;
+    const detailQuery = await getUseQueryOptionsByKey('errorAnalysisDetails') as { queryFn?: () => Promise<unknown> } | undefined;
 
     await aggregateQuery?.queryFn?.();
     await sisCountsQuery?.queryFn?.();
