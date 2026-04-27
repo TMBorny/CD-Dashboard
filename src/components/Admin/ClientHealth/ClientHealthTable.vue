@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import type { ClientHealthSnapshot } from '@/types/clientHealth';
 import Badge from '@/components/ui/Badge.vue';
 import { formatSchoolLabel } from '@/utils/schoolNames';
+import { getClientHealthScore, getClientHealthStatusLabel, getMergeSuccessRate } from '@/utils/clientHealth';
 
 interface Props {
   schools: ClientHealthSnapshot[];
@@ -79,61 +80,9 @@ const formatDuration = (ms?: number) => {
   return `${hours}h ${minutes}m`;
 };
 
-const nightlyRate = (school: ClientHealthSnapshot) => {
-  const { total, succeeded, noData, finishedWithIssues } = school.merges.nightly;
-  const validTotal = total - noData;
-  return validTotal > 0 ? ((succeeded + (finishedWithIssues * 0.5)) / validTotal) * 100 : null;
-};
-
-const realtimeRate = (school: ClientHealthSnapshot) => {
-  const { total, succeeded, noData, finishedWithIssues } = school.merges.realtime;
-  const validTotal = total - noData;
-  return validTotal > 0 ? ((succeeded + (finishedWithIssues * 0.5)) / validTotal) * 100 : null;
-};
-
-const getBaseSuccessScore = (school: ClientHealthSnapshot) => {
-  const rates = [nightlyRate(school), realtimeRate(school)].filter(
-    (value): value is number => value !== null,
-  );
-
-  if (rates.length === 0) {
-    return 0;
-  }
-
-  return rates.reduce((sum, value) => sum + value, 0) / rates.length;
-};
-
-const getErrorPenalty = (school: ClientHealthSnapshot) => {
-  const mergeErrorsCount = school.mergeErrorsCount ?? 0;
-  if (mergeErrorsCount <= 0) {
-    return 0;
-  }
-
-  // Use a capped logarithmic penalty so errors matter without overwhelming the score.
-  return Math.min(20, Math.log2(mergeErrorsCount + 1) * 4);
-};
-
-const getActivityAdjustment = (school: ClientHealthSnapshot) => {
-  if (school.activeUsers24h >= 20) {
-    return 4;
-  }
-
-  if (school.activeUsers24h >= 5) {
-    return 2;
-  }
-
-  if (school.activeUsers24h >= 1) {
-    return 0;
-  }
-
-  return -3;
-};
-
-const getHealthScoreValue = (school: ClientHealthSnapshot) => {
-  const score =
-    getBaseSuccessScore(school) - getErrorPenalty(school) + getActivityAdjustment(school);
-  return Math.max(0, Math.min(100, score));
-};
+const nightlyRate = (school: ClientHealthSnapshot) => getMergeSuccessRate(school.merges.nightly);
+const realtimeRate = (school: ClientHealthSnapshot) => getMergeSuccessRate(school.merges.realtime);
+const getHealthScoreValue = (school: ClientHealthSnapshot) => getClientHealthScore(school);
 
 const filteredSchools = computed(() => {
   const q = searchQuery.value.trim().toLowerCase();
@@ -234,10 +183,10 @@ const updateSortBy = (field: typeof sortBy.value) => {
 };
 
 const getStatusBadge = (school: ClientHealthSnapshot) => {
-  const score = getHealthScoreValue(school);
+  const status = getClientHealthStatusLabel(getHealthScoreValue(school));
 
-  if (score >= 85) return { label: 'Healthy', tone: 'emerald' as const };
-  if (score >= 65) return { label: 'Warning', tone: 'amber' as const };
+  if (status === 'Healthy') return { label: status, tone: 'emerald' as const };
+  if (status === 'Warning') return { label: status, tone: 'amber' as const };
   return { label: 'At Risk', tone: 'rose' as const };
 };
 

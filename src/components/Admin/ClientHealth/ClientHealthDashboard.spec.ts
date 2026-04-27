@@ -33,6 +33,22 @@ vi.mock('@tanstack/vue-query', () => ({
               activeUsers24h: 0,
               createdAt: new Date('2026-04-12T00:00:00Z'),
             },
+            {
+              snapshotDate: '2026-04-12',
+              school: 'foo99',
+              displayName: 'Foo University',
+              sisPlatform: 'Colleague',
+              products: [],
+              merges: {
+                nightly: { total: 4, succeeded: 1, failed: 2, finishedWithIssues: 0, noData: 1, halted: 0, mergeTimeMs: 0 },
+                realtime: { total: 3, succeeded: 1, failed: 2, finishedWithIssues: 0, noData: 0 },
+                manual: { total: 0, succeeded: 0, failed: 0, finishedWithIssues: 0, noData: 0 },
+              },
+              recentFailedMerges: [{ id: 'nightly-7' }],
+              mergeErrorsCount: 5,
+              activeUsers24h: 1,
+              createdAt: new Date('2026-04-12T00:00:00Z'),
+            },
           ],
         }),
         isLoading: ref(false),
@@ -73,6 +89,38 @@ vi.mock('@tanstack/vue-query', () => ({
             recentFailedMerges: [],
             mergeErrorsCount: 1,
             activeUsers24h: 4,
+            createdAt: new Date('2026-04-13T00:00:00Z'),
+          },
+          {
+            snapshotDate: '2026-04-12',
+            school: 'foo99',
+            displayName: 'Foo University',
+            sisPlatform: 'Colleague',
+            products: [],
+            merges: {
+              nightly: { total: 4, succeeded: 1, failed: 2, finishedWithIssues: 0, noData: 1, halted: 0, mergeTimeMs: 0 },
+              realtime: { total: 3, succeeded: 1, failed: 2, finishedWithIssues: 0, noData: 0 },
+              manual: { total: 0, succeeded: 0, failed: 0, finishedWithIssues: 0, noData: 0 },
+            },
+            recentFailedMerges: [{ id: 'nightly-7' }],
+            mergeErrorsCount: 5,
+            activeUsers24h: 1,
+            createdAt: new Date('2026-04-12T00:00:00Z'),
+          },
+          {
+            snapshotDate: '2026-04-13',
+            school: 'foo99',
+            displayName: 'Foo University',
+            sisPlatform: 'Colleague',
+            products: [],
+            merges: {
+              nightly: { total: 5, succeeded: 4, failed: 0, finishedWithIssues: 1, noData: 0, halted: 0, mergeTimeMs: 0 },
+              realtime: { total: 2, succeeded: 2, failed: 0, finishedWithIssues: 0, noData: 0 },
+              manual: { total: 0, succeeded: 0, failed: 0, finishedWithIssues: 0, noData: 0 },
+            },
+            recentFailedMerges: [],
+            mergeErrorsCount: 0,
+            activeUsers24h: 11,
             createdAt: new Date('2026-04-13T00:00:00Z'),
           },
         ]),
@@ -135,6 +183,22 @@ describe('ClientHealthDashboard', () => {
 
     expect(wrapper.text()).toContain('were halted by change threshold');
     expect(wrapper.findAll('.chart-stub').some((node) => node.text().includes('Halted'))).toBe(true);
+  });
+
+  it('renders a latest snapshot SIS health comparison chart', async () => {
+    const { default: ClientHealthDashboard } = await import('./ClientHealthDashboard.vue');
+    const wrapper = mount(ClientHealthDashboard, {
+      global: {
+        stubs: {
+          ClientHealthSummaryCards: true,
+          ClientHealthTable: true,
+        },
+      },
+    });
+
+    expect(wrapper.text()).toContain('Client Health by SIS');
+    expect(wrapper.text()).toContain('Compare the latest health-score bands across SIS platforms');
+    expect(wrapper.find('[data-testid="sis-health-chart"]').text()).toContain('Healthy,Warning,At Risk');
   });
 
   it('renders aggregated realtime activity and outcome charts on the main page', async () => {

@@ -10,6 +10,7 @@ import VueApexCharts from 'vue3-apexcharts';
 import Card from '@/components/ui/Card.vue';
 import { useChartOptions, useStackedBarChartOptions } from '@/composables/useChartOptions';
 import { formatLocalDateTime } from '@/utils/dateTime';
+import { getClientHealthScore, getClientHealthStatusLabel, getMergeSuccessRate } from '@/utils/clientHealth';
 import { formatSchoolLabel } from '@/utils/schoolNames';
 
 const route = useRoute();
@@ -101,37 +102,16 @@ const formatDuration = (ms?: number) => {
 const latestSisPlatformLabel = computed(() => latestSnapshot.value?.sisPlatform || 'Unknown');
 const latestProducts = computed(() => latestSnapshot.value?.products ?? []);
 const latestNightlyRate = computed(() => {
-  if (!latestSnapshot.value) return null;
-  const { total, succeeded, noData, finishedWithIssues } = latestSnapshot.value.merges.nightly;
-  const validTotal = total - noData;
-  return validTotal > 0 ? ((succeeded + (finishedWithIssues * 0.5)) / validTotal) * 100 : null;
+  return getMergeSuccessRate(latestSnapshot.value?.merges.nightly);
 });
 const latestRealtimeRate = computed(() => {
-  if (!latestSnapshot.value) return null;
-  const { total, succeeded, noData, finishedWithIssues } = latestSnapshot.value.merges.realtime;
-  const validTotal = total - noData;
-  return validTotal > 0 ? ((succeeded + (finishedWithIssues * 0.5)) / validTotal) * 100 : null;
+  return getMergeSuccessRate(latestSnapshot.value?.merges.realtime);
 });
 const latestHealthScore = computed(() => {
-  if (!latestSnapshot.value) return null;
-  const rates = [latestNightlyRate.value, latestRealtimeRate.value].filter(
-    (value): value is number => value !== null,
-  );
-  const baseSuccess = rates.length > 0
-    ? rates.reduce((sum, value) => sum + value, 0) / rates.length
-    : 0;
-  const openErrors = latestSnapshot.value.mergeErrorsCount ?? 0;
-  const errorPenalty = openErrors > 0 ? Math.min(20, Math.log2(openErrors + 1) * 4) : 0;
-  const activeUsers = latestSnapshot.value.activeUsers24h;
-  const activityAdjustment = activeUsers >= 20 ? 4 : activeUsers >= 5 ? 2 : activeUsers >= 1 ? 0 : -3;
-  return Math.max(0, Math.min(100, baseSuccess - errorPenalty + activityAdjustment));
+  return latestSnapshot.value ? getClientHealthScore(latestSnapshot.value) : null;
 });
 const latestStatusLabel = computed(() => {
-  const score = latestHealthScore.value;
-  if (score === null) return 'Unknown';
-  if (score >= 85) return 'Healthy';
-  if (score >= 65) return 'Warning';
-  return 'At Risk';
+  return getClientHealthStatusLabel(latestHealthScore.value);
 });
 const latestStatusToneClass = computed(() => {
   switch (latestStatusLabel.value) {

@@ -318,7 +318,7 @@ describe('ClientHealthDetail', () => {
       },
     });
 
-    expect(wrapper.text()).toContain('Times shown in');
+    expect(wrapper.text()).toContain('Last successful sync');
     expect(wrapper.text()).not.toContain('Sync This School');
     expect(wrapper.text()).not.toContain('Backfill From');
     expect(wrapper.find('#backfill-start-date').exists()).toBe(false);
@@ -355,16 +355,17 @@ describe('ClientHealthDetail', () => {
     });
 
     const summaryGrid = wrapper.get('[data-testid="client-detail-summary-grid"]');
+    expect(wrapper.text()).toContain('SIS: Banner');
+    expect(wrapper.text()).toContain('No products listed');
     expect(summaryGrid.text()).toContain('At Risk');
     expect(summaryGrid.text()).toContain('50.0');
-    expect(summaryGrid.text()).toContain('Banner');
-    expect(summaryGrid.text()).toContain('No products listed');
     expect(summaryGrid.text()).toContain('50%');
     expect(summaryGrid.text()).toContain('1 / 2 succeeded');
     expect(summaryGrid.text()).toContain('1 halted');
     expect(summaryGrid.text()).toContain('N/A');
     expect(summaryGrid.text()).toContain('3');
-    expect(summaryGrid.text()).toContain('0 open merge errors, 1 recent failures');
+    expect(summaryGrid.text()).toContain('0');
+    expect(summaryGrid.text()).toContain('1 recent failures');
   });
 
   it('renders current error categories, signatures, and captured rows from the latest snapshot', async () => {

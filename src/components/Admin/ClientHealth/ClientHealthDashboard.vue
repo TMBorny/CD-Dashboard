@@ -2,9 +2,11 @@
 import { ref, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useQuery } from '@tanstack/vue-query';
+import type { ApexOptions } from 'apexcharts';
 import { getClientHealth, getClientHealthHistory } from '@/api';
 import type { ClientHealthSnapshot } from '@/types/clientHealth';
 import { useChartOptions, useStackedBarChartOptions } from '@/composables/useChartOptions';
+import { getClientHealthScore, getClientHealthStatusLabel } from '@/utils/clientHealth';
 import { formatSchoolLabel } from '@/utils/schoolNames';
 import ClientHealthSummaryCards from './ClientHealthSummaryCards.vue';
 import ClientHealthTable from './ClientHealthTable.vue';
@@ -258,12 +260,7 @@ const activeUsersOptions = computed(() => useChartOptions({
 const atRiskSeries = computed(() => {
   const byDate = new Map<string, number>();
   filteredHistory.value.forEach((s: ClientHealthSnapshot) => {
-    const n = s.merges.nightly;
-    const validTotal = n.total - (n.noData || 0);
-    if (validTotal <= 0) return;
-    const rate = validTotal > 0 ? ((n.succeeded + (n.finishedWithIssues || 0) * 0.5) / validTotal) * 100 : 0;
-    const mergeErrorsCount = s.mergeErrorsCount ?? 0;
-    const score = Math.max(0, Math.min(100, rate - Math.min(20, Math.log2(mergeErrorsCount + 1) * 4)));
+    const score = getClientHealthScore(s);
     if (score < 65) byDate.set(s.snapshotDate, (byDate.get(s.snapshotDate) ?? 0) + 1);
   });
   return [{ name: 'Schools at Risk', data: chartDates.value.map((d) => byDate.get(d) ?? 0) }];
@@ -272,6 +269,96 @@ const atRiskOptions = computed(() => useChartOptions({
   colors: ['#f59e0b'],
   categories: chartDates.value,
 }));
+
+const sisHealthRows = computed(() => {
+  const groups = new Map<string, {
+    label: string;
+    schools: number;
+    totalHealthScore: number;
+    healthy: number;
+    warning: number;
+    atRisk: number;
+    averageHealthScore: number;
+  }>();
+
+  filteredSchools.value.forEach((school: ClientHealthSnapshot) => {
+    const label = school.sisPlatform || 'Unknown';
+    const existing = groups.get(label) ?? {
+      label,
+      schools: 0,
+      totalHealthScore: 0,
+      healthy: 0,
+      warning: 0,
+      atRisk: 0,
+      averageHealthScore: 0,
+    };
+    const score = getClientHealthScore(school);
+    const status = getClientHealthStatusLabel(score);
+
+    existing.schools += 1;
+    existing.totalHealthScore += score;
+
+    if (status === 'Healthy') existing.healthy += 1;
+    else if (status === 'Warning') existing.warning += 1;
+    else existing.atRisk += 1;
+
+    groups.set(label, existing);
+  });
+
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      averageHealthScore: group.schools > 0
+        ? parseFloat((group.totalHealthScore / group.schools).toFixed(1))
+        : 0,
+    }))
+    .sort((left, right) =>
+      right.averageHealthScore - left.averageHealthScore
+      || right.schools - left.schools
+      || left.label.localeCompare(right.label));
+});
+
+const sisHealthSeries = computed(() => [
+  { name: 'Healthy', data: sisHealthRows.value.map((row) => row.healthy) },
+  { name: 'Warning', data: sisHealthRows.value.map((row) => row.warning) },
+  { name: 'At Risk', data: sisHealthRows.value.map((row) => row.atRisk) },
+]);
+
+const sisHealthOptions = computed<ApexOptions>(() => {
+  const baseOptions = useStackedBarChartOptions({
+    categories: sisHealthRows.value.map((row) => row.label),
+    colors: ['#10b981', '#f59e0b', '#ef4444'],
+  });
+
+  return {
+    ...baseOptions,
+    xaxis: {
+      ...baseOptions.xaxis,
+      labels: {
+        ...(baseOptions.xaxis?.labels ?? {}),
+        rotate: 0,
+        trim: false,
+      },
+    },
+    tooltip: {
+      ...baseOptions.tooltip,
+      shared: true,
+      intersect: false,
+      y: {
+        formatter: (value: number | undefined, context?: { dataPointIndex: number }) => {
+          if (typeof value !== 'number') {
+            return '';
+          }
+
+          const row = sisHealthRows.value[context?.dataPointIndex ?? -1];
+          return row
+            ? `${value} school${value === 1 ? '' : 's'} (avg health ${row.averageHealthScore})`
+            : `${value}`;
+        },
+      },
+    },
+  };
+});
 
 const handleRowClick = (school: ClientHealthSnapshot) => {
   router.push({ name: 'AdminClientHealthDetail', params: { school: school.school } });
@@ -329,6 +416,14 @@ const handleRowClick = (school: ClientHealthSnapshot) => {
 
         <!-- 4-Up Chart Grid -->
         <div class="grid grid-cols-1 gap-6 xl:grid-cols-2">
+          <div class="flex flex-col rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+            <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Latest Snapshot</p>
+            <h3 class="mt-2 text-base font-semibold text-slate-950">Client Health by SIS</h3>
+            <p class="mt-1 text-xs text-slate-500">Compare the latest health-score bands across SIS platforms for the currently selected schools. SIS groups are sorted by average health score.</p>
+            <div class="mt-4 flex-1 min-h-[250px]" data-testid="sis-health-chart">
+              <VueApexCharts type="bar" :options="sisHealthOptions" :series="sisHealthSeries" height="100%" />
+            </div>
+          </div>
           <!-- Chart 1: Merge Outcomes -->
           <div class="flex flex-col rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
             <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Fleet Health</p>
@@ -360,7 +455,7 @@ const handleRowClick = (school: ClientHealthSnapshot) => {
           <div class="flex flex-col rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
             <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Fleet Risk</p>
             <h3 class="mt-2 text-base font-semibold text-slate-950">Schools at Risk</h3>
-            <p class="mt-1 text-xs text-slate-500">Count of schools with a computed health score below 65, excluding schools with no valid nightly merge data on that date.</p>
+            <p class="mt-1 text-xs text-slate-500">Count of schools scoring below 65 on the same composite health score used in the school table and SIS comparison chart.</p>
             <div class="mt-4 flex-1 min-h-[250px]">
               <VueApexCharts type="line" :options="atRiskOptions" :series="atRiskSeries" height="100%" />
             </div>
