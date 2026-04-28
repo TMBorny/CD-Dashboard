@@ -1,8 +1,10 @@
 {
-  "capturedAt": "2026-04-27T14:07:50.226735+00:00",
-  "count": 1,
-  "snapshotDate": "2026-04-27",
+  "capturedAt": "2026-04-28T16:14:44.214756+00:00",
+  "count": 3,
+  "snapshotDate": "2026-04-28",
   "users": [
-    "apidmu@emailaccount.com"
+    "apidmu@emailaccount.com",
+    "jamie.loffredo@dmu.edu",
+    "jessica.stone@dmu.edu"
   ]
 }

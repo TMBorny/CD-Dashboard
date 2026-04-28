@@ -1,10 +1,13 @@
 {
-  "capturedAt": "2026-04-27T14:07:50.226716+00:00",
-  "count": 3,
-  "snapshotDate": "2026-04-27",
+  "capturedAt": "2026-04-28T16:14:44.214735+00:00",
+  "count": 6,
+  "snapshotDate": "2026-04-28",
   "users": [
     "bgiese@aurora.edu",
+    "hjameson@aurora.edu",
     "jeverhart@aurora.edu",
-    "preichertpowell@aurora.edu"
+    "jvanlear@aurora.edu",
+    "mdabros@aurora.edu",
+    "rkaur@aurora.edu"
   ]
 }

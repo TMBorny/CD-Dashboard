@@ -1,9 +1,18 @@
 {
-  "capturedAt": "2026-04-27T14:07:50.226716+00:00",
-  "count": 2,
-  "snapshotDate": "2026-04-27",
+  "capturedAt": "2026-04-28T16:14:44.214734+00:00",
+  "count": 11,
+  "snapshotDate": "2026-04-28",
   "users": [
+    "afleming@astate.edu",
+    "ahurdle@astate.edu",
+    "atabor@astate.edu",
+    "bmayberry@astate.edu",
+    "cahinkle@astate.edu",
     "chbrown@astate.edu",
-    "kdeford@astate.edu"
+    "kdeford@astate.edu",
+    "kimcdaniel@astate.edu",
+    "lsimmons@astate.edu",
+    "mtrusty@astate.edu",
+    "tdaffron@astate.edu"
   ]
 }

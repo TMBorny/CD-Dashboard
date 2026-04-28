@@ -1,10 +1,23 @@
 {
-  "capturedAt": "2026-04-27T14:07:50.226733+00:00",
-  "count": 3,
-  "snapshotDate": "2026-04-27",
+  "capturedAt": "2026-04-28T16:14:44.214753+00:00",
+  "count": 16,
+  "snapshotDate": "2026-04-28",
   "users": [
+    "carolmartinez@fullerton.edu",
+    "chshin@fullerton.edu",
+    "dmalinao@fullerton.edu",
+    "integration-csuf11@fullerton.edu",
     "integration-csuf12@fullerton.edu",
-    "integration-csuf2@fullerton.edu",
-    "mmcalexander@fullerton.edu"
+    "integration-csuf6@fullerton.edu",
+    "integration-csuf7@fullerton.edu",
+    "integration-csuf8@fullerton.edu",
+    "integration-csuf9@fullerton.edu",
+    "isaacru@fullerton.edu",
+    "jorgepena@fullerton.edu",
+    "kdische@fullerton.edu",
+    "lhartono@fullerton.edu",
+    "lvillegas@fullerton.edu",
+    "n.espinosa@fullerton.edu",
+    "scheduling@fullerton.edu"
   ]
 }

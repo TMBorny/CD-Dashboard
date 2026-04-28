@@ -1,10 +1,27 @@
 {
-  "capturedAt": "2026-04-27T14:07:50.226796+00:00",
-  "count": 3,
-  "snapshotDate": "2026-04-27",
+  "capturedAt": "2026-04-28T16:14:44.214828+00:00",
+  "count": 20,
+  "snapshotDate": "2026-04-28",
   "users": [
+    "ajcicat@stanford.edu",
+    "allysab@stanford.edu",
+    "ayalamac@stanford.edu",
+    "bavadiya@stanford.edu",
+    "ceriseb@stanford.edu",
+    "dhoversten@stanford.edu",
+    "elva@stanford.edu",
+    "hillferg@stanford.edu",
+    "hlubin@stanford.edu",
+    "jmp2@stanford.edu",
+    "klborg@stanford.edu",
     "kyracro@stanford.edu",
-    "michelle.bennett@stanford.edu",
-    "sebusse@stanford.edu"
+    "mborbas@stanford.edu",
+    "mgomezar@stanford.edu",
+    "nanaoki@stanford.edu",
+    "ofsiegel@stanford.edu",
+    "roger.kuhn@stanford.edu",
+    "rstring@stanford.edu",
+    "smsousa@stanford.edu",
+    "testing@coursedog.com"
   ]
 }

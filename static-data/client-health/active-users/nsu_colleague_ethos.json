@@ -1,8 +1,17 @@
 {
-  "capturedAt": "2026-04-27T14:07:50.226774+00:00",
-  "count": 1,
-  "snapshotDate": "2026-04-27",
+  "capturedAt": "2026-04-28T16:14:44.214798+00:00",
+  "count": 10,
+  "snapshotDate": "2026-04-28",
   "users": [
-    "jrdennison@nsu.edu"
+    "alvivas@nsu.edu",
+    "awashe@nsu.edu",
+    "cbanks@nsu.edu",
+    "jrdennison@nsu.edu",
+    "ksthomas@nsu.edu",
+    "mllawsondavenport@nsu.edu",
+    "mobyrd@nsu.edu",
+    "pmead@nsu.edu",
+    "sthayer@nsu.edu",
+    "wbhart@nsu.edu"
   ]
 }

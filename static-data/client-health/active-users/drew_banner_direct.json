@@ -1,6 +1,19 @@
 {
-  "capturedAt": "2026-04-27T14:07:50.226736+00:00",
-  "count": 0,
-  "snapshotDate": "2026-04-27",
-  "users": []
+  "capturedAt": "2026-04-28T16:14:44.214756+00:00",
+  "count": 12,
+  "snapshotDate": "2026-04-28",
+  "users": [
+    "bthompson@coursedog.com",
+    "jkourako@drew.edu",
+    "jlantz@drew.edu",
+    "kmurray2@drew.edu",
+    "kturner3@drew.edu",
+    "mvisse@drew.edu",
+    "pdolan@drew.edu",
+    "rsoderholm@drew.edu",
+    "scaldwell@drew.edu",
+    "sfeng@drew.edu",
+    "sfirestone@drew.edu",
+    "vtommasulo@drew.edu"
+  ]
 }

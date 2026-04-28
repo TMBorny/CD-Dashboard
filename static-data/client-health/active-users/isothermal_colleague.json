@@ -1,8 +1,17 @@
 {
-  "capturedAt": "2026-04-27T14:07:50.226751+00:00",
-  "count": 1,
-  "snapshotDate": "2026-04-27",
+  "capturedAt": "2026-04-28T16:14:44.214773+00:00",
+  "count": 10,
+  "snapshotDate": "2026-04-28",
   "users": [
-    "tfowler@isothermal.edu"
+    "clawter@isothermal.edu",
+    "cyoung@isothermal.edu",
+    "ddbarnard@isothermal.edu",
+    "hoxendine@isothermal.edu",
+    "jdale@isothermal.edu",
+    "jekstrom@isothermal.edu",
+    "jevarts@coursedog.com",
+    "jslone@coursedog.com",
+    "skilgo@isothermal.edu",
+    "tmcdowell@isothermal.edu"
   ]
 }

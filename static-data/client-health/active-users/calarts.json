@@ -1,6 +1,10 @@
 {
-  "capturedAt": "2026-04-27T14:07:50.226721+00:00",
-  "count": 0,
-  "snapshotDate": "2026-04-27",
-  "users": []
+  "capturedAt": "2026-04-28T16:14:44.214740+00:00",
+  "count": 3,
+  "snapshotDate": "2026-04-28",
+  "users": [
+    "gthomas@calarts.edu",
+    "lklahr@calarts.edu",
+    "lundstrm@calarts.edu"
+  ]
 }

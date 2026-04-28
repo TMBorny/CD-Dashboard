@@ -1,6 +1,11 @@
 {
-  "capturedAt": "2026-04-27T14:07:50.226777+00:00",
-  "count": 0,
-  "snapshotDate": "2026-04-27",
-  "users": []
+  "capturedAt": "2026-04-28T16:14:44.214801+00:00",
+  "count": 4,
+  "snapshotDate": "2026-04-28",
+  "users": [
+    "dramirez@odessa.edu",
+    "gvilla@odessa.edu",
+    "jbolton@odessa.edu",
+    "lortiz@odessa.edu"
+  ]
 }
