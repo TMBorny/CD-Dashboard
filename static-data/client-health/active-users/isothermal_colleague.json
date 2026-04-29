@@ -1,17 +1,19 @@
 {
-  "capturedAt": "2026-04-28T16:14:44.214773+00:00",
-  "count": 10,
-  "snapshotDate": "2026-04-28",
+  "capturedAt": "2026-04-29T15:24:26.570365+00:00",
+  "count": 12,
+  "snapshotDate": "2026-04-29",
   "users": [
+    "abradshaw@isothermal.edu",
+    "agalla@isothermal.edu",
     "clawter@isothermal.edu",
-    "cyoung@isothermal.edu",
     "ddbarnard@isothermal.edu",
-    "hoxendine@isothermal.edu",
-    "jdale@isothermal.edu",
-    "jekstrom@isothermal.edu",
+    "jaallen@isothermal.edu",
     "jevarts@coursedog.com",
     "jslone@coursedog.com",
+    "lgreene@isothermal.edu",
+    "mfranklin@isothermal.edu",
+    "rmckinney@isothermal.edu",
     "skilgo@isothermal.edu",
-    "tmcdowell@isothermal.edu"
+    "vcannon@isothermal.edu"
   ]
 }

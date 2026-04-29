@@ -1,6 +1,6 @@
 {
   "lastAttemptedSync": {
-    "attemptedAt": "2026-04-28T16:09:56.383254+00:00",
+    "attemptedAt": "2026-04-29T15:20:41.270796+00:00",
     "checkpointState": null,
     "completedUnits": 0,
     "currentSchool": null,
@@ -13,30 +13,30 @@
     "failedUnits": 0,
     "failedUnitsSample": [],
     "failureReason": null,
-    "finishedAt": "2026-04-28T16:14:45.882864+00:00",
-    "jobId": "a73ec196-15ac-4398-b6dd-d361bb9bf7b0",
+    "finishedAt": "2026-04-29T15:24:28.439949+00:00",
+    "jobId": "e5d1176c-21ab-4861-9548-1020e130cef7",
     "lastHeartbeatAt": null,
     "lastProgressAt": null,
     "school": null,
-    "schoolsProcessed": 452,
+    "schoolsProcessed": 453,
     "scope": "bulk",
     "skippedUnits": 0,
-    "snapshotDate": "2026-04-28",
+    "snapshotDate": "2026-04-29",
     "startDate": null,
-    "startedAt": "2026-04-28T16:09:56.383254+00:00",
+    "startedAt": "2026-04-29T15:20:41.270796+00:00",
     "status": "completed",
     "statusDetail": null,
     "timing": {
-      "fetchHealthSec": 284.6,
-      "listSchoolsSec": 2.63,
-      "persistDbSec": 2.27,
-      "totalSec": 289.5
+      "fetchHealthSec": 219.55,
+      "listSchoolsSec": 5.01,
+      "persistDbSec": 2.6,
+      "totalSec": 227.17
     },
-    "totalSchools": 452
+    "totalSchools": 453
   },
   "lastSuccessfulSync": {
-    "createdAt": "2026-04-28T16:14:44.214856+00:00",
-    "school": "yrk01",
-    "snapshotDate": "2026-04-28"
+    "createdAt": "2026-04-29T15:24:26.570446+00:00",
+    "school": "yorktech_colleague_ethos",
+    "snapshotDate": "2026-04-29"
   }
 }

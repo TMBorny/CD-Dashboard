@@ -1,11 +1,12 @@
 {
-  "capturedAt": "2026-04-28T16:14:44.214828+00:00",
-  "count": 4,
-  "snapshotDate": "2026-04-28",
+  "capturedAt": "2026-04-29T15:24:26.570419+00:00",
+  "count": 5,
+  "snapshotDate": "2026-04-29",
   "users": [
-    "hm1@stmarys-ca.edu",
+    "cfa1@stmarys-ca.edu",
+    "cwe1@stmarys-ca.edu",
+    "ezarzar@coursedog.com",
     "mdl4@stmarys-ca.edu",
-    "mjv7@stmarys-ca.edu",
-    "ncampbell@coursedog.com"
+    "mjv7@stmarys-ca.edu"
   ]
 }

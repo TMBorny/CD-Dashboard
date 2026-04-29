@@ -1,17 +1,20 @@
 {
-  "capturedAt": "2026-04-28T16:14:44.214779+00:00",
-  "count": 10,
-  "snapshotDate": "2026-04-28",
+  "capturedAt": "2026-04-29T15:24:26.570372+00:00",
+  "count": 13,
+  "snapshotDate": "2026-04-29",
   "users": [
-    "ABraunschweig@lccc.wy.edu",
+    "BLehan@lccc.wy.edu",
+    "GSchawo@lccc.wy.edu",
+    "JAckerman@lccc.wy.edu",
     "Myoung@lccc.wy.edu",
-    "SRorabaugh@lccc.wy.edu",
-    "awade@lccc.wy.edu",
-    "dkaelin@lccc.wy.edu",
-    "knoble@lccc.wy.edu",
+    "abarker@lccc.wy.edu",
+    "alester@lccc.wy.edu",
+    "epalmqui@lccc.wy.edu",
+    "jsemlak@lccc.wy.edu",
     "kyoung@lccc.wy.edu",
     "laramiecountyextension@uwyo.edu",
-    "lpatridg@lccc.wy.edu",
-    "mgallant@lccc.wy.edu"
+    "mgallant@lccc.wy.edu",
+    "mkoenig@lccc.wy.edu",
+    "thacker@lccc.wy.edu"
   ]
 }

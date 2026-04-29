@@ -1,13 +1,18 @@
 {
-  "capturedAt": "2026-04-28T16:14:44.214758+00:00",
-  "count": 6,
-  "snapshotDate": "2026-04-28",
+  "capturedAt": "2026-04-29T15:24:26.570348+00:00",
+  "count": 11,
+  "snapshotDate": "2026-04-29",
   "users": [
     "ABryant@ecpi.edu",
     "Academics_ServiceAccounts@ecpi.edu",
-    "ahaneline@ecpi.edu",
+    "DBergsnev@ecpi.edu",
+    "alipsmeyer@ecpi.edu",
+    "cesbrandt@ecpi.edu",
+    "dshoop@ecpi.edu",
     "jchambers@ecpi.edu",
-    "sparker@ecpi.edu",
-    "vlong@ecpi.edu"
+    "jgarrison@ecpi.edu",
+    "kmcgruther@ecpi.edu",
+    "mcarruth@ecpi.edu",
+    "sparker@ecpi.edu"
   ]
 }

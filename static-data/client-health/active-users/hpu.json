@@ -1,15 +1,17 @@
 {
-  "capturedAt": "2026-04-28T16:14:44.214771+00:00",
-  "count": 8,
-  "snapshotDate": "2026-04-28",
+  "capturedAt": "2026-04-29T15:24:26.570362+00:00",
+  "count": 10,
+  "snapshotDate": "2026-04-29",
   "users": [
+    "adewald@hpu.edu",
     "amatthews@hpu.edu",
     "bchildress@hpu.edu",
+    "cvillagracia@hpu.edu",
+    "evang@hpu.edu",
     "jacaranto@hpu.edu",
     "jmanzano@hpu.edu",
-    "pjnorris@hpu.edu",
-    "qculver@hpu.edu",
-    "sgorodinsky@hpu.edu",
-    "ssumulong@hpu.edu"
+    "leader@my.hpu.edu",
+    "ssumulong@hpu.edu",
+    "tparker@coursedog.com"
   ]
 }
