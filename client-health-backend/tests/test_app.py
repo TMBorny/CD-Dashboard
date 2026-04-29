@@ -652,6 +652,21 @@ class MergeErrorCountTests(unittest.TestCase):
         hint = build_resolution_hint("section missing prerequisite reference", "sections", None)
         self.assertEqual(hint["bucket"], "missing_reference")
 
+    def test_build_resolution_hint_detects_refined_categories(self):
+        cases = [
+            ('"postBody.sectionXML.registrationType" is required', "sections", None, "validation_data_shape"),
+            ("Course record is not found for the requested GUID.", "sections", "Record.Not.Found", "missing_reference"),
+            ("Course already exists", "courses", None, "duplicate_conflict"),
+            ("Unauthorized token expired", "courses", None, "authentication_access"),
+            ("Mapping is disabled for this integration", "courses", None, "integration_configuration"),
+            ("SIS operation was not successful", "events", None, "sis_response_uncertain"),
+            ("Create course exception - ORA-20100: ::Course effective term less than course start term::", "courses", None, "sis_business_rule"),
+        ]
+        for message, entity_type, error_code, expected_bucket in cases:
+            with self.subTest(expected_bucket=expected_bucket):
+                hint = build_resolution_hint(message, entity_type, error_code)
+                self.assertEqual(hint["bucket"], expected_bucket)
+
     def test_extract_merge_error_message_from_nested_original_error_body(self):
         payload = {
             "entityType": "sections",
@@ -3195,6 +3210,12 @@ class ErrorAnalysisEndpointTests(unittest.TestCase):
         self.assertTrue(payload["metadata"]["hasCapturedData"])
         self.assertEqual(payload["summary"]["totalErrorInstances"], 5)
         self.assertEqual(payload["summary"]["distinctSignatures"], 2)
+        self.assertEqual(sum(row["count"] for row in payload["categoryBreakdowns"]), payload["summary"]["totalErrorInstances"])
+        self.assertEqual(payload["categoryBreakdowns"][0]["bucket"], "duplicate_conflict")
+        self.assertEqual(payload["categoryBreakdowns"][0]["count"], 5)
+        self.assertEqual(payload["categoryBreakdowns"][0]["distinctSignatures"], 1)
+        self.assertEqual(payload["categoryBreakdowns"][0]["affectedSchools"], 2)
+        self.assertEqual(payload["categoryBreakdowns"][0]["cumulativeShare"], 1)
         self.assertEqual(payload["trends"][0]["snapshotDate"], "2026-04-12")
         self.assertEqual(payload["signatures"][0]["signatureKey"], "sig-b")
         self.assertEqual(payload["signatures"][0]["signatureVersion"], "v1")
@@ -3729,6 +3750,76 @@ class ErrorAnalysisEndpointTests(unittest.TestCase):
         self.assertEqual(payload["metadata"]["appliedFilters"]["entityType"], "courses")
         self.assertEqual(payload["metadata"]["appliedFilters"]["signature"], "sig-b")
         self.assertEqual(payload["rows"][0]["signatureKey"], "sig-b")
+
+    def test_error_analysis_errors_supports_legacy_configuration_auth_filter(self):
+        init_db()
+        db = get_db()
+        try:
+            db.add_all(
+                [
+                    ErrorAnalysisDetail.from_dict(
+                        {
+                            "snapshotDate": "2026-04-14",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": "Banner",
+                            "entityType": "courses",
+                            "errorCode": "Unauthorized",
+                            "signatureKey": "sig-auth",
+                            "signatureLabel": "courses | Unauthorized | unauthorized token expired",
+                            "normalizedMessage": "unauthorized token expired",
+                            "fullErrorText": "Unauthorized token expired",
+                            "entityDisplayName": "Course 1",
+                            "mergeReport": None,
+                            "termCodes": [],
+                            "rawError": {"message": "Unauthorized token expired"},
+                        }
+                    ),
+                    ErrorAnalysisDetail.from_dict(
+                        {
+                            "snapshotDate": "2026-04-14",
+                            "school": "bar01",
+                            "displayName": "Baruch College",
+                            "sisPlatform": "Banner",
+                            "entityType": "sections",
+                            "errorCode": "Mapping.Disabled",
+                            "signatureKey": "sig-config",
+                            "signatureLabel": "sections | Mapping.Disabled | mapping is disabled",
+                            "normalizedMessage": "mapping is disabled",
+                            "fullErrorText": "Mapping is disabled",
+                            "entityDisplayName": "Section 1",
+                            "mergeReport": None,
+                            "termCodes": [],
+                            "rawError": {"message": "Mapping is disabled"},
+                        }
+                    ),
+                ]
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": TEST_INTERNAL_API_KEY}, clear=False), patch(
+            "app.main.start_scheduled_sync_service",
+            new=self._async_noop,
+        ), patch(
+            "app.main.stop_scheduled_sync_service",
+            new=self._async_noop,
+        ):
+            with TestClient(app) as client:
+                response = client.get(
+                    "/api/error-analysis/errors",
+                    params={"school": "bar01", "latestOnly": "true", "category": "configuration_auth"},
+                    headers=AUTH_HEADERS,
+                )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total"], 2)
+        self.assertEqual(
+            {row["signatureKey"] for row in payload["rows"]},
+            {"sig-auth", "sig-config"},
+        )
 
     def test_signature_explorer_uses_latest_snapshot_and_builds_breakdowns(self):
         init_db()

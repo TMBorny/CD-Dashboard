@@ -566,6 +566,56 @@ const trendOptions = computed(() => ({
   },
 }));
 
+const categoryBreakdowns = computed(() => response.value?.categoryBreakdowns ?? []);
+const categoryChartCategories = computed(() => categoryBreakdowns.value.map((category) => category.title));
+const categoryParetoSeries = computed(() => [
+  {
+    name: 'Open errors',
+    data: categoryBreakdowns.value.map((category) => category.count),
+  },
+]);
+const categoryParetoOptions = computed(() => ({
+  ...useChartOptions({
+    categories: categoryChartCategories.value,
+    colors: ['#dc2626'],
+  }),
+  chart: {
+    ...useChartOptions().chart,
+    type: 'bar' as const,
+    toolbar: {
+      show: false,
+    },
+  },
+  stroke: {
+    width: 0,
+  },
+  plotOptions: {
+    bar: {
+      borderRadius: 4,
+      columnWidth: '56%',
+    },
+  },
+  dataLabels: {
+    enabled: false,
+  },
+  yaxis: {
+    title: {
+      text: 'Open errors',
+    },
+    labels: {
+      style: { colors: '#64748b', fontSize: '12px' },
+      formatter: (value: number) => formatCount(value),
+    },
+  },
+  tooltip: {
+    theme: 'light',
+    y: {
+      formatter: (value: number | undefined) =>
+        typeof value === 'number' ? `${formatCount(value)} errors` : '',
+    },
+  },
+}));
+
 const allSignatures = computed(() => response.value?.signatures ?? []);
 const signatureTotal = computed(() => allSignatures.value.length);
 const signatureTotalPages = computed(() => Math.max(1, Math.ceil(signatureTotal.value / signaturePageSize)));
@@ -696,12 +746,21 @@ const getResolutionToneClass = (hint: ResolutionHint) => {
       return 'bg-rose-100 text-rose-700';
     case 'validation_data_shape':
       return 'bg-sky-100 text-sky-700';
+    case 'authentication_access':
+      return 'bg-violet-100 text-violet-700';
+    case 'integration_configuration':
+      return 'bg-indigo-100 text-indigo-700';
+    case 'sis_response_uncertain':
+      return 'bg-cyan-100 text-cyan-700';
+    case 'sis_business_rule':
+      return 'bg-orange-100 text-orange-700';
     case 'configuration_auth':
       return 'bg-violet-100 text-violet-700';
     default:
       return 'bg-slate-100 text-slate-700';
   }
 };
+const getBucketToneClass = (bucket: string) => getResolutionToneClass({ bucket } as ResolutionHint);
 
 const getSchoolLabel = (school?: string | null) => {
   if (!school) return 'Unknown school';
@@ -1415,6 +1474,52 @@ const handleExport = async () => {
         </div>
 
         <template v-if="activeView === 'aggregate'">
+          <Card subtitle="Error Categories" title="Open errors by category">
+            <div class="flex flex-col gap-3 text-sm text-slate-600 lg:flex-row lg:items-start lg:justify-between">
+              <p class="max-w-2xl leading-6">
+                Category counts use each school's latest captured snapshot in this selection, so the total matches the
+                Open Error Instances summary.
+              </p>
+              <p class="shrink-0 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700">
+                {{ formatCount(response?.summary.totalErrorInstances) }} open errors
+              </p>
+            </div>
+            <div v-if="categoryBreakdowns.length" class="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(360px,1fr)]" data-testid="category-pareto">
+              <div class="min-h-[340px]">
+                <VueApexCharts type="bar" :options="categoryParetoOptions" :series="categoryParetoSeries" height="340" />
+              </div>
+              <div class="overflow-x-auto">
+                <table class="min-w-full text-left text-sm text-slate-600">
+                  <thead class="text-xs uppercase tracking-[0.12em] text-slate-500">
+                    <tr>
+                      <th class="py-2 pr-3 font-semibold">Category</th>
+                      <th class="px-3 py-2 text-right font-semibold">Errors</th>
+                      <th class="py-2 pl-3 text-right font-semibold">Share</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-200">
+                    <tr v-for="category in categoryBreakdowns" :key="category.bucket" data-testid="category-pareto-row">
+                      <td class="py-3 pr-3 align-top">
+                        <span class="inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em]" :class="getBucketToneClass(category.bucket)">
+                          {{ category.title }}
+                        </span>
+                        <p class="mt-2 text-xs leading-5 text-slate-500">
+                          {{ category.distinctSignatures }} signature{{ category.distinctSignatures === 1 ? '' : 's' }}
+                          across {{ category.affectedSchools }} school{{ category.affectedSchools === 1 ? '' : 's' }}
+                        </p>
+                      </td>
+                      <td class="px-3 py-3 text-right font-semibold text-slate-950">{{ formatCount(category.count) }}</td>
+                      <td class="py-3 pl-3 text-right">{{ formatShare(category.share) }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div v-else class="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+              No current category breakdown is available for these filters yet.
+            </div>
+          </Card>
+
           <Card subtitle="Filters" title="Refine this view">
             <div class="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_max-content_minmax(220px,1fr)]">
               <div>

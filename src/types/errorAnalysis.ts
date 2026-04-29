@@ -21,6 +21,17 @@ export interface ErrorTrendPoint {
   affectedSchools: number;
 }
 
+export interface ErrorCategoryBreakdown {
+  bucket: string;
+  title: string;
+  action: string;
+  count: number;
+  distinctSignatures: number;
+  affectedSchools: number;
+  share: number;
+  cumulativeShare: number;
+}
+
 export interface SignatureMetadata {
   signatureVersion?: string | null;
   signatureStrategy?: string | null;
@@ -217,6 +228,7 @@ export interface ErrorAnalysisResponse {
     latestSnapshotDate: string | null;
   };
   trends: ErrorTrendPoint[];
+  categoryBreakdowns: ErrorCategoryBreakdown[];
   signatures: ErrorSignatureCluster[];
   schoolBreakdowns: ErrorBreakdownRow[];
   sisBreakdowns: ErrorBreakdownRow[];

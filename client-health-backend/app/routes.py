@@ -83,6 +83,59 @@ GENERIC_ERROR_CODE_VALUES = {
     "validation",
     "warning",
 }
+CATEGORY_META = {
+    "validation_data_shape": {
+        "title": "Validation or data-shape issue",
+        "action": "Review the source payload for missing required fields, invalid formats, or schema mismatches before the next sync.",
+        "rationale": "The signature suggests the payload shape or field values do not satisfy validation.",
+        "confidence": 0.78,
+    },
+    "missing_reference": {
+        "title": "Missing dependency or reference",
+        "action": "Verify the referenced records exist in the SIS and are synced before retrying dependent entities.",
+        "rationale": "The signature reads like a missing upstream dependency or lookup reference.",
+        "confidence": 0.82,
+    },
+    "duplicate_conflict": {
+        "title": "Duplicate or conflicting record",
+        "action": "Check for duplicate source records or conflicting identifiers and resolve the collision before rerunning the sync.",
+        "rationale": "The signature points to a duplicate, uniqueness, or conflicting-write condition.",
+        "confidence": 0.79,
+    },
+    "authentication_access": {
+        "title": "Authentication or access failure",
+        "action": "Review integration credentials, tokens, security roles, and SIS permissions for the affected entity type.",
+        "rationale": "The signature looks tied to authentication, authorization, or SIS security access.",
+        "confidence": 0.76,
+    },
+    "integration_configuration": {
+        "title": "Integration configuration issue",
+        "action": "Review integration mappings, disabled settings, and configuration drift before rerunning the sync.",
+        "rationale": "The signature points to mapping or integration setup rather than record-level data.",
+        "confidence": 0.72,
+    },
+    "sis_response_uncertain": {
+        "title": "SIS response uncertain",
+        "action": "Check SIS availability and the latest merge report to confirm whether the upstream write failed or only the response could not be verified.",
+        "rationale": "The signature indicates the SIS response was failed, missing, or ambiguous.",
+        "confidence": 0.7,
+    },
+    "sis_business_rule": {
+        "title": "SIS business-rule rejection",
+        "action": "Inspect the SIS-enforced rule for the affected entity and correct term, room, component, or scheduling constraints upstream.",
+        "rationale": "The signature appears to be a SIS business rule or component-interface rejection.",
+        "confidence": 0.73,
+    },
+    "generic_investigation": {
+        "title": "General investigation recommended",
+        "action": "Inspect a sample error in Integration Hub, compare recent changes for the entity type, and confirm whether the issue is isolated to one school or SIS.",
+        "rationale": "The signature is not specific enough for a stronger automatic recommendation.",
+        "confidence": 0.52,
+    },
+}
+CATEGORY_FILTER_ALIASES = {
+    "configuration_auth": {"authentication_access", "integration_configuration"},
+}
 
 
 class SchoolExclusionPayload(BaseModel):
@@ -856,6 +909,7 @@ async def get_error_analysis(
                 "latestSnapshotDate": None,
             },
             "trends": [],
+            "categoryBreakdowns": [],
             "signatures": [],
             "schoolBreakdowns": [],
             "sisBreakdowns": [],
@@ -1183,6 +1237,60 @@ async def get_error_analysis(
             for group in groups
             if latest_snapshot_by_school.get(group.school) == group.snapshot_date
         )
+        category_breakdowns: dict[str, dict] = {}
+        for group in groups:
+            if latest_snapshot_by_school.get(group.school) != group.snapshot_date:
+                continue
+            resolution_hint = build_resolution_hint(
+                group.normalized_message,
+                group.entity_type,
+                group.canonical_error_code or group.error_code,
+            )
+            bucket = resolution_hint["bucket"]
+            category_row = category_breakdowns.setdefault(
+                bucket,
+                {
+                    "bucket": bucket,
+                    "title": resolution_hint["title"],
+                    "action": resolution_hint["action"],
+                    "count": 0,
+                    "distinctSignatures": set(),
+                    "affectedSchools": set(),
+                },
+            )
+            category_row["count"] += group.count
+            category_row["distinctSignatures"].add(get_row_signature_identity(group))
+            category_row["affectedSchools"].add(group.school)
+
+        cumulative_count = 0
+        serialized_category_breakdowns = []
+        for category_row in sorted(
+            category_breakdowns.values(),
+            key=lambda item: (-item["count"], item["title"]),
+        ):
+            cumulative_count += category_row["count"]
+            share = (
+                category_row["count"] / latest_snapshot_total_error_instances
+                if latest_snapshot_total_error_instances
+                else 0
+            )
+            cumulative_share = (
+                cumulative_count / latest_snapshot_total_error_instances
+                if latest_snapshot_total_error_instances
+                else 0
+            )
+            serialized_category_breakdowns.append(
+                {
+                    "bucket": category_row["bucket"],
+                    "title": category_row["title"],
+                    "action": category_row["action"],
+                    "count": category_row["count"],
+                    "distinctSignatures": len(category_row["distinctSignatures"]),
+                    "affectedSchools": len(category_row["affectedSchools"]),
+                    "share": share,
+                    "cumulativeShare": cumulative_share,
+                }
+            )
 
         response["summary"] = {
             "totalGroupedErrors": len(groups),
@@ -1194,6 +1302,7 @@ async def get_error_analysis(
             "latestSnapshotDate": latest_snapshot_date,
         }
         response["trends"] = serialized_trends
+        response["categoryBreakdowns"] = serialized_category_breakdowns
         response["signatures"] = serialized_signatures
         response["schoolBreakdowns"] = serialized_school_breakdowns
         response["sisBreakdowns"] = serialized_sis_breakdowns
@@ -1246,12 +1355,11 @@ async def export_error_analysis(
             rows = [
                 row
                 for row in ordered_rows
-                if not category
-                or build_resolution_hint(
+                if category_filter_matches(build_resolution_hint(
                     row.normalized_message,
                     row.entity_type,
                     row.error_code,
-                )["bucket"] == category
+                )["bucket"], category)
             ]
         else:
             query = db.query(ErrorAnalysisGroup)
@@ -1359,12 +1467,11 @@ async def get_error_analysis_errors(
         filtered_rows = [
             row
             for row in ordered_rows
-            if not category
-            or build_resolution_hint(
+            if category_filter_matches(build_resolution_hint(
                 row.normalized_message,
                 row.entity_type,
                 row.error_code,
-            )["bucket"] == category
+            )["bucket"], category)
         ]
         total = len(filtered_rows)
         start = (page - 1) * page_size
@@ -3320,49 +3427,38 @@ def build_resolution_hint(normalized_message: str, entity_type: Optional[str], e
     """Return a likely next-step recommendation for a normalized error signature."""
     haystack = " ".join(part for part in [normalized_message, entity_type or "", error_code or ""] if part).lower()
 
-    if any(token in haystack for token in ("missing", "not found", "not.found", "unknown", "reference", "dependency", "prerequisite", "does not exist")):
-        return {
-            "bucket": "missing_reference",
-            "title": "Missing dependency or reference",
-            "action": "Verify the referenced records exist in the SIS and are synced before retrying dependent entities.",
-            "rationale": "The signature reads like a missing upstream dependency or lookup reference.",
-            "confidence": 0.82,
-        }
+    def hint(bucket: str) -> dict:
+        return {"bucket": bucket, **CATEGORY_META[bucket]}
 
-    if any(token in haystack for token in ("duplicate", "already exists", "conflict", "unique", "overlap", "overlapping")):
-        return {
-            "bucket": "duplicate_conflict",
-            "title": "Duplicate or conflicting record",
-            "action": "Check for duplicate source records or conflicting identifiers and resolve the collision before rerunning the sync.",
-            "rationale": "The signature points to a duplicate, uniqueness, or conflicting-write condition.",
-            "confidence": 0.79,
-        }
+    if any(token in haystack for token in ("required", "required property", "missing required", "invalid", "validation", "malformed", "format", "parse", "cannot parse", "type mismatch", "schema", "null")):
+        return hint("validation_data_shape")
 
-    if any(token in haystack for token in ("invalid", "validation", "required", "malformed", "format", "parse", "cannot parse", "type mismatch", "schema", "null")):
-        return {
-            "bucket": "validation_data_shape",
-            "title": "Validation or data-shape issue",
-            "action": "Review the source payload for missing required fields, invalid formats, or schema mismatches before the next sync.",
-            "rationale": "The signature suggests the payload shape or field values do not satisfy validation.",
-            "confidence": 0.77,
-        }
+    if any(token in haystack for token in ("already exists", "duplicate", "conflict", "unique", "overlap", "overlapping", "constraint", "violated")):
+        return hint("duplicate_conflict")
 
-    if any(token in haystack for token in ("auth", "permission", "unauthorized", "forbidden", "token", "credential", "config", "mapping", "disabled")):
-        return {
-            "bucket": "configuration_auth",
-            "title": "Configuration or access problem",
-            "action": "Review integration credentials, permissions, and mapping/configuration settings for the affected entity type.",
-            "rationale": "The signature looks tied to authentication, permissions, or configuration drift.",
-            "confidence": 0.74,
-        }
+    if any(token in haystack for token in ("record.not.found", "not found", "does not exist", "unknown reference", "reference", "dependency", "prerequisite")):
+        return hint("missing_reference")
 
-    return {
-        "bucket": "generic_investigation",
-        "title": "General investigation recommended",
-        "action": "Inspect a sample error in Integration Hub, compare recent changes for the entity type, and confirm whether the issue is isolated to one school or SIS.",
-        "rationale": "The signature is not specific enough for a stronger automatic recommendation.",
-        "confidence": 0.52,
-    }
+    if any(token in haystack for token in ("unauthorized", "forbidden", "permission", "security", "auth", "token", "credential", "access denied", "not authorized")):
+        return hint("authentication_access")
+
+    if any(token in haystack for token in ("mapping", "configuration", "config", "disabled", "not enabled", "setup")):
+        return hint("integration_configuration")
+
+    if any(token in haystack for token in ("sis operation failed", "sis operation was not successful", "operation was not successful", "did not give a valid response", "could not verify", "failed to reload integration data", "valid response")):
+        return hint("sis_response_uncertain")
+
+    if any(token in haystack for token in ("ora-", "component interface", "business rule", "effective term", "classroom", "cannot schedule", "cannot be changed", "could not set ci property", "failure loading ci data", "fields with errors")):
+        return hint("sis_business_rule")
+
+    return hint("generic_investigation")
+
+
+def category_filter_matches(bucket: str, category: Optional[str]) -> bool:
+    """Return True when a bucket matches a category filter, including legacy aliases."""
+    if not category:
+        return True
+    return bucket == category or bucket in CATEGORY_FILTER_ALIASES.get(category, set())
 
 
 def extract_merge_report_reference(sample_errors: list[dict]) -> Optional[dict]:

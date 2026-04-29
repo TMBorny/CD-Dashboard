@@ -30,6 +30,59 @@ const STATIC_MODE_ERROR = 'This action is unavailable in the static hosted dashb
 const fileCache = new Map<string, Promise<unknown>>();
 const UNKNOWN_SIGNATURE_BUCKET_KEY = '__unknown__';
 const ERROR_SIGNATURE_VERSION_V1 = 'v1';
+const CATEGORY_META = {
+  validation_data_shape: {
+    title: 'Validation or data-shape issue',
+    action: 'Review the source payload for missing required fields, invalid formats, or schema mismatches before the next sync.',
+    rationale: 'The signature suggests the payload shape or field values do not satisfy validation.',
+    confidence: 0.78,
+  },
+  missing_reference: {
+    title: 'Missing dependency or reference',
+    action: 'Verify the referenced records exist in the SIS and are synced before retrying dependent entities.',
+    rationale: 'The signature reads like a missing upstream dependency or lookup reference.',
+    confidence: 0.82,
+  },
+  duplicate_conflict: {
+    title: 'Duplicate or conflicting record',
+    action: 'Check for duplicate source records or conflicting identifiers and resolve the collision before rerunning the sync.',
+    rationale: 'The signature points to a duplicate, uniqueness, or conflicting-write condition.',
+    confidence: 0.79,
+  },
+  authentication_access: {
+    title: 'Authentication or access failure',
+    action: 'Review integration credentials, tokens, security roles, and SIS permissions for the affected entity type.',
+    rationale: 'The signature looks tied to authentication, authorization, or SIS security access.',
+    confidence: 0.76,
+  },
+  integration_configuration: {
+    title: 'Integration configuration issue',
+    action: 'Review integration mappings, disabled settings, and configuration drift before rerunning the sync.',
+    rationale: 'The signature points to mapping or integration setup rather than record-level data.',
+    confidence: 0.72,
+  },
+  sis_response_uncertain: {
+    title: 'SIS response uncertain',
+    action: 'Check SIS availability and the latest merge report to confirm whether the upstream write failed or only the response could not be verified.',
+    rationale: 'The signature indicates the SIS response was failed, missing, or ambiguous.',
+    confidence: 0.7,
+  },
+  sis_business_rule: {
+    title: 'SIS business-rule rejection',
+    action: 'Inspect the SIS-enforced rule for the affected entity and correct term, room, component, or scheduling constraints upstream.',
+    rationale: 'The signature appears to be a SIS business rule or component-interface rejection.',
+    confidence: 0.73,
+  },
+  generic_investigation: {
+    title: 'General investigation recommended',
+    action: 'Inspect a sample error in Integration Hub, compare recent changes for the entity type, and confirm whether the issue is isolated to one school or SIS.',
+    rationale: 'The signature is not specific enough for a stronger automatic recommendation.',
+    confidence: 0.52,
+  },
+} satisfies Record<string, Omit<ResolutionHint, 'bucket'>>;
+const CATEGORY_FILTER_ALIASES: Record<string, Set<string>> = {
+  configuration_auth: new Set(['authentication_access', 'integration_configuration']),
+};
 
 type StaticSyncMetadataResponse = {
   lastAttemptedSync: Record<string, unknown> | null;
@@ -130,59 +183,51 @@ const buildResolutionHint = (
   errorCode?: string | null,
 ): ResolutionHint => {
   const haystack = [normalizedMessage, entityType || '', errorCode || ''].join(' ').toLowerCase();
+  const hint = (bucket: keyof typeof CATEGORY_META): ResolutionHint => ({
+    bucket,
+    ...CATEGORY_META[bucket],
+  });
 
-  if (['missing', 'not found', 'not.found', 'unknown', 'reference', 'dependency', 'prerequisite', 'does not exist']
+  if (['required', 'required property', 'missing required', 'invalid', 'validation', 'malformed', 'format', 'parse', 'cannot parse', 'type mismatch', 'schema', 'null']
     .some((token) => haystack.includes(token))) {
-    return {
-      bucket: 'missing_reference',
-      title: 'Missing dependency or reference',
-      action: 'Verify the referenced records exist in the SIS and are synced before retrying dependent entities.',
-      rationale: 'The signature reads like a missing upstream dependency or lookup reference.',
-      confidence: 0.82,
-    };
+    return hint('validation_data_shape');
   }
 
-  if (['duplicate', 'already exists', 'conflict', 'unique', 'overlap', 'overlapping']
+  if (['already exists', 'duplicate', 'conflict', 'unique', 'overlap', 'overlapping', 'constraint', 'violated']
     .some((token) => haystack.includes(token))) {
-    return {
-      bucket: 'duplicate_conflict',
-      title: 'Duplicate or conflicting record',
-      action: 'Check for duplicate source records or conflicting identifiers and resolve the collision before rerunning the sync.',
-      rationale: 'The signature points to a duplicate, uniqueness, or conflicting-write condition.',
-      confidence: 0.79,
-    };
+    return hint('duplicate_conflict');
   }
 
-  if (['invalid', 'validation', 'required', 'malformed', 'format', 'parse', 'cannot parse', 'type mismatch', 'schema', 'null']
+  if (['record.not.found', 'not found', 'does not exist', 'unknown reference', 'reference', 'dependency', 'prerequisite']
     .some((token) => haystack.includes(token))) {
-    return {
-      bucket: 'validation_data_shape',
-      title: 'Validation or data-shape issue',
-      action: 'Review the source payload for missing required fields, invalid formats, or schema mismatches before the next sync.',
-      rationale: 'The signature suggests the payload shape or field values do not satisfy validation.',
-      confidence: 0.77,
-    };
+    return hint('missing_reference');
   }
 
-  if (['auth', 'permission', 'unauthorized', 'forbidden', 'token', 'credential', 'config', 'mapping', 'disabled']
+  if (['unauthorized', 'forbidden', 'permission', 'security', 'auth', 'token', 'credential', 'access denied', 'not authorized']
     .some((token) => haystack.includes(token))) {
-    return {
-      bucket: 'configuration_auth',
-      title: 'Configuration or access problem',
-      action: 'Review integration credentials, permissions, and mapping/configuration settings for the affected entity type.',
-      rationale: 'The signature looks tied to authentication, permissions, or configuration drift.',
-      confidence: 0.74,
-    };
+    return hint('authentication_access');
   }
 
-  return {
-    bucket: 'generic_investigation',
-    title: 'General investigation recommended',
-    action: 'Inspect a sample error in Integration Hub, compare recent changes for the entity type, and confirm whether the issue is isolated to one school or SIS.',
-    rationale: 'The signature is not specific enough for a stronger automatic recommendation.',
-    confidence: 0.52,
-  };
+  if (['mapping', 'configuration', 'config', 'disabled', 'not enabled', 'setup']
+    .some((token) => haystack.includes(token))) {
+    return hint('integration_configuration');
+  }
+
+  if (['sis operation failed', 'sis operation was not successful', 'operation was not successful', 'did not give a valid response', 'could not verify', 'failed to reload integration data', 'valid response']
+    .some((token) => haystack.includes(token))) {
+    return hint('sis_response_uncertain');
+  }
+
+  if (['ora-', 'component interface', 'business rule', 'effective term', 'classroom', 'cannot schedule', 'cannot be changed', 'could not set ci property', 'failure loading ci data', 'fields with errors']
+    .some((token) => haystack.includes(token))) {
+    return hint('sis_business_rule');
+  }
+
+  return hint('generic_investigation');
 };
+
+const categoryFilterMatches = (bucket: string, category?: string) =>
+  !category || bucket === category || CATEGORY_FILTER_ALIASES[category]?.has(bucket);
 
 const extractMergeReportReference = (sampleErrors: Array<Record<string, unknown>>): MergeReportReference | null => {
   for (const sampleError of sampleErrors) {
@@ -457,6 +502,7 @@ const buildErrorAnalysisResponse = async (
       latestSnapshotDate: null,
     },
     trends: [],
+    categoryBreakdowns: [],
     signatures: [],
     schoolBreakdowns: [],
     sisBreakdowns: [],
@@ -801,6 +847,48 @@ const buildErrorAnalysisResponse = async (
   const latestSnapshotTotalErrorInstances = groups.reduce((total, group) => {
     return total + (latestSnapshotBySchool.get(group.school) === group.snapshotDate ? group.count : 0);
   }, 0);
+  const categoryBreakdowns = new Map<string, {
+    bucket: string;
+    title: string;
+    action: string;
+    count: number;
+    distinctSignatures: Set<string>;
+    affectedSchools: Set<string>;
+  }>();
+  for (const group of groups) {
+    if (latestSnapshotBySchool.get(group.school) !== group.snapshotDate) continue;
+    const signatureIdentity = buildSignatureIdentity(group.signatureKey, group.signatureVersion);
+    const resolutionHint = buildResolutionHint(group.normalizedMessage, group.entityType, group.canonicalErrorCode || group.errorCode);
+    const category = categoryBreakdowns.get(resolutionHint.bucket) ?? {
+      bucket: resolutionHint.bucket,
+      title: resolutionHint.title,
+      action: resolutionHint.action,
+      count: 0,
+      distinctSignatures: new Set<string>(),
+      affectedSchools: new Set<string>(),
+    };
+    category.count += group.count;
+    category.distinctSignatures.add(signatureIdentity);
+    category.affectedSchools.add(group.school);
+    categoryBreakdowns.set(resolutionHint.bucket, category);
+  }
+
+  let cumulativeCount = 0;
+  const serializedCategoryBreakdowns = [...categoryBreakdowns.values()]
+    .sort((left, right) => (right.count - left.count) || left.title.localeCompare(right.title))
+    .map((category) => {
+      cumulativeCount += category.count;
+      return {
+        bucket: category.bucket,
+        title: category.title,
+        action: category.action,
+        count: category.count,
+        distinctSignatures: category.distinctSignatures.size,
+        affectedSchools: category.affectedSchools.size,
+        share: latestSnapshotTotalErrorInstances ? category.count / latestSnapshotTotalErrorInstances : 0,
+        cumulativeShare: latestSnapshotTotalErrorInstances ? cumulativeCount / latestSnapshotTotalErrorInstances : 0,
+      };
+    });
 
   response.summary = {
     totalGroupedErrors: groups.length,
@@ -812,6 +900,7 @@ const buildErrorAnalysisResponse = async (
     latestSnapshotDate,
   };
   response.trends = serializedTrends;
+  response.categoryBreakdowns = serializedCategoryBreakdowns;
   response.signatures = serializedSignatures;
   response.schoolBreakdowns = serializedSchoolBreakdowns;
   response.sisBreakdowns = serializedSisBreakdowns;
@@ -843,7 +932,7 @@ const buildErrorDetailTableResponse = async (params: {
     if (params.signature && row.signatureKey !== params.signature) return false;
     if (params.category) {
       const hint = buildResolutionHint(row.normalizedMessage, row.entityType, row.errorCode);
-      if (hint.bucket !== params.category) return false;
+      if (!categoryFilterMatches(hint.bucket, params.category)) return false;
     }
     if (search && !normalizeDetailSearch(row).includes(search)) return false;
     return true;

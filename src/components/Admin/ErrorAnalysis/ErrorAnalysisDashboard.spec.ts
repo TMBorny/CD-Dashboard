@@ -130,6 +130,28 @@ const buildResponse = (): ErrorAnalysisResponse => ({
     { snapshotDate: '2026-04-12', totalErrors: 2, distinctSignatures: 1, affectedSchools: 1 },
     { snapshotDate: '2026-04-13', totalErrors: 5, distinctSignatures: 2, affectedSchools: 2 },
   ],
+  categoryBreakdowns: [
+    {
+      bucket: 'duplicate_conflict',
+      title: 'Duplicate or conflicting record',
+      action: 'Check for duplicate source records or conflicting identifiers and resolve the collision before rerunning the sync.',
+      count: 4,
+      distinctSignatures: 1,
+      affectedSchools: 1,
+      share: 4 / 7,
+      cumulativeShare: 4 / 7,
+    },
+    {
+      bucket: 'missing_reference',
+      title: 'Missing dependency or reference',
+      action: 'Verify the referenced records exist in the SIS and are synced before retrying dependent entities.',
+      count: 3,
+      distinctSignatures: 1,
+      affectedSchools: 1,
+      share: 3 / 7,
+      cumulativeShare: 1,
+    },
+  ],
   signatures: [
     {
       signatureKey: 'sig-b',
@@ -582,6 +604,7 @@ describe('ErrorAnalysisDashboard', () => {
         latestSnapshotDate: null,
       },
       trends: [],
+      categoryBreakdowns: [],
       signatures: [],
       schoolBreakdowns: [],
       sisBreakdowns: [],
@@ -613,6 +636,10 @@ describe('ErrorAnalysisDashboard', () => {
     });
 
     expect(wrapper.text()).toContain('Top error signatures');
+    expect(wrapper.html().indexOf('Open errors by category')).toBeLessThan(wrapper.html().indexOf('Refine this view'));
+    expect(wrapper.get('[data-testid="category-pareto"]').text()).toContain('Duplicate or conflicting record');
+    expect(wrapper.findAll('[data-testid="category-pareto-row"]')).toHaveLength(2);
+    expect(wrapper.text()).toContain('57%');
     expect(wrapper.get('[data-testid="error-analysis-signatures-tooltip"]').text()).toContain('What are signatures?');
     expect(wrapper.get('[data-testid="error-analysis-signatures-tooltip"]').text()).toContain('normalized patterns');
     expect(wrapper.get('[data-testid="error-analysis-signatures-tooltip"]').text()).toContain('captured merge-error rows');
@@ -1172,6 +1199,7 @@ describe('ErrorAnalysisDashboard', () => {
       trends: [
         { snapshotDate: '2026-04-13', totalErrors: 4, distinctSignatures: 1, affectedSchools: 1 },
       ],
+      categoryBreakdowns: [buildResponse().categoryBreakdowns[0]],
       signatures: [buildResponse().signatures[0]],
       schoolBreakdowns: [buildResponse().schoolBreakdowns[0]],
       sisBreakdowns: [buildResponse().sisBreakdowns[0]],

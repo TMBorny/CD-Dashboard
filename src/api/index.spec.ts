@@ -291,6 +291,16 @@ describe('client health api helpers', () => {
     });
     expect(response.data.signatures[0].latestMergeReport?.mergeReportId).toBe('report-b1');
     expect(response.data.signatures[0].dominantSchoolMergeReport?.mergeReportId).toBe('report-b1');
+    expect(response.data.categoryBreakdowns).toEqual([
+      expect.objectContaining({
+        bucket: 'duplicate_conflict',
+        count: 4,
+        distinctSignatures: 1,
+        affectedSchools: 1,
+        share: 1,
+        cumulativeShare: 1,
+      }),
+    ]);
     expect(response.data.signatures[0].exampleMergeReports).toEqual([
       {
         school: 'foo01',

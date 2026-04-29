@@ -175,6 +175,26 @@ const getResolutionBucketMeta = (bucket: string) => {
         title: 'Validation or data-shape issue',
         action: 'Review the source payload for missing required fields, invalid formats, or schema mismatches before the next sync.',
       };
+    case 'authentication_access':
+      return {
+        title: 'Authentication or access failure',
+        action: 'Review integration credentials, tokens, security roles, and SIS permissions for the affected entity type.',
+      };
+    case 'integration_configuration':
+      return {
+        title: 'Integration configuration issue',
+        action: 'Review integration mappings, disabled settings, and configuration drift before rerunning the sync.',
+      };
+    case 'sis_response_uncertain':
+      return {
+        title: 'SIS response uncertain',
+        action: 'Check SIS availability and the latest merge report to confirm whether the upstream write failed or only the response could not be verified.',
+      };
+    case 'sis_business_rule':
+      return {
+        title: 'SIS business-rule rejection',
+        action: 'Inspect the SIS-enforced rule for the affected entity and correct term, room, component, or scheduling constraints upstream.',
+      };
     case 'configuration_auth':
       return {
         title: 'Configuration or access problem',
@@ -392,6 +412,14 @@ const getResolutionToneClass = (hint: ResolutionHint | { bucket: string }) => {
       return 'bg-rose-100 text-rose-700';
     case 'validation_data_shape':
       return 'bg-sky-100 text-sky-700';
+    case 'authentication_access':
+      return 'bg-violet-100 text-violet-700';
+    case 'integration_configuration':
+      return 'bg-indigo-100 text-indigo-700';
+    case 'sis_response_uncertain':
+      return 'bg-cyan-100 text-cyan-700';
+    case 'sis_business_rule':
+      return 'bg-orange-100 text-orange-700';
     case 'configuration_auth':
       return 'bg-violet-100 text-violet-700';
     default:

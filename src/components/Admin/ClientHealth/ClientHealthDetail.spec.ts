@@ -135,6 +135,7 @@ vi.mock('@tanstack/vue-query', () => ({
             latestSnapshotDate: '2026-04-12',
           },
           trends: [],
+          categoryBreakdowns: [],
           signatures: [
             {
               signatureKey: 'sig-a',
